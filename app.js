@@ -488,11 +488,19 @@ function countWords(text) {
   return (trimmed.match(/\S+/g) || []).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
 }
 
+// A copy of a chapter without the marks that aren't words. A chapter on the
+// page is copied node for node: writing it out as HTML and reading it back
+// costs twice as much and gives the same tree.
+const UNCOUNTED = '.darling-anchor, .ph-mark, .ghost';
 function cleanChapterEl(id) {
   const el = document.querySelector(`.chapter[data-id="${id}"] .chapter-body`);
-  const holder = document.createElement('div');
-  holder.innerHTML = el ? el.innerHTML : (chapterHTML[id] || '');
-  holder.querySelectorAll('.darling-anchor, .ph-mark, .ghost').forEach((n) => n.remove());
+  let holder;
+  if (el) holder = el.cloneNode(true);
+  else {
+    holder = document.createElement('div');
+    holder.innerHTML = chapterHTML[id] || '';
+  }
+  holder.querySelectorAll(UNCOUNTED).forEach((n) => n.remove());
   return holder;
 }
 // Text a line to each paragraph. innerText does that only for what is laid
