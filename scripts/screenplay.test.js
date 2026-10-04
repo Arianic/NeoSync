@@ -13,7 +13,8 @@ const to = app.indexOf('// ---- end of screenplay rules ----');
 const context = vm.createContext({});
 vm.runInContext(app.slice(from, to), context);
 vm.runInContext(`this.api = { SP_HEAD_RE, SP_AFTER, SP_EMPTY, spLooksLikeCharacter, spLooksLikeTransition,
-  spParseHeading, spGhost, spContd, spPaginate, spEighths, spToFountain, spFromFountain };`, context);
+  spParseHeading, spGhost, spContd, spPaginate, spEighths, spToFountain, spFromFountain, spFountainTitle,
+  spRunsFromFountain, spFromFdx, spToFdx };`, context);
 const sp = context.api;
 const L = (type, text) => ({ type, text });
 const plain = (x) => JSON.parse(JSON.stringify(x));
@@ -122,4 +123,95 @@ test('Fountain in: a pasted script comes back as its elements', () => {
     L('dialogue', 'Three nights.'), L('character', 'VERNON'), L('dialogue', 'Four.'), L('transition', 'CUT TO:'),
     L('heading', 'FLASHBACK'), L('action', 'LOUD NOISE'), L('character', 'McCLANE'), L('dialogue', 'Yippee.')
   ]);
+});
+
+test('Fountain in: a block\'s lines run on into one paragraph; a PDF\'s page furniture stays out', () => {
+  const src = [
+    'INT. HARBOR OFFICE - DAWN', '',
+    'Gray light. Vernon asleep in his', 'chair. The chain still on the desk.', '',
+    '2.', '',
+    'KIM (CONT\'D)', 'We should call somebody. The', 'Coast Guard.', '(MORE)', '',
+    'CONTINUED:'
+  ].join('\n');
+  assert.deepEqual(plain(sp.spFromFountain(src)), [
+    L('heading', 'INT. HARBOR OFFICE - DAWN'),
+    L('action', 'Gray light. Vernon asleep in his chair. The chain still on the desk.'),
+    L('character', 'KIM'),
+    L('dialogue', 'We should call somebody. The Coast Guard.')
+  ]);
+});
+
+test('Fountain\'s title page and emphasis', () => {
+  const src = 'Title:\n    _**NO WIND**_\nCredit: Written by\nAuthor: Hugh Howey\nDraft date: First Draft\nContact:\n    Kristin Nelson\n    Nelson Literary Agency\n\nEXT. A - DAY';
+  assert.deepEqual(plain(sp.spFountainTitle(src)), { title: 'NO WIND', credit: 'Written by', author: 'Hugh Howey', draft: 'First Draft', contact: 'Kristin Nelson\nNelson Literary Agency' });
+  assert.deepEqual(plain(sp.spFountainTitle('EXT. A - DAY')), {});
+  const r = (t) => plain(sp.spRunsFromFountain(t)).map((x) => (x.b ? 'B' : '') + (x.i ? 'I' : '') + (x.u ? 'U' : '') + ':' + x.text);
+  assert.deepEqual(r('He *really* means it.'), [':He ', 'I:really', ': means it.']);
+  assert.deepEqual(r('**Bold** and ***both*** and _under_'), ['B:Bold', ': and ', 'BI:both', ': and ', 'U:under']);
+  assert.deepEqual(r('2 * 3 = 6 and snake_case'), [':2 * 3 = 6 and snake_case']);
+  assert.deepEqual(r('\\*not italic\\*'), [':*not italic*']);
+});
+
+test('Final Draft in: a file screenplain wrote reads the same as the Fountain it came from', () => {
+  const fdx = fs.readFileSync(path.join(__dirname, 'fixtures', 'screenplain.fdx'), 'utf8');
+  const fountain = fs.readFileSync(path.join(__dirname, 'fixtures', 'screenplain.fountain'), 'utf8');
+  const fromFdx = plain(sp.spFromFdx(fdx).lines).map((l) => L(l.type, l.runs.map((x) => x.text).join('')));
+  assert.deepEqual(fromFdx, plain(sp.spFromFountain(fountain)));
+});
+
+test('Final Draft in: styles, dual dialogue, a title page, (CONT\'D) off the name', () => {
+  const xml = `<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<FinalDraft DocumentType="Script" Template="No" Version="5">
+  <Content>
+    <Paragraph Type="Scene Heading" Number="1"><SceneProperties Length="1/8"/><Text>INT. GALLEY - NIGHT</Text></Paragraph>
+    <Paragraph Type="Action"><Text>The bell </Text><Text Style="Bold+Italic">rings</Text><Text> &amp; stops.</Text></Paragraph>
+    <Paragraph Type="Action"><Text></Text></Paragraph>
+    <Paragraph><DualDialogue>
+      <Paragraph Type="Character"><Text>KIM (CONT'D)</Text></Paragraph>
+      <Paragraph Type="Dialogue"><Text>Now.</Text></Paragraph>
+      <Paragraph Type="Character"><Text>VERNON</Text></Paragraph>
+      <Paragraph Type="Parenthetical"><Text>quietly</Text></Paragraph>
+      <Paragraph Type="Dialogue"><Text>Now.</Text></Paragraph>
+    </DualDialogue></Paragraph>
+    <Paragraph Type="General"><Text>THE END</Text></Paragraph>
+  </Content>
+  <TitlePage><Content>
+    <Paragraph Alignment="Center"><Text>NO WIND</Text></Paragraph>
+    <Paragraph Alignment="Center"><Text>Written by</Text></Paragraph>
+    <Paragraph Alignment="Center"><Text>Hugh Howey</Text></Paragraph>
+    <Paragraph Alignment="Left"><Text>Nelson Literary</Text></Paragraph>
+    <Paragraph Alignment="Right"><Text>Draft 2</Text></Paragraph>
+  </Content></TitlePage>
+</FinalDraft>`;
+  const { lines, title } = plain(sp.spFromFdx(xml));
+  assert.deepEqual(lines.map((l) => l.type + ':' + l.runs.map((x) => x.text).join('')), [
+    'heading:INT. GALLEY - NIGHT', 'action:The bell rings & stops.', 'character:KIM', 'dialogue:Now.',
+    'character:VERNON', 'paren:(quietly)', 'dialogue:Now.', 'action:THE END'
+  ]);
+  assert.equal(lines[1].runs[1].b && lines[1].runs[1].i, true);
+  assert.deepEqual(title, { title: 'NO WIND', credit: 'Written by', author: 'Hugh Howey', contact: 'Nelson Literary', draft: 'Draft 2' });
+});
+
+test('Final Draft out, then in again: the same script', () => {
+  const run = (text, extra = {}) => ({ text, b: false, i: false, u: false, s: false, ...extra });
+  const lines = [
+    { type: 'heading', runs: [run('int. galley - night')] },
+    { type: 'action', runs: [run('The bell '), run('rings', { i: true }), run(' <loud> & "clear".')] },
+    { type: 'character', runs: [run('Kim')] },
+    { type: 'paren', runs: [run('(quietly)')] },
+    { type: 'dialogue', runs: [run('Now.')] },
+    { type: 'transition', runs: [run('cut to:')] },
+    { type: 'shot', runs: [run('close on the bell')] }
+  ];
+  const tp = { title: 'No Wind', credit: 'Written by', author: 'Hugh Howey', draft: 'First Draft', contact: 'Nelson Literary\nDenver' };
+  const xml = sp.spToFdx(lines, tp);
+  assert.match(xml, /^<\?xml version="1.0" encoding="UTF-8" standalone="no" \?>\n<FinalDraft DocumentType="Script"/);
+  assert.match(xml, /<Text Style="Italic">rings<\/Text>/);
+  assert.match(xml, /&lt;loud&gt; &amp; &quot;clear&quot;/);
+  const back = plain(sp.spFromFdx(xml));
+  assert.deepEqual(back.lines.map((l) => l.type + ':' + l.runs.map((x) => x.text).join('')), [
+    'heading:INT. GALLEY - NIGHT', 'action:The bell rings <loud> & "clear".', 'character:KIM', 'paren:(quietly)',
+    'dialogue:Now.', 'transition:CUT TO:', 'shot:CLOSE ON THE BELL'
+  ]);
+  assert.deepEqual(back.title, { ...tp, title: 'NO WIND' });
 });

@@ -1706,7 +1706,7 @@ function bookTile(meta, opts = {}) {
         await writeBookMeta(meta.id, meta);
         renderShelves();
       }
-    } else if (/\.(docx|txt|md)$/i.test(p)) {
+    } else if (/\.(docx|txt|md|fountain|fdx)$/i.test(p)) {
       const homeShelf = library.shelves.find((s) => s.bookIds.includes(meta.id)) || library.shelves[0];
       const results = await window.neo.importFiles([p]);
       if (results.length) await addImportedBooks(results, homeShelf);
@@ -1738,7 +1738,7 @@ function bookTile(meta, opts = {}) {
     // Pocket has no File menu: export lives here and in the ⋯ sheet
     if (window.Capacitor) {
       options.push(script
-        ? { label: t('Export…'), desc: t('Fountain, through the share sheet.'), value: 'export' }
+        ? { label: t('Export…'), desc: t('Fountain or Final Draft, through the share sheet.'), value: 'export' }
         : { label: t('Export…'), desc: t('Text, Markdown, HTML, Word or EPUB, through the share sheet.'), value: 'export' });
     }
     // the ↻ on the cover, for the keyboard and screen readers
@@ -1760,8 +1760,12 @@ function bookTile(meta, opts = {}) {
     } else if (choice === 'refresh') {
       await refreshCover(meta, el);
     } else if (choice === 'export' && script) {
+      const fmt = await optionModal(t('Export “{title}”', { title: meta.title }), null, [
+        { label: 'Fountain (.fountain)', value: 'fountain' }, { label: 'Final Draft (.fdx)', value: 'fdx' }
+      ]);
+      if (!fmt) return;
       await openBook(meta.id);
-      await doExport('fountain');
+      await doExport(fmt);
     } else if (choice === 'export') {
       const fmt = await optionModal(t('Export “{title}”', { title: meta.title }), null, [
         { label: t('Text (.txt)'), value: 'txt' }, { label: t('Markdown (.md)'), value: 'md' }, { label: t('HTML (.html)'), value: 'html' },
@@ -4917,11 +4921,17 @@ function spToFountain(lines, title = {}) {
 // Fountain (or a plain-text script) into lines: [{type, text}], the text
 // keeping Fountain's *emphasis* for the caller to set. The title page is
 // left out; notes, boneyard, sections, synopses and page breaks too.
+// A speaker's (CONT'D) is NEO's to draw: one typed in, or carried in from
+// Final Draft or a PDF, comes off the name
+const spDropContd = (t) => String(t || '').replace(/\s*\(\s*cont(?:['’]?d|inued)\s*\)\s*$/i, '').trim();
+// lines a PDF's text carries that aren't the script: page numbers, (MORE),
+// CONTINUED
+const SP_PDF_NOISE = /^(?:\d{1,3}[A-Z]?\.|\(MORE\)|\(?CONTINUED\)?:?|CONTINUED:)$/i;
 function spFromFountain(src) {
   let text = String(src || '').replace(/\r\n?/g, '\n').replace(/\t/g, '    ');
   text = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\[\[[\s\S]*?\]\]/g, '');
   let rows = text.split('\n');
-  if (/^(title|credit|author|authors|source|draft date|date|contact|copyright|notes|revision)\s*:/i.test(rows[0] || '')) {
+  if (SP_TITLE_KEY.test(rows[0] || '')) {
     let k = 0;
     while (k < rows.length && rows[k].trim() !== '') k++;
     rows = rows.slice(k);
@@ -4929,31 +4939,176 @@ function spFromFountain(src) {
   const blank = (k) => k < 0 || k >= rows.length || rows[k].trim() === '';
   const out = [];
   let inSpeech = false;
+  // a block's lines run on into one paragraph: Fountain keeps a writer's
+  // line breaks, and a script copied from a PDF is broken at every line
+  let joinable = false;
+  const push = (type, t, join = false) => {
+    const last = out[out.length - 1];
+    if (join && joinable && last && last.type === type) last.text += ' ' + t;
+    else out.push({ type, text: t });
+    joinable = join;
+  };
   for (let k = 0; k < rows.length; k++) {
     const s = rows[k].trim();
-    if (!s) { inSpeech = false; continue; }
-    if (/^={3,}$/.test(s) || /^#/.test(s) || /^=[^=]/.test(s) || s === '=') continue;
+    if (!s) { inSpeech = false; joinable = false; continue; }
+    if (/^={3,}$/.test(s) || /^#/.test(s) || /^=[^=]/.test(s) || s === '=' || SP_PDF_NOISE.test(s)) continue;
     if (inSpeech) {
-      if (/^\(.*\)$/.test(s)) out.push({ type: 'paren', text: s });
-      else out.push({ type: 'dialogue', text: s.replace(/^~\s*/, '') });
+      if (/^\(.*\)$/.test(s)) push('paren', s);
+      else push('dialogue', s.replace(/^~\s*/, ''), true);
       continue;
     }
-    if (s.startsWith('!')) { out.push({ type: 'action', text: s.slice(1).trim() }); continue; }
-    if (/^\.[^.\s]/.test(s)) { out.push({ type: 'heading', text: s.slice(1).trim().replace(/\s*#[^#\s]+#$/, '') }); continue; }
-    if (s.startsWith('>') && s.endsWith('<')) { out.push({ type: 'action', text: s.slice(1, -1).trim() }); continue; }
-    if (s.startsWith('>')) { out.push({ type: 'transition', text: s.slice(1).trim() }); continue; }
-    if (s.startsWith('~')) { out.push({ type: 'action', text: s.slice(1).trim() }); continue; }
-    if (s.startsWith('@')) { out.push({ type: 'character', text: s.slice(1).trim().replace(/\s*\^$/, '') }); inSpeech = true; continue; }
-    if (SP_HEAD_RE.test(s) && blank(k - 1)) { out.push({ type: 'heading', text: s.replace(/\s*#[^#\s]+#$/, '') }); continue; }
-    if (spLooksLikeTransition(s) && blank(k - 1) && blank(k + 1)) { out.push({ type: 'transition', text: s }); continue; }
+    if (s.startsWith('!')) { push('action', s.slice(1).trim(), true); continue; }
+    if (/^\.[^.\s]/.test(s)) { push('heading', s.slice(1).trim().replace(/\s*#[^#\s]+#$/, '')); continue; }
+    if (s.startsWith('>') && s.endsWith('<')) { push('action', s.slice(1, -1).trim()); continue; }
+    if (s.startsWith('>')) { push('transition', s.slice(1).trim()); continue; }
+    if (s.startsWith('~')) { push('action', s.slice(1).trim()); continue; }
+    if (s.startsWith('@')) { push('character', spDropContd(s.slice(1).trim().replace(/\s*\^$/, ''))); inSpeech = true; continue; }
+    if (SP_HEAD_RE.test(s) && blank(k - 1)) { push('heading', s.replace(/\s*#[^#\s]+#$/, '')); continue; }
+    if (spLooksLikeTransition(s) && blank(k - 1) && blank(k + 1)) { push('transition', s); continue; }
     if (blank(k - 1) && !blank(k + 1) && spLooksLikeCharacter(s.replace(/\s*\^$/, ''))) {
-      out.push({ type: 'character', text: s.replace(/\s*\^$/, '') });
+      push('character', spDropContd(s.replace(/\s*\^$/, '')));
       inSpeech = true;
       continue;
     }
-    out.push({ type: 'action', text: s });
+    push('action', s, true);
   }
   return out;
+}
+// Fountain's title page: Title, Credit, Author, Draft date, Contact (a value
+// on its own line or on indented lines below its key). Markup comes off.
+const SP_TITLE_KEY = /^(title|credit|author|authors|source|draft date|date|contact|copyright|notes|revision)\s*:/i;
+function spFountainTitle(src) {
+  const rows = String(src || '').replace(/\r\n?/g, '\n').replace(/\t/g, '    ').split('\n');
+  const out = {};
+  if (!SP_TITLE_KEY.test(rows[0] || '')) return out;
+  const vals = {};
+  let key = null;
+  for (const row of rows) {
+    if (!row.trim()) break;
+    const m = !/^\s/.test(row) && row.match(/^([^:]+):\s*(.*)$/);
+    if (m) { key = m[1].trim().toLowerCase(); vals[key] = m[2].trim() ? [m[2].trim()] : []; } else if (key) vals[key].push(row.trim());
+  }
+  const plain = (a) => (a || []).map((r) => spRunsFromFountain(r.replace(/^>\s*|\s*<$/g, '')).map((x) => x.text).join('').trim()).filter(Boolean);
+  if (vals.title) out.title = plain(vals.title).join(' ');
+  if (vals.credit) out.credit = plain(vals.credit).join(' ');
+  if (vals.author || vals.authors) out.author = plain(vals.author || vals.authors).join(' & ');
+  if (vals['draft date'] || vals.date) out.draft = plain(vals['draft date'] || vals.date).join('\n');
+  if (vals.contact) out.contact = plain(vals.contact).join('\n');
+  return out;
+}
+// Fountain's emphasis as runs: *italic*, **bold**, ***both***, _underline_,
+// with a backslash keeping a mark as itself
+function spRunsFromFountain(t) {
+  const runs = [];
+  const st = { b: false, i: false, u: false };
+  let buf = '';
+  const flush = () => { if (buf) runs.push({ text: buf, b: st.b, i: st.i, u: st.u, s: false }); buf = ''; };
+  // a mark only counts where a closing one follows on the line
+  const closes = (from, mark) => t.indexOf(mark, from) > -1;
+  for (let k = 0; k < t.length; k++) {
+    const c = t[k];
+    if (c === '\\' && k + 1 < t.length) { buf += t[++k]; continue; }
+    if (c === '*') {
+      let n = 1;
+      while (t[k + n] === '*' && n < 3) n++;
+      const on = n === 3 ? st.b && st.i : n === 2 ? st.b : st.i;
+      if (on || closes(k + n, '*'.repeat(n))) {
+        flush();
+        if (n === 3) { st.b = !on; st.i = !on; } else if (n === 2) st.b = !st.b; else st.i = !st.i;
+        k += n - 1;
+        continue;
+      }
+    }
+    if (c === '_' && (st.u || closes(k + 1, '_'))) { flush(); st.u = !st.u; continue; }
+    buf += c;
+  }
+  flush();
+  return runs;
+}
+// Final Draft's .fdx is XML: a <Paragraph Type="…"> per line, its words in
+// <Text Style="Bold+Italic"> runs. Read without a parser, so the same code
+// runs in the tests. Dual dialogue comes in as two speeches in a row.
+const SP_FDX_TYPES = {
+  'scene heading': 'heading', action: 'action', character: 'character', parenthetical: 'paren',
+  dialogue: 'dialogue', transition: 'transition', shot: 'shot', lyrics: 'dialogue', general: 'action'
+};
+const spXmlText = (s) => String(s).replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+  .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+  .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+const spXmlAttr = (tag, name) => { const m = tag.match(new RegExp('\\b' + name + '="([^"]*)"')); return m ? spXmlText(m[1]) : ''; };
+function spFdxParas(xml) {
+  xml = xml.replace(/<Paragraph\b[^>]*>\s*<DualDialogue>([\s\S]*?)<\/DualDialogue>\s*<\/Paragraph>/g, '$1');
+  const out = [];
+  for (const m of xml.matchAll(/<Paragraph\b([^>]*)>([\s\S]*?)<\/Paragraph>/g)) {
+    const runs = [];
+    for (const r of m[2].matchAll(/<Text\b([^>]*?)(?:\/>|>([\s\S]*?)<\/Text>)/g)) {
+      const text = spXmlText(r[2] || '').replace(/\s*\n\s*/g, ' ');
+      if (!text) continue;
+      const style = spXmlAttr(r[1], 'Style').toLowerCase().split('+');
+      runs.push({ text, b: style.includes('bold'), i: style.includes('italic'), u: style.includes('underline'), s: style.includes('strikeout') });
+    }
+    out.push({ type: spXmlAttr(m[1], 'Type'), align: spXmlAttr(m[1], 'Alignment').toLowerCase(), runs });
+  }
+  return out;
+}
+function spFromFdx(xml) {
+  xml = String(xml || '');
+  const body = (xml.match(/<Content>([\s\S]*?)<\/Content>/) || [])[1] || '';
+  const lines = [];
+  for (const p of spFdxParas(body)) {
+    const text = p.runs.map((r) => r.text).join('').trim();
+    if (!text) continue;
+    const type = SP_FDX_TYPES[p.type.toLowerCase()] || 'action';
+    let runs = p.runs;
+    if (type === 'character') runs = [{ text: spDropContd(text), b: false, i: false, u: false, s: false }];
+    if (type === 'paren' && !text.startsWith('(')) runs = [{ text: '(' + text + ')', b: false, i: false, u: false, s: false }];
+    lines.push({ type, runs });
+  }
+  // the title page: the centered lines are the title, the credit and the
+  // writer; lines set left, below them, the contact; set right, the draft
+  const title = {};
+  const page = (xml.match(/<TitlePage>[\s\S]*?<Content>([\s\S]*?)<\/Content>/) || [])[1] || '';
+  const tp = spFdxParas(page).map((p) => ({ align: p.align, text: p.runs.map((r) => r.text).join('').trim() })).filter((p) => p.text);
+  const centered = tp.filter((p) => p.align === 'center').map((p) => p.text);
+  if (centered.length) {
+    title.title = centered[0];
+    const c = centered.findIndex((x, k) => k > 0 && /^(?:written by|screenplay by|teleplay by|story by|by)$/i.test(x));
+    if (c > 0) { title.credit = centered[c]; if (centered[c + 1]) title.author = centered[c + 1]; } else if (centered[1]) title.author = centered[1];
+  }
+  const left = tp.filter((p) => p.align !== 'center' && p.align !== 'right').map((p) => p.text);
+  const right = tp.filter((p) => p.align === 'right').map((p) => p.text);
+  if (left.length) title.contact = left.join('\n');
+  if (right.length) title.draft = right.join('\n');
+  return { lines, title };
+}
+// …and back out: lines [{type, runs}] (runs as paraRuns gives them)
+function spToFdx(lines, title = {}) {
+  const NAMES = { heading: 'Scene Heading', action: 'Action', character: 'Character', paren: 'Parenthetical', dialogue: 'Dialogue', transition: 'Transition', shot: 'Shot' };
+  const CAPS = ['heading', 'character', 'transition', 'shot'];
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const textEl = (r, caps) => {
+    const style = [r.b && 'Bold', r.i && 'Italic', r.u && 'Underline', r.s && 'Strikeout'].filter(Boolean).join('+');
+    return `      <Text${style ? ` Style="${style}"` : ''}>${esc(caps ? r.text.toUpperCase() : r.text)}</Text>\n`;
+  };
+  let out = '<?xml version="1.0" encoding="UTF-8" standalone="no" ?>\n<FinalDraft DocumentType="Script" Template="No" Version="1">\n\n  <Content>\n';
+  for (const l of lines) {
+    const runs = (l.runs || []).filter((r) => r.text);
+    if (!runs.length) continue;
+    out += `    <Paragraph Type="${NAMES[l.type] || 'Action'}">\n${runs.map((r) => textEl(r, CAPS.includes(l.type))).join('')}    </Paragraph>\n`;
+  }
+  out += '  </Content>\n';
+  const para = (text, align) => `    <Paragraph Alignment="${align}">\n      <Text>${esc(text)}</Text>\n    </Paragraph>\n`;
+  const gap = (n) => '    <Paragraph Alignment="Center">\n      <Text></Text>\n    </Paragraph>\n'.repeat(n);
+  const tp = [];
+  if (title.title) tp.push(gap(18), para(String(title.title).toUpperCase(), 'Center'));
+  if (title.credit) tp.push(gap(1), para(title.credit, 'Center'));
+  if (title.author) tp.push(gap(1), para(title.author, 'Center'));
+  const rows = (s) => String(s || '').split('\n').map((x) => x.trim()).filter(Boolean);
+  if (rows(title.draft).length || rows(title.contact).length) tp.push(gap(16));
+  for (const r of rows(title.draft)) tp.push(para(r, 'Right'));
+  for (const r of rows(title.contact)) tp.push(para(r, 'Left'));
+  if (tp.length) out += '  <TitlePage>\n    <Content>\n' + tp.join('').replace(/^ {4}/gm, '      ') + '    </Content>\n  </TitlePage>\n';
+  return out + '</FinalDraft>\n';
 }
 // ---- end of screenplay rules ----
 
@@ -5589,7 +5744,7 @@ function spPaste(e, body, chId) {
     const doc = new DOMParser().parseFromString(html, 'text/html');
     lines = [...doc.body.querySelectorAll('p')].map((p) => ({ type: spType(p), html: paraRuns(p.innerHTML, false).filter((r) => r.text).map(runHtml).join('') }));
   } else if (text && /\n/.test(text.trim())) {
-    lines = spFromFountain(text).map((l) => ({ type: l.type, html: markdownInline(l.text) || escHtml(l.text) }));
+    lines = spFromFountain(text).map((l) => ({ type: l.type, html: spRunsFromFountain(l.text).map((x) => runHtml(x)).join('') }));
   }
   if (!lines || !lines.length) return false;
   e.preventDefault();
@@ -5656,6 +5811,34 @@ function spPasteMany(lines, body, chId) {
   breakRun++;
   spSchedule();
   revealCaret();
+}
+
+// A .fountain or .fdx file, dropped on a shelf or picked with Import: a new
+// script on that shelf, title page and all
+async function importScript(r, shelf) {
+  const parsed = r.script === 'fdx'
+    ? spFromFdx(r.source)
+    : { lines: spFromFountain(r.source).map((l) => ({ type: l.type, runs: spRunsFromFountain(l.text) })), title: spFountainTitle(r.source) };
+  if (!parsed.lines.length) return false;
+  const tp = parsed.title || {};
+  const title = tp.title || r.name;
+  const meta = await window.neo.createBook({ author: tp.author || displayAuthor(), title });
+  const chId = 'ch-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
+  const html = parsed.lines.map((l) => `<p${l.type === 'action' ? '' : ` class="sp-${l.type}"`}>${l.runs.map((x) => runHtml(x)).join('') || '<br>'}</p>`).join('');
+  await window.neo.writeChapter(meta.id, chId, html);
+  meta.title = title;
+  meta.format = 'screenplay';
+  meta.chapterOrder = [chId];
+  meta.credit = tp.credit || t('Written by');
+  if (tp.draft) meta.draft = tp.draft;
+  meta.tabNames = { notes: (library.tabDefaults && library.tabDefaults.notes) || 'Notes', outline: 'Outline' };
+  meta.wordCount = parsed.lines.reduce((n, l) => n + countWords(l.runs.map((x) => x.text).join('')), 0);
+  // the contact block is the writer's, for every script: one carried in
+  // fills it only when it's still empty
+  if (tp.contact && !library.scriptContact) library.scriptContact = tp.contact;
+  await writeBookMeta(meta.id, meta);
+  await placeTitle(shelf, meta.id);
+  return true;
 }
 
 // ---- out of NEO: the PDF, as the industry prints a script, and Fountain ----
@@ -5769,13 +5952,17 @@ function spFountain() {
       return lead + mark + core + mark + trail;
     }).join('')
   }));
-  return spToFountain(lines, {
+  return spToFountain(lines, spTitleFields());
+}
+// what the title page says, for the files a script leaves as
+function spTitleFields() {
+  return {
     title: book.title && !isUntitled(book.title) ? book.title : '',
     credit: book.credit === undefined ? t('Written by') : book.credit,
     author: book.author || '',
     draft: book.draft || '',
     contact: library.scriptContact || ''
-  });
+  };
 }
 async function spExport(format) {
   flushAllSaves();
@@ -5783,6 +5970,7 @@ async function spExport(format) {
   try {
     let payload;
     if (format === 'pdf') payload = { format: 'pdf', defaultName, content: await spPdfHtml(), print: 'screenplay' };
+    else if (format === 'fdx') payload = { format: 'fdx', defaultName, content: spToFdx(spExportLines(), spTitleFields()) };
     else payload = { format: 'fountain', defaultName, content: spFountain() };
     const saved = await window.neo.exportSave(payload);
     if (saved) toast(t('Exported: {file}', { file: saved.split('/').pop() }));
@@ -8276,8 +8464,14 @@ const escHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').re
 async function addImportedBooks(results, shelf) {
   shelf = shelf || shelvesFor(currentAuthor().id)[0] || library.shelves[0];
   let ok = 0;
+  let scripts = 0;
   for (const r of results) {
     if (r.error) { toast(t('Couldn’t import {name}: {error}', { name: r.name, error: r.error }), 6000); continue; }
+    if (r.script) {
+      if (await importScript(r, shelf)) scripts++;
+      else toast(t('Couldn’t import {name}: {error}', { name: r.name, error: t('no script in it') }), 6000);
+      continue;
+    }
     // title/byline harvested from the document beat the filename;
     // passing the title in gives the book folder a readable name too
     const meta = await window.neo.createBook({
@@ -8316,6 +8510,7 @@ async function addImportedBooks(results, shelf) {
   await writeLibrary(library);
   if (!$('#bookshelf-view').hidden) renderShelves();
   if (ok) toast(t('{n} books imported onto “{shelf}” — chapters and scene breaks detected', { n: ok, shelf: shelf.name }), 6000);
+  else if (scripts) toast(t('{n} scripts imported onto “{shelf}”', { n: scripts, shelf: shelf.name }), 6000);
 }
 
 async function importBooks() {
@@ -10539,7 +10734,7 @@ function plainError(err) {
 async function doExport(format, chId = null) {
   if (!book) { toast(t('Open a book first')); return; }
   // a script leaves as a PDF set the way scripts print, or as Fountain
-  if (isScript()) { await spExport(format === 'pdf' ? 'pdf' : 'fountain'); return; }
+  if (isScript()) { await spExport(['pdf', 'fdx'].includes(format) ? format : 'fountain'); return; }
   flushAllSaves();
   const one = chId ? chapterExportData(chId) : null;
   if (chId && !one) return;

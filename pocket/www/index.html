@@ -233,7 +233,7 @@
           `<div class="pm-row"><span class="pm-label">On-screen keyboard</span><span class="pm-seg"><button data-act="keyboard">${window.pocketSoftKeyboardOn && !window.pocketSoftKeyboardOn() ? 'Off' : '✓ On'}</button></span></div>`) +
         (typeof book !== 'undefined' && book
           ? `<div class="pm-row"><span class="pm-label">Export</span><span class="pm-seg pm-wrap">` +
-            (script ? [['fountain', 'Fountain']] : [['txt', 'Text'], ['md', 'Markdown'], ['html', 'HTML'], ['docx', 'Word'], ['epub', 'EPUB']]).map(([f, l]) => `<button data-msg='${JSON.stringify({ type: 'export', format: f })}'>${l}</button>`).join('') + '</span></div>'
+            (script ? [['fountain', 'Fountain'], ['fdx', 'Final Draft']] : [['txt', 'Text'], ['md', 'Markdown'], ['html', 'HTML'], ['docx', 'Word'], ['epub', 'EPUB']]).map(([f, l]) => `<button data-msg='${JSON.stringify({ type: 'export', format: f })}'>${l}</button>`).join('') + '</span></div>'
           : '') +
         `<div class="pm-row pm-actions"><button data-msg='${JSON.stringify({ type: 'stats' })}'>Goals…</button><button data-msg='${JSON.stringify({ type: 'help' })}'>Keyboard shortcuts</button><button data-act="close">Done</button></div>`;
     }

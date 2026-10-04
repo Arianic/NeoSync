@@ -1083,6 +1083,11 @@ async function importFile(fp) {
   const name = path.basename(fp).replace(/\.[^.]+$/, '');
   const ext = path.extname(fp).toLowerCase();
   let paras = [];
+  // a script (Fountain, or Final Draft's XML) is read as it stands; the
+  // window sorts it into its elements (spFromFountain, spFromFdx in app.js)
+  if (ext === '.fountain' || ext === '.fdx') {
+    return { name, script: ext.slice(1), source: fs.readFileSync(fp, 'utf8').replace(/^\uFEFF/, '') };
+  }
 
   if (ext === '.docx') {
     const JSZip = require('jszip');
@@ -1243,7 +1248,7 @@ async function importFile(fp) {
 ipcMain.handle('import:files', async (_e, paths) => {
   const out = [];
   for (const fp of paths || []) {
-    if (!/\.(docx|txt|md)$/i.test(fp)) continue;
+    if (!/\.(docx|txt|md|fountain|fdx)$/i.test(fp)) continue;
     try {
       out.push(await importFile(fp));
     } catch (err) {
@@ -1259,7 +1264,7 @@ ipcMain.handle('import:pick', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {
     title: t('Bring your manuscripts home'),
     properties: ['openFile', 'multiSelections'],
-    filters: [{ name: t('Manuscripts'), extensions: ['docx', 'txt', 'md'] }]
+    filters: [{ name: t('Manuscripts'), extensions: ['docx', 'txt', 'md', 'fountain', 'fdx'] }]
   });
   if (canceled || !filePaths.length) return [];
   const out = [];
@@ -1679,7 +1684,8 @@ function buildMenu() {
           label: t('Export'),
           submenu: scriptState.on ? [
             { label: 'PDF (.pdf)', click: () => sendToWindow({ type: 'export', format: 'pdf' }) },
-            { label: 'Fountain (.fountain)', click: () => sendToWindow({ type: 'export', format: 'fountain' }) }
+            { label: 'Fountain (.fountain)', click: () => sendToWindow({ type: 'export', format: 'fountain' }) },
+            { label: 'Final Draft (.fdx)', click: () => sendToWindow({ type: 'export', format: 'fdx' }) }
           ] : [
             { label: t('Plain Text (.txt)'), click: () => sendToWindow({ type: 'export', format: 'txt' }) },
             { label: 'Markdown (.md)', click: () => sendToWindow({ type: 'export', format: 'md' }) },
