@@ -205,6 +205,19 @@ function writeLibrary(lib = library) {
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
+// The counters change as the writer types. Swapping their text node (what
+// `textContent =` does, even for the same words) ends the engine's undo run,
+// and ⌘Z then took back one letter at a time (#241). Changing the node's own
+// text leaves the run alone.
+function setText(el, text) {
+  const node = el.firstChild;
+  if (node && node.nodeType === Node.TEXT_NODE && !node.nextSibling) {
+    if (node.data !== text) node.data = text;
+  } else if (el.textContent !== text) {
+    el.textContent = text;
+  }
+}
+
 // Platform-aware key labels: Macs read ⌘⇧X, everyone else reads Ctrl+Shift+X
 const IS_MAC = navigator.platform.toLowerCase().includes('mac');
 // a touch screen (Pocket): nothing to hover, no right button
@@ -2453,6 +2466,20 @@ function copyrightStarter() {
 function wireChapterBody(body, chId) {
   body.addEventListener('focus', () => { currentChapterId = chId; updateCounters(); highlightNav(); });
 
+  // ⌘Z takes back what was typed since the last pause, not a whole page of
+  // it: a second of quiet closes the engine's undo run (the caret stays put).
+  // Not on a phone, where the keyboard keeps its own run of words in hand.
+  let runTimer = null;
+  const endTypingRunSoon = () => {
+    if (IS_POCKET) return;
+    clearTimeout(runTimer);
+    runTimer = setTimeout(() => {
+      if (composing || document.activeElement !== body) return;
+      const sel = window.getSelection();
+      if (!sel.rangeCount || !sel.isCollapsed || !body.contains(sel.anchorNode)) return;
+      sel.collapse(sel.anchorNode, sel.anchorOffset);
+    }, 1000);
+  };
   body.addEventListener('input', () => {
     breakRun = 0; // fresh typing: ⌘Z belongs to the engine again
     markDialogueOpening(body);
@@ -2463,6 +2490,7 @@ function wireChapterBody(body, chId) {
     updateCounters();
     scheduleNavRefresh();
     if (!typewriterEnabled) revealCaret();
+    endTypingRunSoon();
   });
   // paste without formatting
   body.addEventListener('paste', (e) => {
@@ -2560,14 +2588,28 @@ function wireChapterBody(body, chId) {
   });
   // the moment writing hits a ghost, it becomes prose
   // (it keeps its data-sec-id so the outline knows it's been written)
-  body.addEventListener('beforeinput', () => {
+  const ghostWas = {}; // each ghost's own words, from before it was written over
+  body.addEventListener('beforeinput', (e) => {
+    // undo and redo give words back; they don't write
+    if (e.inputType && e.inputType.startsWith('history')) return;
     const sel = window.getSelection();
     if (!sel.rangeCount) return;
     let el = sel.anchorNode;
     if (el && el.nodeType === Node.TEXT_NODE) el = el.parentElement;
     const ghost = el && el.closest ? el.closest('p.ghost') : null;
     if (ghost && body.contains(ghost)) {
+      const secId = ghost.dataset.secId;
+      if (secId && !(secId in ghostWas)) ghostWas[secId] = ghost.textContent;
       ghost.classList.remove('ghost');
+    }
+  });
+  // …and when undo brings a ghost's words back, the ghost comes back with
+  // them: the class isn't part of the engine's undo, so it follows the text
+  body.addEventListener('input', (e) => {
+    if (!e.inputType || !e.inputType.startsWith('history')) return;
+    for (const p of body.querySelectorAll('p[data-sec-id]')) {
+      const was = ghostWas[p.dataset.secId];
+      if (was !== undefined) p.classList.toggle('ghost', p.textContent === was);
     }
   });
 }
@@ -5589,11 +5631,34 @@ function outlineLine(kind, chId, secId, index, label, text) {
     return head.toString().length === 0;
   };
 
+  // the line the writer is on, so ⌘Z puts the caret back on it
+  const here = () => (secId ? { secId } : { chId });
+
   txt.addEventListener('keydown', (e) => {
+    // Typing in a line is the engine's to undo. Once it has nothing left to
+    // undo here, the outline's structure is ours: a line added, removed, or
+    // turned into a chapter or a section comes back with ⌘Z. (The engine
+    // answers a ⌘Z the moment this handler returns, so a moment later we know
+    // whether it had anything to take back in this line.)
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+      const top = undoStack[undoStack.length - 1];
+      if (top && top.outlineFocus) {
+        let engineUndid = false;
+        const heard = () => { engineUndid = true; };
+        txt.addEventListener('beforeinput', heard, { once: true });
+        setTimeout(() => {
+          txt.removeEventListener('beforeinput', heard);
+          if (!engineUndid && undoStack[undoStack.length - 1] === top) structuralUndo();
+        }, 0);
+      }
+      e.stopPropagation();
+      return;
+    }
     if (e.key === 'Enter') {
       e.preventDefault();
       const above = caretAtStart();
       save();
+      snapshotStructure(kind === 'chapter' ? 'outline new chapter' : 'outline new section', { outlineFocus: here() });
       if (kind === 'chapter') {
         const at = book.chapterOrder.indexOf(chId) + (above ? 0 : 1);
         const newId = createChapterAt(at);
@@ -5630,6 +5695,7 @@ function outlineLine(kind, chId, secId, index, label, text) {
         return;
       }
       save();
+      snapshotStructure('outline chapter to section', { outlineFocus: here() });
       book.sectionNotes[prevCh] = book.sectionNotes[prevCh] || [];
       const newSec = { id: 'sec-' + Date.now().toString(36), text: txt.textContent.trim() };
       book.sectionNotes[prevCh].push(newSec);
@@ -5642,19 +5708,28 @@ function outlineLine(kind, chId, secId, index, label, text) {
       e.preventDefault();
       if (kind !== 'section') return;
       save();
+      snapshotStructure('outline section to chapter', { outlineFocus: here() });
       const list = book.sectionNotes[chId];
-      const sec = list.find((s) => s.id === secId);
-      list.splice(list.indexOf(sec), 1);
+      const from = list.findIndex((s) => s.id === secId);
+      // the section and the ones after it leave together, so the book's order
+      // holds (B in A B C: B and C make the next chapter, A stays). Sections
+      // already written over keep their prose here, so those stay here too.
+      const [sec, ...after] = list.splice(from);
+      const carry = after.length > 0 && !after.some((s) => sectionWritten(chId, s.id));
+      if (!carry) list.push(...after);
       const at = book.chapterOrder.indexOf(chId) + 1;
       const newId = createChapterAt(at);
       book.chapterNotes[newId] = sec.text;
+      if (carry) book.sectionNotes[newId] = after;
       scheduleMetaSave();
       syncGhosts(chId);
+      if (carry) syncGhosts(newId);
       renderOutline({ chId: newId });
     }
     if (e.key === 'Backspace' && txt.textContent.trim() === '') {
       e.preventDefault();
       if (kind === 'section') {
+        snapshotStructure('outline section removed', { outlineFocus: here() });
         const list = book.sectionNotes[chId] || [];
         const focus = focusAfterSectionRemoved(list, index, chId);
         book.sectionNotes[chId] = list.filter((s) => s.id !== secId);
@@ -5662,6 +5737,7 @@ function outlineLine(kind, chId, secId, index, label, text) {
         syncGhosts(chId);
         renderOutline(focus);
       } else if (book.chapterOrder.filter((c) => isStory(c)).length > 1 && countWords(chapterText(chId)) === 0) {
+        snapshotStructure('outline chapter removed', { outlineFocus: here() });
         const prevCh = storyBefore(chId) || book.chapterOrder.find((c) => c !== chId && isStory(c));
         deleteChapterQuiet(chId).then(() => renderOutline({ chId: prevCh }));
       }
@@ -5678,6 +5754,7 @@ function outlineLine(kind, chId, secId, index, label, text) {
       const choice = await optionModal(t('Delete this section?'), null,
         [{ label: t('Delete section'), desc: t('Removes the outline line and its gray ghost from the manuscript. Written prose is never touched.'), danger: true, value: 'delete' }]);
       if (choice === 'delete') {
+        snapshotStructure('outline section removed', { outlineFocus: here() });
         const list = book.sectionNotes[chId] || [];
         const focus = focusAfterSectionRemoved(list, index, chId);
         book.sectionNotes[chId] = list.filter((s) => s.id !== secId);
@@ -5691,6 +5768,12 @@ function outlineLine(kind, chId, secId, index, label, text) {
   line.appendChild(num);
   line.appendChild(txt);
   return line;
+}
+
+// a section whose outline line the writer has written over: prose of their
+// own now stands where its gray ghost was
+function sectionWritten(chId, secId) {
+  return !!document.querySelector(`.chapter[data-id="${chId}"] .chapter-body p[data-sec-id="${secId}"]:not(.ghost)`);
 }
 
 // Push section notes into the manuscript as gray ghost paragraphs,
@@ -5877,17 +5960,17 @@ function updateCounters() {
   if (!book) return;
   const total = bookWordCount();
   const wc = $('#word-counter');
-  if (wordMode === 'book') wc.textContent = t('{n} words', { n: total });
+  if (wordMode === 'book') setText(wc, t('{n} words', { n: total }));
   const cur = book.chapterOrder.includes(currentChapterId) ? currentChapterId : null;
   const solo = soloStory();
   if (wordMode !== 'book') {
     const n = cur ? chapterWords(cur) : 0;
-    wc.textContent = cur && chapterKind(cur) !== 'chapter'
+    setText(wc, cur && chapterKind(cur) !== 'chapter'
       ? t('{name}: {n} words', { name: chapterName(cur), n })
-      : t('ch. {ch}: {n} words', { ch: cur ? chapterNumber(cur) : 0, n });
+      : t('ch. {ch}: {n} words', { ch: cur ? chapterNumber(cur) : 0, n }));
   }
   const pos = $('#pos-counter');
-  pos.textContent = library.posMode === 'page'
+  setText(pos, library.posMode === 'page'
     ? (cur ? t('page {p} of {total}', { p: currentPage(cur), total: pageCount(total) }) : t('{n} pages', { n: pageCount(total) }))
     : !cur
     ? (numberedChapters() > 1 ? t('{n} chapters', { n: numberedChapters() }) : '')
@@ -5895,7 +5978,7 @@ function updateCounters() {
       ? '' // a chapterless story needs no chapter locator
       : chapterKind(cur) !== 'chapter'
         ? chapterName(cur)
-        : t('chapter {ch} of {total}', { ch: chapterNumber(cur), total: numberedChapters(book, cur) });
+        : t('chapter {ch} of {total}', { ch: chapterNumber(cur), total: numberedChapters(book, cur) }));
   // cache for the bookshelf progress bar
   if (book.wordCount !== total) {
     // only a true crossing earns a painting — a story that was already long
@@ -5943,16 +6026,16 @@ function trackDailyWords(total) {
   const gc = $('#goal-counter');
   if (sprint && !sprint.done) {
     const sprintWords = total - sprint.startCount;
-    gc.textContent = `⚡ ${fmtNum(sprintWords)} / ${fmtNum(sprint.target)}`;
+    setText(gc, `⚡ ${fmtNum(sprintWords)} / ${fmtNum(sprint.target)}`);
     if (sprintWords >= sprint.target) {
       sprint.done = true;
       toast(t('Sprint complete — {n} words. Well earned.', { n: sprintWords }), 6000);
     }
   } else {
     const goal = library.dailyGoal || 0;
-    gc.textContent = goal
+    setText(gc, goal
       ? t('{n} / {goal} today', { n: wordsToday, goal })
-      : t('{n} today', { n: wordsToday });
+      : t('{n} today', { n: wordsToday }));
     gc.classList.toggle('goal-met', goal > 0 && wordsToday >= goal);
   }
 }
@@ -6002,7 +6085,7 @@ document.addEventListener('selectionchange', () => {
     if (el && el.closest && el.closest('.chapter-body')) {
       const n = countWords(sel.toString());
       if (n > 0) {
-        $('#word-counter').textContent = t('{n} selected', { n });
+        setText($('#word-counter'), t('{n} selected', { n }));
         return;
       }
     }
@@ -6499,6 +6582,7 @@ function snapshotStructure(label, opts) {
   undoStack.push({
     label,
     rejoin: !!(opts && opts.rejoin),
+    outlineFocus: (opts && opts.outlineFocus) || null, // the outline line to return to
     caret: captureCaret(),
     chapterOrder: [...book.chapterOrder],
     chapterKinds: { ...(book.chapterKinds || {}) },
@@ -6534,7 +6618,7 @@ async function structuralUndo() {
   renderChapters();
   renderStickies();
   if (currentTab === 'darlings') renderDarlings();
-  if (currentTab === 'outline') renderOutline();
+  if (currentTab === 'outline') renderOutline(snap.outlineFocus || undefined);
   updateCounters();
   restoreCaret(snap.caret); // back to work, no announcement
   if (snap.rejoin) rejoinAtCaret();
