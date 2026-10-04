@@ -3969,6 +3969,23 @@ function frenchTypography() {
   return /^fr-CA$/i.test(NeoI18n.getLocale()) ? 'ca' : 'fr';
 }
 
+// ⌘1–4 (Ctrl+1–4): Manuscript, Notes, Outline, Darlings. Matches the physical
+// key, so it also works where the digit row needs Shift (AZERTY). The menu
+// item does the same job and is the way in when a layout still gets past this.
+function goToTab(name) {
+  if (!book || $('#editor-view').hidden || name === currentTab) return;
+  if (document.querySelector('.modal-backdrop:not([hidden])')) return;
+  switchTab(name);
+}
+const TAB_KEYS = { Digit1: 'manuscript', Digit2: 'notes', Digit3: 'outline', Digit4: 'darlings' };
+document.addEventListener('keydown', (e) => {
+  const name = TAB_KEYS[e.code];
+  if (!name || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.isComposing) return;
+  if ($('#editor-view').hidden) return;
+  e.preventDefault(); // the menu accelerator would otherwise fire the same switch twice
+  goToTab(name);
+});
+
 // Titles, outline lines, notes and shelf names get the same typography as
 // the manuscript (which calls smartKeys itself). Capture phase, because
 // those fields keep their keystrokes from bubbling to the page.
@@ -7748,6 +7765,7 @@ function shortcutSections() {
       [K('⌘⇧O', 'Ctrl+Shift+O'), tk('Cycle focus mode'), tk('Off → paragraph → sentence → off.')],
       [K('⌥⌘↓', 'Ctrl+Alt+↓'), tk('Go to the next chapter')],
       [K('⌥⌘↑', 'Ctrl+Alt+↑'), tk('Go to the previous chapter')],
+      [K('⌘1 – ⌘4', 'Ctrl+1 – Ctrl+4'), tk('Go to Manuscript, Notes, Outline or Darlings')],
       [['F6', K('⌃Tab', 'Ctrl+Tab')], tk('Move between the page, the chapters, the notes and the bottom bar'), tk('Add Shift to go back. Esc returns to the page. On the shelf: the books, then the header.')],
       ...(IS_MAC ? [
         ['⌘H', tk('Hide NEO')],
@@ -9155,6 +9173,7 @@ window.neo.onMenu(async (msg) => {
     return;
   }
   if (msg.type === 'help') showHelp();
+  if (msg.type === 'tab') goToTab(msg.value);
   if (msg.type === 'about') showAbout();
   if (msg.type === 'checkUpdate') checkForUpdate();
   if (msg.type === 'update') updateMessage(msg);
