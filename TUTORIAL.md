@@ -75,10 +75,11 @@ Type a title and hit Enter, same as a book. Then write. NEO works out what each 
 - Start a line with INT. or EXT. and it becomes a scene heading. Hit Tab after INT and NEO adds the period; Tab after the place adds the dash. Places you've already used, and DAY or NIGHT, show up in gray as you type.
 - Type a character's name in capitals and hit Enter. The name jumps to the middle of the page, and the next line is dialogue.
 - Hit Enter at the end of a speech and you're back to action. Hit Enter AGAIN on that empty line and it turns into the next speaker's name, with whoever is being answered already filled in gray. Enter once more accepts the suggestion.
-- Start a line of dialogue with ( and it's a parenthetical.
+- Start a line of dialogue with ( and it's a parenthetical. Enter after it goes back to dialogue, and a ( on the next line down makes another one, so a speech can have a (beat) in the middle.
+- Scene headings are bold, on the page and in the PDF.
 - Capitals ending in TO: (CUT TO:, SMASH CUT TO:) make a transition.
 
-Gray text is only ever a suggestion, built from names and places you've already written. Tab or the → key accepts it. Keep typing and it goes away. And if NEO guesses wrong (a sound effect in capitals can look like a character's name), hit Backspace on the empty dialogue line below it and it goes back to being action.
+Gray text is only ever a suggestion, built from names and places you've already written. Tab, Enter, or the → key accepts it. Keep typing or hit Esc and it goes away. And if NEO guesses wrong (a sound effect in capitals can look like a character's name), hit Backspace on the empty dialogue line below it and it goes back to being action.
 
 If you'd rather choose for yourself, ⌘1 through ⌘7 (Ctrl on Windows) are Scene Heading, Action, Character, Parenthetical, Dialogue, Transition, and Shot. Those are Final Draft's keys, so some of you might already know them. Tab steps through them as well, and you can click any of them in the left panel.
 
