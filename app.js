@@ -7505,10 +7505,39 @@ const FOCUS_LEVELS = ['off', 'paragraph', 'sentence'];
 const FOCUS_LABELS = { off: tk('Focus mode off'), sentence: tk('Focus: sentence'), paragraph: tk('Focus: paragraph') };
 let focusLevel = 'off';
 
-// the View menu's ticks (focus level, page, brighter interface) follow the page
+// The paragraph alignment the Format menu should tick. `null` means no tick belongs to the caret:
+// outside the manuscript, or the caret is not inside a paragraph. No alignment rule IS left.
+function currentAlign() {
+  if (!book || currentTab !== 'manuscript') return null;
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount) return null;
+  let el = sel.getRangeAt(0).startContainer;
+  if (el.nodeType === Node.TEXT_NODE) el = el.parentElement;
+  const body = el && el.closest ? el.closest('.chapter-body') : null;
+  const p = el && el.closest ? el.closest('p') : null;
+  if (!body || !p || !body.contains(p)) return null;
+  const value = (p.style && p.style.textAlign) || 'left';
+  return ['left', 'center', 'right', 'justify'].includes(value) ? value : null;
+}
+
+// the View and Format menus' ticks (focus level, page, brighter interface, body font, drop cap,
+// alignment) follow the page. Selection changes call this often, so an unchanged payload is
+// not sent again.
+let viewStateSent = '';
 function reportViewState() {
   if (!window.neo.viewState || !library) return;
-  window.neo.viewState({ focus: focusLevel, pageTheme: library.pageTheme || 'night', uiBright: document.body.classList.contains('bright') });
+  const payload = {
+    focus: focusLevel,
+    pageTheme: library.pageTheme || 'night',
+    uiBright: document.body.classList.contains('bright'),
+    bodyFont: (library.fonts && library.fonts.body) || '',
+    dropCap: (library.fonts && library.fonts.dropcap) || 'literary',
+    align: currentAlign(),
+  };
+  const key = JSON.stringify(payload);
+  if (key === viewStateSent) return;
+  viewStateSent = key;
+  window.neo.viewState(payload);
 }
 
 function applyFocus() {
@@ -7613,6 +7642,10 @@ function isBreakPara(p) { return p.classList.contains('scene-break'); }
 document.addEventListener('selectionchange', () => {
   if (focusLevel === 'off') return;
   requestAnimationFrame(() => { try { updateFocus(); } catch { /* mid-mutation */ } });
+});
+// the Format menu's alignment tick follows the caret
+document.addEventListener('selectionchange', () => {
+  requestAnimationFrame(() => { try { reportViewState(); } catch { /* mid-mutation */ } });
 });
 document.addEventListener('input', () => {
   if (focusLevel === 'off') return;
@@ -8077,6 +8110,7 @@ function applyAlign(value) {
     if (!p.getAttribute('style')) p.removeAttribute('style');
   }
   syncChapter(body, chId);
+  reportViewState(); // the Format menu's alignment tick
 }
 
 // Menu accelerators and editor shortcuts, plus NEO's distinct writing gestures.
