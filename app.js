@@ -5358,11 +5358,16 @@ function spTab(p, back, ghost) {
   if (ghost) { spInsert(ghost); spAfterChange(p); return; }
   const type = spType(p);
   const text = p.textContent;
-  if (type === 'heading' && !back) {
+  // INT, EXT and the like, then Tab: a scene heading, with its period
+  const prefix = /^(INT|EXT|EST|I\/E|INT\.?\/EXT)\.?$/i.test(text.trim());
+  if ((type === 'heading' || (type === 'action' && prefix)) && !back) {
     const t = text.replace(/\s+$/, '');
     const h = spParseHeading(text);
-    if (/^(INT|EXT|EST|I\/E|INT\.?\/EXT)\.?$/i.test(t)) {
+    if (prefix) {
       spReplaceAll(p, t.replace(/\.$/, '') + '. ');
+      spSetClass(p, 'heading');
+      spGuessed.add(p);
+      spCaretToEnd(p);
       spAfterChange(p);
       return;
     }
