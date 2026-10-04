@@ -788,7 +788,10 @@ ipcMain.handle('fullscreen:escape', (e) => {
 // Export + email
 // ---------------------------------------------------------------------------
 
-async function renderPDF(html) {
+// A script prints on US letter whatever the country (the industry's page),
+// with the margins laid out in the page itself
+const SCREENPLAY_PRINT = { pageSize: 'Letter', margins: { top: 0, bottom: 0, left: 0, right: 0 }, printBackground: false, preferCSSPageSize: true, generateTaggedPDF: true, generateDocumentOutline: false };
+async function renderPDF(html, print) {
   // The book reaches the PDF printer as a file, not as a data: URL. A URL
   // stops at 2 MB, and a long novel is bigger than that once it's encoded; a
   // book in Russian or Chinese gets there far sooner, because every letter
@@ -799,7 +802,7 @@ async function renderPDF(html) {
   const pdfWin = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });
   // Letter is a North American habit; most of the world prints A4.
   const letterCountries = ['US', 'CA', 'MX', 'PH'];
-  const options = {
+  const options = print === 'screenplay' ? SCREENPLAY_PRINT : {
     pageSize: letterCountries.includes(app.getLocaleCountryCode()) ? 'Letter' : 'A4',
     margins: { top: 1, bottom: 1, left: 1, right: 1 },
     printBackground: false,
@@ -893,7 +896,7 @@ async function buildZip(zipEntries) {
   });
 }
 
-ipcMain.handle('export:save', async (_e, { format, defaultName, content, zipEntries, base64 }) => {
+ipcMain.handle('export:save', async (_e, { format, defaultName, content, zipEntries, base64, print }) => {
   const win = BrowserWindow.getFocusedWindow();
   const { canceled, filePath } = await dialog.showSaveDialog(win, {
     defaultPath: path.join(os.homedir(), 'Documents', defaultName + '.' + format),
@@ -907,7 +910,7 @@ ipcMain.handle('export:save', async (_e, { format, defaultName, content, zipEntr
       // pictures (a saved cover) arrive as base64
       fs.writeFileSync(filePath, Buffer.from(content, 'base64'));
     } else if (format === 'pdf') {
-      fs.writeFileSync(filePath, await renderPDF(content));
+      fs.writeFileSync(filePath, await renderPDF(content, print));
     } else {
       fs.writeFileSync(filePath, content, 'utf8');
     }
@@ -923,13 +926,13 @@ ipcMain.handle('export:save', async (_e, { format, defaultName, content, zipEntr
 
 // Writes a timestamped snapshot to the library's Exports folder, then hands it
 // to your email — an outside-the-machine paper trail for provenance.
-ipcMain.handle('email:draft', async (_e, { to, subject, body, html, defaultName, method }) => {
+ipcMain.handle('email:draft', async (_e, { to, subject, body, html, defaultName, method, print }) => {
   const { shell } = require('electron');
   const exportsDir = path.join(LIBRARY_DIR, 'Exports');
   if (!fs.existsSync(exportsDir)) fs.mkdirSync(exportsDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const file = path.join(exportsDir, `${defaultName}-${stamp}.pdf`);
-  fs.writeFileSync(file, await renderPDF(html));
+  fs.writeFileSync(file, await renderPDF(html, print));
 
   if (method === 'gmail') {
     // Gmail compose in the browser can't take an attachment from outside,
@@ -1573,6 +1576,17 @@ function sendToWindow(msg) {
 // whether typewriter scrolling is on
 let poetryState = false;
 let flushState = false;
+// A script open in the window: the Format menu offers its elements (the
+// keys are the editor's own, ⌘1–⌘7), and Export its two ways out
+let scriptState = { on: false, element: null };
+const SCRIPT_ELEMENTS = ['heading', 'action', 'character', 'paren', 'dialogue', 'transition', 'shot'];
+ipcMain.on('script:state', (_e, st) => {
+  st = st || {};
+  const next = { on: !!st.on, element: SCRIPT_ELEMENTS.includes(st.element) ? st.element : null };
+  if (next.on === scriptState.on && next.element === scriptState.element) return;
+  scriptState = next;
+  try { buildMenu(); } catch (err) { logError('menu', err); }
+});
 let typewriterState = false;
 ipcMain.on('poetry:state', (_e, on) => {
   on = !!on;
@@ -1663,7 +1677,10 @@ function buildMenu() {
       submenu: [
         {
           label: t('Export'),
-          submenu: [
+          submenu: scriptState.on ? [
+            { label: 'PDF (.pdf)', click: () => sendToWindow({ type: 'export', format: 'pdf' }) },
+            { label: 'Fountain (.fountain)', click: () => sendToWindow({ type: 'export', format: 'fountain' }) }
+          ] : [
             { label: t('Plain Text (.txt)'), click: () => sendToWindow({ type: 'export', format: 'txt' }) },
             { label: 'Markdown (.md)', click: () => sendToWindow({ type: 'export', format: 'md' }) },
             { label: t('Web Page (.html)'), click: () => sendToWindow({ type: 'export', format: 'html' }) },
@@ -1748,6 +1765,7 @@ function buildMenu() {
       label: t('Format'),
       submenu: [
         {
+          visible: !scriptState.on, // a script is set in Courier Prime
           label: t('Body Font'),
           submenu: [
             ...bodyFonts.map((f) => ({
@@ -1759,6 +1777,7 @@ function buildMenu() {
           ]
         },
         {
+          visible: !scriptState.on,
           label: t('Drop Cap Style'),
           submenu: [
             { label: t('Literary'), click: () => sendToWindow({ type: 'dropCap', value: 'literary' }) },
@@ -1769,6 +1788,7 @@ function buildMenu() {
           ]
         },
         {
+          visible: !scriptState.on, // a script's elements are placed where they print
           label: t('Align Paragraph'),
           submenu: [
             { label: t('Left'), accelerator: 'CmdOrCtrl+Shift+L', click: () => sendToWindow({ type: 'align', value: 'left' }) },
@@ -1793,13 +1813,25 @@ function buildMenu() {
         // tick when the caret sits in one; the keys are the editor's own
         // (they split or continue a paragraph, which a menu item can't), so
         // they're named here without an accelerator
+        // a script's elements stand where a book's paragraph kinds do
+        ...(scriptState.on ? [
+          [t('Scene Heading'), 'heading'], [t('Action'), 'action'], [t('Character'), 'character'], [t('Parenthetical'), 'paren'],
+          [t('Dialogue'), 'dialogue'], [t('Transition'), 'transition'], [t('Shot'), 'shot']
+        ].map(([label, value], i) => ({
+          label: label + '\t' + (isMac ? '⌘' : 'Ctrl+') + (i + 1),
+          type: 'radio',
+          checked: scriptState.element === value,
+          click: () => sendToWindow({ type: 'scriptElement', value })
+        })) : []),
         {
+          visible: !scriptState.on,
           label: t('Flush Paragraph') + '\t' + (isMac ? '⇧Enter' : 'Shift+Enter'),
           type: 'checkbox',
           checked: flushState,
           click: () => sendToWindow({ type: 'flush' })
         },
         {
+          visible: !scriptState.on,
           label: t('Poetry Paragraph') + '\t' + (isMac ? '⇧⌘Enter' : 'Ctrl+Shift+Enter'),
           type: 'checkbox',
           checked: poetryState,
