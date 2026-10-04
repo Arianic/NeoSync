@@ -5,6 +5,13 @@
 #paper-scroll { width: 100%; }
 #paper, #aux-paper { width: 100%; max-width: 100%; margin: 0 0 80px; }
 .sheet, #aux-paper { padding: 34px 26px 60px; box-shadow: none; border: none; min-height: 92vh; }
+/* On a tablet the page is a page, not the whole screen: the same width as on
+   the desktop, centered, so a line stays one the eye can follow (#243). A phone
+   in portrait is narrower than this and still fills the fold. */
+@media (min-width: 600px) {
+  #paper, #aux-paper { max-width: calc(680px * var(--page-zoom, 1)); margin: 0 auto 80px; }
+  .sheet, #aux-paper { padding: 50px 56px 70px; }
+}
 
 /* touch has no hover: the panes open on an edge swipe (see index.html) or the ☰ button */
 #nav-hotzone, #side-hotzone { display: none; }

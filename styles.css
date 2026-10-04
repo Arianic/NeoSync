@@ -12,6 +12,11 @@
   --red: #c0392b;
   --body-font: Georgia, "Times New Roman", serif;
   --dropcap-font: "Didot", "Bodoni 72", Georgia, serif;
+  /* the page: a book page's width, which in a window wide enough to leave
+     room on both sides grows a little (never past a comfortable line) */
+  --page-w: clamp(680px, 44vw, 760px);
+  /* the room the scrollbar and the page's own shadow need beside it */
+  --page-gutter: 80px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -579,7 +584,7 @@ body.night #aux-editor * { color: inherit; }
 #paper-scroll {
   position: absolute; top: 0; bottom: 40px;
   left: 50%; transform: translateX(-50%);
-  width: min(calc(760px * var(--page-zoom, 1)), 94%);
+  width: min(calc((var(--page-w) + var(--page-gutter)) * var(--page-zoom, 1)), 94%);
   overflow-y: auto;
 }
 
@@ -591,7 +596,7 @@ body.night #aux-editor * { color: inherit; }
 
 /* Each page of the book is its own sheet of paper */
 #paper {
-  width: calc(680px * var(--page-zoom, 1)); max-width: 92%;
+  width: calc(var(--page-w) * var(--page-zoom, 1)); max-width: 92%;
   margin: 40px auto 120px;
 }
 /* typewriter scrolling: room below the last line so it can sit mid-screen
@@ -619,7 +624,7 @@ body.focus-mode:not(.no-dropcap) .chapter-body.focus-cap:not(.cap-off):not(.no-c
   margin-bottom: 44px;
 }
 #aux-paper {
-  width: calc(680px * var(--page-zoom, 1)); max-width: 92%;
+  width: calc(var(--page-w) * var(--page-zoom, 1)); max-width: 92%;
   background: var(--paper); color: var(--ink);
   margin: 40px auto 120px;
   padding: 70px 72px 90px;
@@ -875,7 +880,7 @@ body.night .ol-part .ol-num, body.night .ol-part-name { color: #918b7d; }
 #nav-hotzone { position: fixed; left: 0; top: 0; bottom: 40px; width: 18px; z-index: 60; }
 /* the panes wake from well inside the margins, never over the page itself */
 #nav-hotzone, #side-hotzone {
-  width: clamp(18px, calc((100vw - min(760px * var(--page-zoom, 1), 94vw)) / 2 - 24px), 96px);
+  width: clamp(18px, calc((100vw - min((var(--page-w) + var(--page-gutter)) * var(--page-zoom, 1), 94vw)) / 2 - 24px), 96px);
 }
 #nav-pane {
   position: fixed; left: 0; top: 0; bottom: 40px; width: 248px;
