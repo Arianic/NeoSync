@@ -5780,7 +5780,7 @@ function spEditorMode() {
   const tabM = $('.tab[data-tab="manuscript"]');
   if (tabM) setText(tabM, on ? t('Script') : t('Manuscript'));
   const tabO = $('.tab[data-tab="outline"]');
-  if (tabO) tabO.hidden = on;
+  if (tabO) tabO.hidden = false; // a script's outline is its scenes, as cards
   const add = $('#nav-add');
   if (add) add.hidden = on;
   if (!on) setText($('#nav-head span'), t('Chapters'));
@@ -7361,10 +7361,10 @@ function removeGhost(body, p) {
 /*  the section's first line, in quotes. Dragging a card moves the     */
 /*  writing with it (⌘Z puts it back). Loose cards, ideas that don't   */
 /*  have a chapter yet, wait in the right-hand pane (book.looseCards). */
-/*  Scripts keep the outline list.                                     */
+/*  A script's cards are its scenes (book.sceneNotes holds their notes). */
 /* ================================================================== */
 
-const outlineCardsOn = () => !!book && !isScript() && (library.outlineView || 'cards') === 'cards';
+const outlineCardsOn = () => !!book && (isScript() || (library.outlineView || 'cards') === 'cards');
 const chapterBodyEl = (chId) => document.querySelector(`.chapter[data-id="${chId}"] .chapter-body`);
 const newSectionId = () => 'sec-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
 
@@ -7507,7 +7507,7 @@ function viewSwitch() {
 function showOutlineView() {
   const sw = viewSwitch();
   const cards = outlineCardsOn();
-  sw.hidden = !book || isScript();
+  sw.hidden = !book || isScript(); // a script has only the cards
   for (const b of sw.querySelectorAll('button')) {
     const on = b.dataset.view === (cards ? 'cards' : 'list');
     b.classList.toggle('on', on);
@@ -7528,6 +7528,8 @@ function renderBoard() {
   const z = cardZoom();
   board.style.setProperty('--cz', z);
   board.classList.toggle('tiles', z < 0.8);
+  board.classList.remove('script-board');
+  if (isScript()) { renderScriptBoard(board); boardHint(board); return; }
   const solo = soloStory();
   for (const chId of book.chapterOrder) {
     const kind = chapterKind(chId);
@@ -7553,6 +7555,10 @@ function renderBoard() {
       board.appendChild(cell);
     });
   }
+  boardHint(board);
+}
+
+function boardHint(board) {
   let hint = $('#outline-board-hint');
   if (!hint) {
     hint = document.createElement('div');
@@ -7563,7 +7569,9 @@ function renderBoard() {
   hint.hidden = false;
   hint.textContent = NO_HOVER
     ? t('Tap a card to write on it · hold a card to move it · hold and let go for more')
-    : t('Click a card to write on it · drag it to move it, writing and all · right-click for more · Enter starts the next card');
+    : isScript()
+      ? t('Click a card to write on it · drag it to move the scene · right-click for more · Enter starts the next scene')
+      : t('Click a card to write on it · drag it to move it, writing and all · right-click for more · Enter starts the next card');
 }
 
 function boardPartRow(chId) {
@@ -7656,7 +7664,7 @@ function fillCardText(cell, note) {
   if (note) text.textContent = note;
   else if (cell.dataset.excerpt) { text.textContent = cell.dataset.excerpt; text.classList.add('excerpt'); }
   else {
-    text.textContent = cell.dataset.kind === 'chapter' ? t('What happens in this chapter…') : t('What happens in this section…');
+    text.textContent = cell.dataset.kind === 'chapter' ? t('What happens in this chapter…') : cell.dataset.kind === 'scene' ? t('What happens in this scene…') : t('What happens in this section…');
     text.classList.add('empty');
   }
 }
@@ -7688,15 +7696,25 @@ function openCard(cell, { fresh = false } = {}) {
   cell.classList.toggle('open-left', r.left + r.width * 2 > b.right + 4);
   text.classList.remove('excerpt', 'empty');
   text.textContent = note;
-  text.dataset.ph = cell.dataset.excerpt || (cell.dataset.kind === 'chapter' ? t('What happens in this chapter…') : t('What happens in this section…'));
+  text.dataset.ph = cell.dataset.excerpt || (cell.dataset.kind === 'chapter' ? t('What happens in this chapter…') : cell.dataset.kind === 'scene' ? t('What happens in this scene…') : t('What happens in this section…'));
   text.contentEditable = 'true';
   text.spellcheck = false;
   text.setAttribute('role', 'textbox');
+  // a scene's heading can be set right on its card
+  const slug = cell.querySelector('.ob-slug');
+  if (slug) {
+    slug.contentEditable = 'true';
+    slug.spellcheck = false;
+    slug.setAttribute('role', 'textbox');
+    slug.addEventListener('keydown', slugKeys);
+    if (!slug.textContent.trim()) slug.textContent = '';
+  }
   // the way to the page, and what Enter does
   const tools = document.createElement('div');
   tools.className = 'ob-tools';
   if (!cell.dataset.new && !cell.dataset.virtual) {
     const go = document.createElement('button');
+    go.className = 'ob-go';
     go.type = 'button';
     go.textContent = t('Go to the page');
     go.addEventListener('mousedown', (e) => e.preventDefault()); // keep the note's focus until we leave
@@ -7707,17 +7725,18 @@ function openCard(cell, { fresh = false } = {}) {
   tip.textContent = t('Enter: next card · Esc: done');
   tools.appendChild(tip);
   cell.querySelector('.ob-card').appendChild(tools);
-  cardEditor = { cell, text, before: note, fresh };
+  cardEditor = { cell, text, slug, before: note, slugBefore: slug ? slug.textContent : null, fresh };
   text.addEventListener('keydown', cardKeys);
   text.addEventListener('blur', cardBlur);
   text.addEventListener('paste', (e) => {
     e.preventDefault();
     document.execCommand('insertText', false, (e.clipboardData.getData('text/plain') || '').replace(/\s+/g, ' '));
   });
-  text.focus();
+  const first = slug && fresh ? slug : text;
+  first.focus();
   const sel = window.getSelection();
   const range = document.createRange();
-  range.selectNodeContents(text);
+  range.selectNodeContents(first);
   range.collapse(false);
   sel.removeAllRanges();
   sel.addRange(range);
@@ -7729,6 +7748,7 @@ function cardNoteOf(cell) {
   const chId = cell.dataset.ch;
   if (cell.dataset.kind === 'chapter') return (book.chapterNotes || {})[chId] || '';
   if (cell.dataset.kind === 'loose') return (book.looseCards || []).find((c) => c.id === cell.dataset.loose)?.text || '';
+  if (cell.dataset.kind === 'scene') return (cell.dataset.sid && (book.sceneNotes || {})[cell.dataset.sid]) || '';
   const note = cell.dataset.sec ? sectionNote(chId, cell.dataset.sec) : null;
   return note ? note.text : '';
 }
@@ -7737,7 +7757,7 @@ function cardBlur() {
   // the window losing focus isn't the writer leaving the card
   setTimeout(() => {
     if (!cardEditor || !document.hasFocus()) return;
-    if (cardEditor.text.contains(document.activeElement)) return;
+    if (cardEditor.cell.contains(document.activeElement) && document.activeElement.isContentEditable) return;
     closeCardEditor();
   }, 0);
 }
@@ -7747,7 +7767,7 @@ function closeCardEditor(quiet = false) {
   const ed = cardEditor;
   if (!ed) return;
   cardEditor = null;
-  const { cell, text } = ed;
+  const { cell, text, slug } = ed;
   text.removeEventListener('keydown', cardKeys);
   text.removeEventListener('blur', cardBlur);
   text.contentEditable = 'false';
@@ -7755,6 +7775,17 @@ function closeCardEditor(quiet = false) {
   cell.classList.remove('open', 'open-left');
   cell.querySelector('.ob-tools')?.remove();
   const val = text.textContent.replace(/\s+/g, ' ').trim();
+  if (slug) {
+    slug.removeEventListener('keydown', slugKeys);
+    slug.removeEventListener('blur', cardBlur);
+    slug.contentEditable = 'false';
+    slug.removeAttribute('role');
+    const sv = slug.textContent.replace(/\s+/g, ' ').trim();
+    if (!quiet || val !== ed.before || sv !== ed.slugBefore) saveSceneCard(cell, val, sv);
+    if (cell.isConnected && cell.dataset.new) cell.remove();
+    else if (cell.isConnected) { fillCardText(cell, val); renderBoardLater(); }
+    return;
+  }
   if (!quiet || val !== ed.before) saveCard(cell, val);
   if (!cell.isConnected) return;
   if (cell.dataset.new && !val) { cell.remove(); return; }
@@ -7889,9 +7920,43 @@ function cardKeys(e) {
   }
 }
 
+// in a scene's heading: Enter or Tab moves on to the note
+function slugKeys(e) {
+  e.stopPropagation();
+  if (e.key === 'Escape') { e.preventDefault(); const c = cardEditor && cardEditor.cell; closeCardEditor(); if (c && c.isConnected) c.focus(); return; }
+  if ((e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) || (e.key === 'Tab' && !e.shiftKey)) {
+    e.preventDefault();
+    const text = cardEditor && cardEditor.text;
+    if (!text) return;
+    text.focus();
+    const r = document.createRange();
+    r.selectNodeContents(text);
+    r.collapse(false);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(r);
+  }
+}
+
+// once a scene card is put down, the board takes in what changed
+let boardLater = null;
+function renderBoardLater() {
+  clearTimeout(boardLater);
+  boardLater = setTimeout(() => {
+    if (!cardEditor && !cardDrag && currentTab === 'outline' && boardShowing()) renderBoard();
+  }, 120);
+}
+
 // a blank card right after this one, in its chapter
 function makeNewCardAfter(cell, chId) {
   if (!cell.isConnected) return null;
+  if (cell.dataset.kind === 'scene') {
+    const fresh = sceneCard({ k: -1, s: { p: null }, id: null, slug: '', eighths: 0, cast: [], first: '' });
+    fresh.dataset.new = '1';
+    fresh.dataset.after = cell.dataset.scene;
+    fresh.querySelector('.ob-letter').textContent = '+';
+    cell.after(fresh);
+    return fresh;
+  }
   const segs = chapterSegments(chId);
   let after;
   if (cell.dataset.kind === 'chapter') after = segs[0] && !segs[0].id ? 0 : -1;
@@ -7924,6 +7989,7 @@ function deleteSectionNote(chId, secId) {
 
 // the card's place in the manuscript
 function goToCard(cell) {
+  if (cell.dataset.kind === 'scene') { goToScene(cell); return; }
   const chId = cell.dataset.ch;
   switchTab('manuscript');
   if (cell.dataset.kind === 'chapter') {
@@ -7956,6 +8022,21 @@ async function cardMenu(cell, x, y) {
     return;
   }
   if (cell.dataset.new) return;
+  if (cell.dataset.kind === 'scene') {
+    const v = await popMenu(x, y, [
+      { label: t('Go to the page'), value: 'go' },
+      '-',
+      { label: t('Delete the note'), value: 'delete', danger: true, disabled: !cell.dataset.sid }
+    ], { from: cell });
+    if (v === 'go') goToScene(cell);
+    else if (v === 'delete') {
+      snapshotStructure('scene note removed');
+      delete book.sceneNotes[cell.dataset.sid];
+      scheduleMetaSave();
+      renderBoard();
+    }
+    return;
+  }
   const linked = !!cell.dataset.sec;
   const written = !!cell.dataset.written;
   const choice = await popMenu(x, y, [
@@ -8276,6 +8357,14 @@ function dropCard(src, target) {
     return;
   }
   const tc = target.cell;
+  if (tc.dataset.kind === 'scene') {
+    const idx = Number(tc.dataset.scene);
+    const to = target.side === 'before' ? idx : idx + 1;
+    if (src.kind === 'scene') spMoveScene(Number(cell.dataset.scene), to);
+    else if (src.kind === 'loose') looseToScene(cell.dataset.loose, to);
+    renderBoard();
+    return;
+  }
   if (src.kind === 'chapter') {
     const at = book.chapterOrder.indexOf(tc.dataset.ch) + (target.side === 'after' ? 1 : 0);
     moveChapterCard(cell.dataset.ch, at);
@@ -8319,6 +8408,193 @@ function moveVirtualNote(fromCh, secId, toCh) {
   book.sectionNotes[fromCh] = book.sectionNotes[fromCh].filter((s) => s.id !== secId);
   if (note) (book.sectionNotes[toCh] = book.sectionNotes[toCh] || []).push(note);
   scheduleMetaSave();
+}
+
+// ---- a script's board: every scene a card ----
+// A scene is its heading and the lines under it (spLayout.scenes). Its card
+// shows the heading, how long it runs in eighths of a page, who's in it, and
+// the writer's note (book.sceneNotes, keyed by an id on the heading line;
+// the first heading to carry an id owns it), or else its first line of
+// action. Dragging a card moves the scene, as dragging it in the pane does.
+
+const newSceneId = () => 'sc-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+
+// the scene's lines, heading first
+function sceneNodes(s) {
+  const nodes = [s.p];
+  for (let n = s.p.nextElementSibling; n && !(n.tagName === 'P' && spType(n) === 'heading'); n = n.nextElementSibling) nodes.push(n);
+  return nodes;
+}
+
+function scriptScenes() {
+  spRepaginate();
+  const notes = book.sceneNotes || {};
+  const claimed = new Set();
+  return (spLayout.scenes || []).filter((s) => s.p.isConnected).map((s, k) => {
+    const nodes = sceneNodes(s);
+    let id = s.p.dataset.sceneId || null;
+    if (id && (claimed.has(id) || !(id in notes))) id = null;
+    if (id) claimed.add(id);
+    const cast = [];
+    for (const n of nodes) {
+      if (spType(n) !== 'character') continue;
+      const name = n.textContent.replace(/\(.*?\)/g, '').replace(/\^$/, '').trim().toUpperCase();
+      if (name && !cast.includes(name)) cast.push(name);
+    }
+    const action = nodes.slice(1).find((n) => spType(n) === 'action' && n.textContent.trim());
+    return { k, s, id, slug: s.slug, eighths: spEighths(s.lines), cast, first: action ? action.textContent.replace(/\s+/g, ' ').trim() : '' };
+  });
+}
+
+function renderScriptBoard(board) {
+  board.classList.add('script-board');
+  for (const sc of scriptScenes()) board.appendChild(sceneCard(sc));
+}
+
+function sceneCard(sc) {
+  const { cell, card } = cardCell('scene', spChapterOf(sc.s.p) || '');
+  cell.dataset.scene = String(sc.k);
+  if (sc.id) cell.dataset.sid = sc.id;
+  const head = document.createElement('div');
+  head.className = 'ob-head';
+  const num = document.createElement('span');
+  num.className = 'ob-letter';
+  num.textContent = String(sc.k + 1);
+  const len = document.createElement('span');
+  len.className = 'ob-words';
+  len.textContent = sc.eighths ? spEighthsText(sc.eighths) : '';
+  head.append(num, len);
+  const slug = document.createElement('div');
+  slug.className = 'ob-slug';
+  slug.textContent = sc.slug;
+  slug.dataset.ph = t('INT. PLACE - DAY');
+  const text = document.createElement('div');
+  text.className = 'ob-text';
+  const foot = document.createElement('div');
+  foot.className = 'ob-foot';
+  foot.textContent = sc.cast.join(' · ');
+  card.append(head, slug, text, foot);
+  cell.dataset.excerpt = sc.first ? quoted(sc.first) : '';
+  fillCardText(cell, sc.id ? book.sceneNotes[sc.id] : '');
+  cell.setAttribute('aria-label', t('Scene {n}', { n: sc.k + 1 }) + '. ' + (sc.slug || '') + '. ' + text.textContent);
+  return cell;
+}
+
+// the scene a card stands for, as the page has it now
+function sceneOfCell(cell) {
+  return scriptScenes()[Number(cell.dataset.scene)] || null;
+}
+
+// a new scene, after scene k (-1: before the first), with its heading and an
+// empty line of action under it
+function insertScene(k, slug) {
+  const scenes = scriptScenes();
+  const h = document.createElement('p');
+  h.className = 'sp-heading';
+  if (slug) h.textContent = slug; else h.appendChild(document.createElement('br'));
+  const a = document.createElement('p');
+  a.appendChild(document.createElement('br'));
+  let body;
+  if (k < 0 && scenes[0]) {
+    body = spBodyOf(scenes[0].s.p);
+    scenes[0].s.p.before(h, a);
+  } else if (scenes[k]) {
+    const nodes = sceneNodes(scenes[k].s);
+    body = spBodyOf(scenes[k].s.p);
+    nodes[nodes.length - 1].after(h, a);
+  } else {
+    const bodies = spBodies();
+    body = bodies[bodies.length - 1];
+    if (!body) return null;
+    const last = body.lastElementChild;
+    // an empty last line becomes the heading's place
+    if (last && !last.textContent.trim() && spType(last) === 'action' && body.children.length > 1) last.remove();
+    body.append(h, a);
+  }
+  syncChapter(body, body.closest('.chapter').dataset.id);
+  breakRun++;
+  spRepaginate();
+  return h;
+}
+
+function saveSceneCard(cell, note, slug) {
+  if (cell.dataset.new) {
+    if (!note && !slug) return;
+    snapshotStructure('scene added');
+    if (slug) slug = slug.replace(/\s[–—]\s/g, ' - ');
+    const h = insertScene(Number(cell.dataset.after), slug);
+    if (!h) return;
+    delete cell.dataset.new;
+    cell.dataset.scene = String((spLayout.scenes || []).findIndex((x) => x.p === h));
+    if (note) {
+      const id = newSceneId();
+      (book.sceneNotes = book.sceneNotes || {})[id] = note;
+      h.dataset.sceneId = id;
+      syncChapter(spBodyOf(h), spChapterOf(h));
+      scheduleMetaSave();
+    }
+    renderNav();
+    return;
+  }
+  const sc = sceneOfCell(cell);
+  if (!sc) return;
+  const h = sc.s.p;
+  // a heading keeps its plain hyphens (the card's typing makes dashes of them)
+  if (slug) slug = slug.replace(/\s[–—]\s/g, ' - ');
+  let changed = false;
+  if (slug !== null && slug !== sc.slug) {
+    h.textContent = slug;
+    if (!slug) h.appendChild(document.createElement('br'));
+    changed = true;
+  }
+  const had = sc.id ? book.sceneNotes[sc.id] : '';
+  if (note !== had) {
+    book.sceneNotes = book.sceneNotes || {};
+    let id = sc.id;
+    if (!id) {
+      if (!note) return;
+      id = newSceneId();
+      h.dataset.sceneId = id;
+      changed = true;
+    }
+    book.sceneNotes[id] = note;
+    scheduleMetaSave();
+  }
+  if (changed) {
+    syncChapter(spBodyOf(h), spChapterOf(h));
+    spRepaginate();
+    renderNav();
+  }
+}
+
+function looseToScene(looseId, before) {
+  const card = (book.looseCards || []).find((c) => c.id === looseId);
+  if (!card) return;
+  snapshotStructure('loose card placed');
+  book.looseCards = book.looseCards.filter((c) => c.id !== looseId);
+  const h = insertScene(before - 1, '');
+  if (h && card.text) {
+    const id = newSceneId();
+    (book.sceneNotes = book.sceneNotes || {})[id] = card.text;
+    h.dataset.sceneId = id;
+    syncChapter(spBodyOf(h), spChapterOf(h));
+  }
+  scheduleMetaSave();
+  renderLooseCards();
+  renderNav();
+}
+
+function goToScene(cell) {
+  const sc = sceneOfCell(cell);
+  switchTab('manuscript');
+  if (!sc) return;
+  const p = sc.s.p;
+  spBodyOf(p).focus({ preventScroll: true });
+  spCaretToEnd(p);
+  spLastPara = p;
+  const scr = $('#paper-scroll');
+  scr.scrollTop += p.getBoundingClientRect().top - scr.getBoundingClientRect().top - scr.clientHeight / 4;
+  updateCounters();
 }
 
 // ---- loose cards: the right-hand pane, while the outline is up ----
@@ -8412,7 +8688,7 @@ function removeLooseCard(id) {
 // the right-hand pane holds loose cards while the Outline is up (there are
 // no placeholders to show there)
 function sidePaneForTab(name) {
-  const outline = name === 'outline' && !!book && !isScript();
+  const outline = name === 'outline' && !!book;
   $('#editor-view').classList.toggle('outline-tab', outline);
   if (outline) renderLooseCards();
 }
@@ -9308,6 +9584,7 @@ function snapshotStructure(label, opts) {
     chapterNotes: { ...(book.chapterNotes || {}) },
     sectionNotes: JSON.parse(JSON.stringify(book.sectionNotes || {})),
     looseCards: JSON.parse(JSON.stringify(book.looseCards || [])),
+    sceneNotes: { ...(book.sceneNotes || {}) },
     darlings: JSON.parse(JSON.stringify(darlings)),
     stickies: JSON.parse(JSON.stringify(stickies))
   });
@@ -9324,6 +9601,7 @@ async function structuralUndo() {
   book.chapterNotes = snap.chapterNotes;
   book.sectionNotes = snap.sectionNotes;
   book.looseCards = snap.looseCards || [];
+  book.sceneNotes = snap.sceneNotes || {};
   darlings = snap.darlings;
   stickies = snap.stickies;
   // resurrect any chapter files the action may have deleted

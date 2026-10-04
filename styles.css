@@ -926,6 +926,21 @@ body.light .ob-card { box-shadow: 0 0 0 1px #d9d3c4, 0 3px 8px rgba(60,50,30,0.1
 .ob-card.unwritten .ob-text:not(.empty) { color: #807a6c; font-style: italic; }
 .ob-foot { font-size: 0.82em; color: var(--card-soft); }
 
+/* a script's board: each scene its own card, no chapters to gather them */
+#outline-board.script-board { row-gap: calc(16px * var(--cz)); }
+#outline-board.script-board .ob-cell { background: none; padding: 0 calc(7px * var(--cz)); margin: 0; border-radius: 0; }
+#outline-board.script-board .ob-card { height: calc(146px * var(--cz)); }
+.ob-slug {
+  font-family: var(--sp-font, 'Courier Prime', 'Courier New', monospace); font-weight: bold; text-transform: uppercase;
+  font-size: 0.95em; line-height: 1.3; border-bottom: 1px solid #e3b4ae; padding-bottom: 3px; outline: none;
+  overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
+.ob-slug:empty::before { content: attr(data-ph); color: #b0a998; }
+.ob-cell.open .ob-slug { display: block; overflow: visible; cursor: text; }
+.ob-scene .ob-foot { letter-spacing: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#outline-board.tiles.script-board .ob-card { height: 64px; }
+#outline-board.tiles .ob-scene .ob-text { display: none; }
+
 /* tiles: zoomed out, a whole novel on one screen */
 #outline-board.tiles .ob-card { height: 58px; font-size: 11px; padding: 5px 8px; }
 #outline-board.tiles .ob-mark { font-size: 24px; }

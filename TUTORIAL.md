@@ -97,6 +97,8 @@ If you'd rather choose for yourself, ⌘1 through ⌘7 (Ctrl on Windows) are Sce
 
 In a script the left panel stays open (click the little ☉ to tuck it away). Under the elements is every scene, with how long it runs in eighths of a page. Click a scene to jump there. Drag one to move the whole scene; ⌘Z puts it back. Down at the bottom, NEO shows what page you're on and how long the script runs, figured at a page a minute. Click the page counter to count scenes instead.
 
+The Outline tab turns your script into index cards, one per scene: the scene heading, how long it runs, who's in it, and a few lines of notes you can write right on the card (until you do, it shows the scene's first line of action). Drag a card to move the scene. Click a card's heading to change it. Enter on a card starts a new scene after it, so you can lay out a whole script as cards before writing a word, and loose cards in the right-hand panel hold scenes that don't have a place yet.
+
 Scroll up to the title page and fill it in: "Written by," your name, your contact info at the bottom left (type it once and every script uses it), and your draft and date at the bottom right.
 
 When it's done, **File → Export** makes a PDF formatted the way the industry expects, on US letter paper, ready to send. It also exports Fountain and Final Draft (.fdx) files for when someone wants to open it in another program. To bring a script into NEO, drag a .fountain or .fdx file onto a shelf, or use Import. You can also paste in a whole script written in Fountain (the plain-text format most screenwriting apps can save), and NEO sorts the lines into scene headings, dialogue, and the rest.
