@@ -530,7 +530,8 @@ function chapterWords(chId) {
 // whole-chapter count because chapterText ends every paragraph with a line
 // break: no word runs from one paragraph into the next. Where that can't be
 // promised, paragraphWords answers null and the chapter is counted whole.
-const paraWords = new WeakMap(); // <p> → { n: its words, seg: has Thai, Lao… }
+// <p> → { n: its words, seg: has Thai, Lao…; all, allSeg: the same with marks and ghosts }
+const paraWords = new WeakMap();
 // A paragraph is forgotten when its words, its marks or a class change (a
 // ghost becoming text changes its count with no new letter), and whenever it
 // is put on the page, so one changed while off the page is counted again.
@@ -559,16 +560,16 @@ function paragraphWords(body) {
     if (c.nodeType !== Node.ELEMENT_NODE) continue;
     // only blocks end in a line break; a loose inline element could join words
     if (c.tagName !== 'P' && c.tagName !== 'DIV' && c.tagName !== 'BR' && !c.matches(UNCOUNTED)) return null;
-    let e = paraWords.get(c);
-    if (!e) {
-      if (c.matches(UNCOUNTED)) e = { n: 0, seg: false };
+    const e = paraEntry(c);
+    if (e.n === undefined) {
+      if (c.matches(UNCOUNTED)) { e.n = 0; e.seg = false; }
       else {
         const copy = c.cloneNode(true);
         copy.querySelectorAll(UNCOUNTED).forEach((n) => n.remove());
         const text = plainText(copy);
-        e = { n: countWords(text), seg: SEGMENTED_SCRIPTS.some((s) => s.chars.test(text)) };
+        e.n = countWords(text);
+        e.seg = segmented(text);
       }
-      paraWords.set(c, e);
     }
     // countWords picks one segmenter for a whole chapter by the first script
     // it finds, which a paragraph counted alone can't know
@@ -576,6 +577,47 @@ function paragraphWords(body) {
     sum += e.n;
   }
   return sum;
+}
+function paraEntry(p) {
+  let e = paraWords.get(p);
+  if (!e) paraWords.set(p, e = {});
+  return e;
+}
+const segmented = (text) => SEGMENTED_SCRIPTS.some((s) => s.chars.test(text));
+
+// Page of pages counts the words from the chapter's start to the caret as
+// they stand, marks and ghosts too. The paragraphs above the caret's give
+// theirs from a second kept count, so only the caret's own is counted. null
+// where they can't be summed, and the range is counted whole.
+function wordsBeforeCaret(body, node, offset) {
+  paraWordsWatch.takeRecords().forEach(forgetParaWords);
+  const el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+  const top = el && el.closest('.chapter-body > *');
+  if (!top || top.parentNode !== body) return null;
+  let sum = 0;
+  for (let c = body.firstChild; c !== top; c = c.nextSibling) {
+    if (c.nodeType === Node.TEXT_NODE) {
+      if (/\S/.test(c.data)) return null;
+      continue;
+    }
+    if (c.nodeType !== Node.ELEMENT_NODE) continue;
+    // a mark kept in the count is inline: its letters could join the next paragraph's
+    if (c.tagName !== 'P' && c.tagName !== 'DIV' && c.tagName !== 'BR') return null;
+    const e = paraEntry(c);
+    if (e.all === undefined) {
+      const text = plainText(c.cloneNode(true));
+      e.all = countWords(text);
+      e.allSeg = segmented(text);
+    }
+    if (e.allSeg) return null;
+    sum += e.all;
+  }
+  const r = document.createRange();
+  r.setStartBefore(top);
+  r.setEnd(node, offset);
+  const text = plainText(r.cloneContents());
+  if (segmented(text)) return null;
+  return sum + countWords(text);
 }
 
 /* ================================================================== */
@@ -9819,10 +9861,14 @@ function currentPage(cur) {
   const sel = window.getSelection();
   const body = document.querySelector(`.chapter[data-id="${cur}"] .chapter-body`);
   if (isStory(cur) && body && sel.rangeCount && body.contains(sel.anchorNode)) {
-    const r = document.createRange();
-    r.selectNodeContents(body);
-    r.setEnd(sel.anchorNode, sel.anchorOffset);
-    before += countWords(plainText(r.cloneContents()));
+    let n = wordsBeforeCaret(body, sel.anchorNode, sel.anchorOffset);
+    if (n == null) {
+      const r = document.createRange();
+      r.selectNodeContents(body);
+      r.setEnd(sel.anchorNode, sel.anchorOffset);
+      n = countWords(plainText(r.cloneContents()));
+    }
+    before += n;
   }
   return Math.min(pageCount(bookWordCount()), Math.floor(before / WORDS_PER_PAGE) + 1);
 }

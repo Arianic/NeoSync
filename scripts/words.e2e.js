@@ -270,6 +270,28 @@ test('a paragraph changed while off the page is counted again', async () => {
   assert.equal(await countsMatch(), before + 3);
 });
 
+test('page of pages counts a ghost above the caret, as it always has', async () => {
+  await js(`document.getElementById('pos-counter').click()`);
+  try {
+    await caretIn(20, 4);
+    const page = () => js(`(() => {
+      const body = document.querySelector('.chapter-body');
+      const sel = getSelection();
+      const r = document.createRange();
+      r.selectNodeContents(body);
+      r.setEnd(sel.anchorNode, sel.anchorOffset);
+      return [wordsBeforeCaret(body, sel.anchorNode, sel.anchorOffset), countWords(plainText(r.cloneContents()))];
+    })()`);
+    const [fast, whole] = await page();
+    assert.equal(fast, whole);
+    await js(`document.querySelector('.chapter-body').children[2].classList.add('ghost')`);
+    assert.deepEqual(await page(), [whole, whole]);
+    await js(`document.querySelector('.chapter-body').children[2].classList.remove('ghost')`);
+  } finally {
+    await js(`document.getElementById('pos-counter').click()`);
+  }
+});
+
 test('Thai, or words loose between paragraphs, count the chapter whole', async () => {
   await js(`document.querySelector('.chapter-body').insertAdjacentHTML('beforeend', '<p>ภาษาไทยง่ายนิดเดียว</p>')`);
   await countsMatch(false);
@@ -311,7 +333,15 @@ test('a thousand random edits keep the count true', async () => {
       add() { const q = document.createElement('p'); q.textContent = 'fresh line of words'; pick([...body.children]).after(q); },
       normalize(p) { p.normalize(); }
     };
+    // page of pages: the words from the chapter's start to a caret, as they stand
+    const upTo = (node, offset) => {
+      const r = document.createRange();
+      r.selectNodeContents(body);
+      r.setEnd(node, offset);
+      return countWords(plainText(r.cloneContents()));
+    };
     const names = Object.keys(ops);
+    let summed = 0;
     for (let i = 0; i < 1000; i++) {
       const name = pick(names);
       ops[name](pick([...body.children]));
@@ -320,7 +350,16 @@ test('a thousand random edits keep the count true', async () => {
       const counted = chapterWords(id);
       const w = whole();
       if (counted !== w) return { i, name, counted, whole: w };
+      const t = texts(body);
+      if (t.length) {
+        const n = pick(t);
+        const at = rnd(n.length + 1);
+        const fast = wordsBeforeCaret(body, n, at);
+        if (fast != null) summed++;
+        if (fast != null && fast !== upTo(n, at)) return { i, name, page: true, fast, whole: upTo(n, at) };
+      }
     }
+    if (summed < 500) return { summed }; // the kept counts must actually be the ones used
     return null;
   })()`);
   assert.equal(bad, null);
