@@ -185,23 +185,66 @@ async function chooseLibraryFolder() {
 // Can NEO write in this folder? Windows' Controlled folder access (Defender's
 // ransomware protection) refuses new files in Documents to apps it doesn't
 // know, and NEO is one. A small file written and removed tells.
+let lastFolderError = null;
 function folderWritable(dir) {
   try {
     fs.mkdirSync(dir, { recursive: true });
     const probe = path.join(dir, '.neo-write-test');
     fs.writeFileSync(probe, 'ok');
     fs.unlinkSync(probe);
+    lastFolderError = null;
     return true;
   } catch (err) {
+    lastFolderError = err;
     logError('library folder not writable: ' + dir, err);
     return false;
   }
 }
 const isBlockedWrite = (err) => !!err && ['EPERM', 'EACCES', 'EROFS'].includes(err.code);
-function blockedDetail(dir) {
-  return t('Your books can\'t be saved in:\n{dir}', { dir }) + '\n\n' + (process.platform === 'win32'
-    ? t('This is usually Windows Security\'s Controlled folder access (Virus & threat protection → Ransomware protection). Allow NEO there, or keep your library in another folder.')
-    : t('Check that the folder exists and that NEO may write to it, or keep your library in another folder.'));
+// a folder that isn't there to write in (not a refusal): a OneDrive folder
+// on a computer where OneDrive isn't set up, a drive that's gone
+const isMissingFolder = (err) => !!err && ['ENOENT', 'ENOTDIR'].includes(err.code);
+function blockedDetail(dir, err) {
+  return t('Your books can\'t be saved in:\n{dir}', { dir }) + '\n\n' + (isMissingFolder(err)
+    ? t('The folder isn\'t there, or can\'t be reached. A OneDrive folder on a computer where OneDrive isn\'t set up does this. Choose another folder to keep your library in.')
+    : process.platform === 'win32'
+      ? t('This is usually Windows Security\'s Controlled folder access (Virus & threat protection → Ransomware protection). Allow NEO there, or keep your library in another folder.')
+      : t('Check that the folder exists and that NEO may write to it, or keep your library in another folder.'));
+}
+
+// Where a first library goes when Documents itself can't hold one. Beside
+// Documents, not nowhere: the writer is never left at "Start writing" with
+// no way on.
+function fallbackLibraryDir() {
+  const home = app.getPath('home');
+  const spots = [];
+  try {
+    const docs = path.join(home, 'Documents');
+    if (fs.statSync(docs).isDirectory()) spots.push(path.join(docs, 'NEO Library'));
+  } catch { /* no plain Documents folder here */ }
+  spots.push(path.join(home, 'NEO Library'));
+  return spots.find((dir) => dir !== LIBRARY_DIR && folderWritable(dir)) || null;
+}
+function useLibraryDir(dir) {
+  LIBRARY_DIR = dir;
+  LIBRARY_FILE = path.join(LIBRARY_DIR, 'library.json');
+  // remembered, so a OneDrive that comes back later doesn't swap libraries
+  const settings = readSettings();
+  settings.libraryDir = LIBRARY_DIR;
+  try { writeSettings(settings); } catch (err) { logError('settings', err); }
+}
+// said once, after the window is up, only when it happened
+let libraryFallback = null;
+function announceLibraryFallback() {
+  if (!libraryFallback) return;
+  const { to } = libraryFallback;
+  libraryFallback = null;
+  dialog.showMessageBox({
+    type: 'info',
+    message: t('NEO is keeping your books in another folder'),
+    detail: t('Your Documents folder can\'t be written to, so your books will live in:\n{dir}\n\nFile → Library Folder… changes it.', { dir: to }),
+    buttons: [t('OK')]
+  }).catch(() => {});
 }
 // At startup, before any window: a library that can't be written is said
 // plainly, once, with a way out — not a hiccup at "Start writing"
@@ -210,11 +253,23 @@ function checkLibraryWritable() {
   // library exists; a synced library elsewhere isn't sent a test file
   // every launch)
   if (process.platform !== 'win32' && fs.existsSync(LIBRARY_FILE)) return;
+  // A first library that Documents can't hold goes beside it. Never when a
+  // library already lives here or the writer picked this folder: their books
+  // stay where they are, and the question below is theirs to answer.
+  if (!fs.existsSync(LIBRARY_FILE) && !readSettings().libraryDir && !folderWritable(LIBRARY_DIR)) {
+    const from = LIBRARY_DIR;
+    const spot = fallbackLibraryDir();
+    if (spot) {
+      useLibraryDir(spot);
+      libraryFallback = { from, to: spot };
+      return;
+    }
+  }
   while (!folderWritable(LIBRARY_DIR)) {
     const r = dialog.showMessageBoxSync({
       type: 'warning',
       message: t('NEO can\'t save in your library folder'),
-      detail: blockedDetail(LIBRARY_DIR),
+      detail: blockedDetail(LIBRARY_DIR, lastFolderError),
       buttons: [t('Choose Folder…'), t('Try Again'), t('Continue')],
       defaultId: 0,
       cancelId: 2
@@ -227,11 +282,7 @@ function checkLibraryWritable() {
         properties: ['openDirectory', 'createDirectory']
       });
       if (!picked || !picked[0]) continue;
-      LIBRARY_DIR = picked[0];
-      LIBRARY_FILE = path.join(LIBRARY_DIR, 'library.json');
-      const settings = readSettings();
-      settings.libraryDir = LIBRARY_DIR;
-      try { writeSettings(settings); } catch (err) { logError('settings', err); }
+      useLibraryDir(picked[0]);
     }
   }
 }
@@ -249,7 +300,7 @@ function reportBlockedWrite(err) {
   const opts = {
     type: 'warning',
     message: t('NEO can\'t save in your library folder'),
-    detail: blockedDetail(LIBRARY_DIR) + '\n\n' + t('Your words stay on the page until it can.'),
+    detail: blockedDetail(LIBRARY_DIR, err) + '\n\n' + t('Your words stay on the page until it can.'),
     buttons: [t('OK')]
   };
   (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts)).catch(() => {});
@@ -2242,6 +2293,7 @@ app.whenReady().then(() => {
     try { checkLibraryWritable(); } catch (err) { logError('library check', err); }
     try { ensureLibrary(); } catch (err) { logError('library', err); }
     createWindow();
+    try { announceLibraryFallback(); } catch (err) { logError('library notice', err); }
     try { initSpell(); } catch (err) { logError('spell', err); }
     try { buildMenu(); } catch (err) { logError('menu', err); }
     try { dailyBackup(); } catch (err) { logError('backup', err); }

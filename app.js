@@ -584,7 +584,19 @@ function showFirstRun() {
     // the shelf was drawn (and the author record seeded as Anonymous) before
     // the name was typed — carry the name across
     currentAuthor().name = library.authorName || (library.penNames || [])[0] || t('Anonymous');
-    await writeLibrary(library);
+    // a library that can't be written must not leave the writer at a button
+    // that does nothing: say so, and keep the page ready for another try
+    const note = $('#fr-error');
+    try {
+      await writeLibrary(library);
+    } catch (err) {
+      library.firstRunDone = false;
+      window.neo.logError('first run: ' + ((err && err.message) || err));
+      note.textContent = t('NEO can\'t save in {dir}. File → Library Folder… lets you choose a folder it can write to; then press Start writing again.', { dir: libraryDirPath });
+      note.hidden = false;
+      return;
+    }
+    note.hidden = true;
     applyFonts();
     fr.hidden = true;
     renderShelves();
