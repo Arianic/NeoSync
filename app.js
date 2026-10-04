@@ -3981,8 +3981,9 @@ const TAB_KEYS = { Digit1: 'manuscript', Digit2: 'notes', Digit3: 'outline', Dig
 document.addEventListener('keydown', (e) => {
   const name = TAB_KEYS[e.code];
   if (!name || !(IS_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) || e.shiftKey || e.altKey || e.isComposing) return;
-  if ($('#editor-view').hidden) return;
-  e.preventDefault(); // the menu accelerator would otherwise fire the same switch twice
+  // swallowed even where it does nothing (the shelf): left to the menu
+  // accelerator, it flashes the View menu for a key that has no work to do
+  e.preventDefault();
   goToTab(name);
 });
 
