@@ -4786,6 +4786,8 @@ function spParseHeading(t) {
 function spComplete(partial, pool) {
   if (!partial) return '';
   const p = partial.toUpperCase();
+  // a name or place already used just as typed is what's meant (KIM, not KIMBERLY)
+  if (pool.includes(p)) return '';
   for (const w of pool) if (w.startsWith(p) && w.length > p.length) return w.slice(p.length);
   return '';
 }
@@ -5166,6 +5168,7 @@ const SP_SCREEN_ATTRS = ['data-pg', 'data-fill', 'data-contd', 'data-ghost', 'da
 // characters NEO guessed from a line in capitals, and headings it made of
 // INT./EXT.: either goes back to action when the guess turns out wrong
 const spGuessed = new WeakSet();
+const spDismissed = new WeakMap(); // a line → its text when Esc sent its suggestion away
 
 function spType(p) {
   if (!p || !p.classList) return 'action';
@@ -5306,6 +5309,14 @@ function scriptKey(e, body) {
   const p = caretBlock(body);
   if (!p) return false;
   const ghost = p.getAttribute('data-ghost') || '';
+  if (e.key === 'Escape' && ghost) {
+    // not this one: gone until the line changes
+    e.preventDefault();
+    e.stopPropagation();
+    spDismissed.set(p, p.textContent);
+    spRefreshGhost();
+    return true;
+  }
   if (e.key === 'Tab') {
     e.preventDefault();
     spTab(p, e.shiftKey, ghost && !e.shiftKey && spCaretAtEnd(p) ? ghost : '');
@@ -5334,10 +5345,11 @@ function scriptKey(e, body) {
 
 function spEnter(p, body) {
   let type = spType(p);
-  // On an empty name line, Enter takes the one being answered, and the
-  // speech follows. A suggestion for something half typed waits for Tab
-  // or →: Enter keeps what was typed (KIM must not become KIMBERLY).
-  if (p.getAttribute('data-ghost') && !p.textContent && type === 'character') spInsert(p.getAttribute('data-ghost'));
+  // Enter takes the gray suggestion, as in Final Draft: on an empty name
+  // line the one being answered, on a half-typed one the rest of the name
+  // (or place, time, transition). A name already used as typed gets no
+  // suggestion (spComplete), and Esc sends one away.
+  if (p.getAttribute('data-ghost') && spCaretAtEnd(p)) spInsert(p.getAttribute('data-ghost'));
   const text = p.textContent;
   enterRun = 0;
   // (an empty parenthetical is its parentheses)
@@ -5439,6 +5451,10 @@ function scriptInput(body) {
     if (type === 'action' && SP_HEAD_RE.test(text)) { spSetClass(p, 'heading'); spGuessed.add(p); }
     else if (type === 'heading' && spGuessed.has(p) && !SP_HEAD_RE.test(text)) spSetClass(p, 'action');
     else if (type === 'dialogue' && text.startsWith('(')) spSetClass(p, 'paren');
+    // "(" opening the line after a speech: a parenthetical inside it, and
+    // Enter after it goes back to the speech
+    else if (type === 'action' && text.startsWith('(') && p.previousElementSibling &&
+      ['dialogue', 'paren'].includes(spType(p.previousElementSibling))) spSetClass(p, 'paren');
     spLastPara = p;
   }
   spSchedule();
@@ -5450,7 +5466,7 @@ function scriptInput(body) {
 function spRefreshGhost() {
   const p = spCaretPara();
   let ghost = '';
-  if (p && document.activeElement === spBodyOf(p) && ['character', 'heading', 'transition'].includes(spType(p)) && spCaretAtEnd(p)) {
+  if (p && document.activeElement === spBodyOf(p) && ['character', 'heading', 'transition'].includes(spType(p)) && spCaretAtEnd(p) && spDismissed.get(p) !== p.textContent) {
     const ps = spParas();
     ghost = spGhost(spLinesOf(ps), ps.indexOf(p));
   }
@@ -5955,6 +5971,7 @@ p.sp-character { margin-left: 13.2em; width: 23.1em; }
 p.sp-paren { margin-left: 9.6em; width: 15.3em; }
 p.sp-dialogue { margin-left: 6em; width: 21.3em; }
 p.sp-transition { text-align: right; }
+p.sp-heading { font-weight: bold; }
 .title { text-align: center; }
 .tp-main { position: absolute; top: 3.5in; left: 1.5in; width: 6in; }
 .tp-main .gap { margin-top: 2em; }
