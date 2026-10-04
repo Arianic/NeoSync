@@ -38,7 +38,9 @@ const js = (code) => wc.executeJavaScript(code, true);
 const tick = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms));
 const tab = () => js('currentTab');
 // Ctrl+digit goes to the page; Electron's menu accelerators are not involved
-const press = async (n, modifiers = ['control']) => {
+const MOD = process.platform === 'darwin' ? 'meta' : 'control';
+const OTHER = MOD === 'meta' ? 'control' : 'meta';
+const press = async (n, modifiers = [MOD]) => {
   for (const type of ['keyDown', 'keyUp']) wc.sendInputEvent({ type, keyCode: String(n), modifiers });
   await tick(300);
 };
@@ -54,22 +56,21 @@ const caretInChapter = () => js(`(() => {
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
 
-test('Ctrl+2, 3, 4, 1 visit Notes, Outline, Darlings, Manuscript', async () => {
+test('Cmd/Ctrl+2, 3, 4, 1 visit Notes, Outline, Darlings, Manuscript', async () => {
   for (const [n, name] of [[2, 'notes'], [3, 'outline'], [4, 'darlings'], [1, 'manuscript']]) {
     await press(n);
     assert.equal(await tab(), name);
   }
 });
 
-test('Cmd works as well as Ctrl', async () => {
-  await press(3, ['meta']);
-  assert.equal(await tab(), 'outline');
-  await press(1, ['meta']);
+test('the other platform\'s modifier does nothing', async () => {
+  await press(3, [OTHER]);
+  assert.equal(await tab(), 'manuscript');
 });
 
 test('Shift or Alt with the digit does nothing', async () => {
-  await press(2, ['control', 'shift']);
-  await press(2, ['control', 'alt']);
+  await press(2, [MOD, 'shift']);
+  await press(2, [MOD, 'alt']);
   assert.equal(await tab(), 'manuscript');
 });
 

@@ -3980,7 +3980,7 @@ function goToTab(name) {
 const TAB_KEYS = { Digit1: 'manuscript', Digit2: 'notes', Digit3: 'outline', Digit4: 'darlings' };
 document.addEventListener('keydown', (e) => {
   const name = TAB_KEYS[e.code];
-  if (!name || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.isComposing) return;
+  if (!name || !(IS_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) || e.shiftKey || e.altKey || e.isComposing) return;
   if ($('#editor-view').hidden) return;
   e.preventDefault(); // the menu accelerator would otherwise fire the same switch twice
   goToTab(name);
