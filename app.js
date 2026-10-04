@@ -2255,7 +2255,7 @@ async function openBook(bookId) {
       // pick up right where you left off — here, or on the other device
       currentChapterId = book.lastPosition.chapterId;
       const pos = book.lastPosition;
-      requestAnimationFrame(() => resumePosition(pos));
+      requestAnimationFrame(() => { resumePosition(pos); vimRest(); });
     }
   }
 
@@ -4308,21 +4308,28 @@ document.addEventListener('keydown', (e) => {
 // first, before the page or the outline can read them as plain arrows.
 // Pocket takes both: a keyboard paired with a phone or an iPad may be a
 // Mac's (⌘ arrives as Meta) or a PC's (Ctrl).
+// Off the Mac, Ctrl+Page Down / Ctrl+Page Up do the same: GNOME keeps
+// Ctrl+Alt+↑↓ for switching workspaces, so NEO never hears them there, and
+// some Windows graphics drivers turn the screen with them (#254).
 window.addEventListener('keydown', (e) => {
-  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  const arrows = e.key === 'ArrowDown' || e.key === 'ArrowUp';
+  const pages = e.key === 'PageDown' || e.key === 'PageUp';
+  if (!arrows && !pages) return;
   const cmd = IS_POCKET ? (e.metaKey !== e.ctrlKey) : (IS_MAC ? e.metaKey : e.ctrlKey);
-  if (!cmd || !e.altKey || e.shiftKey) return;
+  if (arrows && (!cmd || !e.altKey || e.shiftKey)) return;
+  if (pages && ((IS_MAC && !IS_POCKET) || !e.ctrlKey || e.metaKey || e.altKey || e.shiftKey)) return;
   if ($('#editor-view').hidden || document.querySelector('.modal-backdrop:not([hidden])')) return;
   e.preventDefault();
   e.stopPropagation();
-  gotoChapter(e.key === 'ArrowDown' ? 1 : -1);
+  gotoChapter(e.key === 'ArrowDown' || e.key === 'PageDown' ? 1 : -1);
 }, true);
 
 /* ------------------------------------------------------------------ */
 /*  Vim keys (View → Vim Keys, off unless chosen)                      */
 /*                                                                      */
 /*  The small part of vim that writers use to move around a page. Esc   */
-/*  puts the page in moving mode (the caret turns gold); letters then   */
+/*  puts the page in moving mode (the caret turns gold), and a book     */
+/*  opens in it; letters then                                           */
 /*  move instead of type, and i, a, o and friends go back to writing.   */
 /*  Esc while moving stays put, as in vim. Keys with ⌘ or Ctrl keep     */
 /*  their usual jobs, so none of NEO's shortcuts change.                */
@@ -4356,6 +4363,13 @@ function toggleVim() {
   toast(vimEnabled ? t('Vim keys on — Esc to move, i to write') : t('Vim keys off'));
 }
 const vimEditor = (el) => el && el.closest && el.closest('.chapter-body, #aux-editor');
+// With vim keys on, the page rests in moving mode, as vim starts: a book
+// opens that way, and so does the Manuscript or Notes tab when you come back
+// to it (#257). i, a or o to write. A click, a title's Enter or the window
+// coming back to the front leave the mode as it was.
+function vimRest() {
+  if (vimEnabled && vimEditor(document.activeElement)) vimSetNav(true);
+}
 function vimSetNav(on) {
   vimNav = on;
   vimVisual = false;
@@ -6898,6 +6912,7 @@ function switchTab(name) {
     if (back && back.caret) restoreCaret(back.caret); // brings the scroll along
     else returnTo();
     findHere();
+    vimRest();
     return;
   }
   paper.hidden = true;
@@ -6928,6 +6943,7 @@ function switchTab(name) {
       auxEditor.focus({ preventScroll: true });
       returnTo();
       findHere();
+      vimRest();
     });
   }
 }
@@ -9686,8 +9702,8 @@ function bookShortcutSections() {
       [[K('⌘⇧F', 'Ctrl+Shift+F'), K('⌘Enter', 'Ctrl+Enter')], tk('Toggle full screen')],
       [K('⌘⇧T', 'Ctrl+Shift+T'), tk('Toggle typewriter scrolling')],
       [K('⌘⇧O', 'Ctrl+Shift+O'), tk('Cycle focus mode'), tk('Off → paragraph → sentence → off.')],
-      [K('⌥⌘↓', 'Ctrl+Alt+↓'), tk('Go to the next chapter')],
-      [K('⌥⌘↑', 'Ctrl+Alt+↑'), tk('Go to the previous chapter')],
+      [IS_MAC ? '⌥⌘↓' : ['Ctrl+Alt+↓', 'Ctrl+Page Down'], tk('Go to the next chapter')],
+      [IS_MAC ? '⌥⌘↑' : ['Ctrl+Alt+↑', 'Ctrl+Page Up'], tk('Go to the previous chapter')],
       [['F6', K('⌃Tab', 'Ctrl+Tab')], tk('Move between the page, the chapters, the notes and the bottom bar'), tk('Add Shift to go back. Esc returns to the page. On the shelf: the books, then the header.')],
       ...(IS_MAC ? [
         ['⌘H', tk('Hide NEO')],
