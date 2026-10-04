@@ -4285,7 +4285,11 @@ document.addEventListener('keydown', (e) => {
     void setEditorFontSize(-1);
   }
   if (e.key === 'Escape') {
-    if (!$('#searchbar').hidden) closeSearch();
+    // from the find bar's buttons too (the arrows take the focus when
+    // clicked): back to the page. Typing on the page with the bar still
+    // open, Esc only closes the bar and leaves the caret where it is.
+    const inBar = !document.activeElement || document.activeElement === document.body || $('#searchbar').contains(document.activeElement);
+    if (!$('#searchbar').hidden) { if (inBar) returnFromSearch(); else closeSearch(); }
     else window.neo.fullscreenEscape().then((exited) => { if (!exited) backToShelf(); });
   }
 });
@@ -4331,7 +4335,8 @@ window.addEventListener('keydown', (e) => {
 /*    o O       new paragraph below / above                             */
 /*    v         select: motions stretch it, y copies, d or x cuts       */
 /*    x         delete the letter under the caret                       */
-/*    /         find                     a number first repeats: 3w     */
+/*    /         find (Esc goes back to moving, at the match)            */
+/*    n N       next / previous match    a number first repeats: 3w     */
 /* ------------------------------------------------------------------ */
 let vimEnabled = false;
 let vimNav = false;        // moving, not typing
@@ -4459,6 +4464,28 @@ function vimHalfPage(dir) {
   s.removeAllRanges();
   s.addRange(r);
 }
+// n and N: the next or previous place the last search found, from the caret,
+// round to the top (or bottom) when the tab runs out, as vim does
+function vimSearchAgain(dir, times = 1) {
+  const s = window.getSelection();
+  const found = findRanges($('#search-input').value);
+  if (!found.length || !s.rangeCount) return;
+  const here = s.getRangeAt(0);
+  // the first match past the caret (or the last one before it)
+  let i = dir > 0
+    ? found.findIndex((r) => r.compareBoundaryPoints(Range.START_TO_START, here) > 0)
+    : found.findLastIndex((r) => r.compareBoundaryPoints(Range.START_TO_START, here) < 0);
+  if (i < 0) i = dir > 0 ? 0 : found.length - 1;
+  i = (((i + dir * (times - 1)) % found.length) + found.length) % found.length;
+  const r = found[i];
+  const ed = editableOf(r);
+  if (!ed) return;
+  if (vimVisual && ed.contains(s.anchorNode)) { s.extend(r.startContainer, r.startOffset); return; }
+  if (document.activeElement !== ed) ed.focus({ preventScroll: true });
+  r.collapse(true);
+  s.removeAllRanges();
+  s.addRange(r);
+}
 // Moving, a key counts by where it sits on the keyboard, named as on a US
 // one, whatever layout is on: on Russian or Greek the key under the right
 // index finger is still j, and Shift+4 is still $. A dead key, and a key an
@@ -4527,7 +4554,8 @@ function vimKey(e) {
       document.execCommand('insertParagraph');
       vimMove(back, 'character');
       break;
-    case '/': vimSetNav(false); openSearch(); return;
+    case '/': vimSetNav(false); openSearch(true); return;
+    case 'n': case 'N': vimSearchAgain(k === 'n' ? 1 : -1, times); break;
     default: return;
   }
   revealCaret();
@@ -8296,11 +8324,24 @@ document.addEventListener('keydown', (e) => {
 /* ================================================================== */
 
 let searchState = { matches: [], idx: -1, query: '' };
+// where the caret was on the page when Find opened, and whether vim's / opened
+// it: Esc in the find bar goes back there (see returnFromSearch)
+let searchHome = null;
+let searchFromVim = false;
 
-function openSearch() {
+// the editable a range sits in: a chapter, the Notes, an outline line
+function editableOf(range) {
+  const n = range && (range.startContainer.nodeType === Node.TEXT_NODE ? range.startContainer.parentElement : range.startContainer);
+  return (n && n.closest && n.closest('[contenteditable="true"]')) || null;
+}
+
+function openSearch(fromVim = false) {
   if ($('#editor-view').hidden || !book) { toast(t('Open a book first')); return; }
   const sel = window.getSelection();
   const preset = sel && !sel.isCollapsed ? sel.toString().slice(0, 80).trim() : '';
+  // ⌘F again from the bar itself keeps the place it first came from
+  if (sel && sel.rangeCount && editableOf(sel.getRangeAt(0))) searchHome = sel.getRangeAt(0).cloneRange();
+  searchFromVim = fromVim;
   $('#searchbar').hidden = false;
   const inp = $('#search-input');
   if (preset) inp.value = preset;
@@ -8312,10 +8353,32 @@ function openSearch() {
 function closeSearch() {
   $('#searchbar').hidden = true;
   searchState = { matches: [], idx: -1, query: '' };
+  searchFromVim = false;
   if (window.CSS && CSS.highlights) {
     CSS.highlights.delete('neo-search');
     CSS.highlights.delete('neo-search-current');
   }
+}
+
+// Esc in the find bar. Hiding the bar took the caret with it, so the writer
+// was nowhere, and the next Esc closed the book. Now the caret goes back to
+// the page: to the match last gone to, or else where it was before Find.
+// A search vim's / began goes back to moving, as in vim.
+function returnFromSearch() {
+  const m = searchState.idx >= 0 && searchState.matches[searchState.idx];
+  let r = null;
+  if (m && m.range.startContainer.isConnected) { r = m.range.cloneRange(); r.collapse(true); }
+  else if (searchHome && searchHome.startContainer.isConnected) r = searchHome.cloneRange();
+  const fromVim = searchFromVim;
+  closeSearch();
+  const ed = editableOf(r);
+  if (!ed) return;
+  ed.focus({ preventScroll: true });
+  const s = window.getSelection();
+  s.removeAllRanges();
+  s.addRange(r);
+  revealCaret();
+  if (fromVim && vimEnabled && vimEditor(ed)) vimSetNav(true);
 }
 
 function paintHighlights() {
@@ -8339,16 +8402,10 @@ function searchRoots() {
   return [$('#aux-editor')];
 }
 
-// Scan the whole tab every time. Matches are highlighted, not selected.
-function runSearch() {
-  const q = $('#search-input').value;
-  searchState = { matches: [], idx: -1, query: q, tab: currentTab };
-  $('#searchbar').classList.toggle('find-only', currentTab !== 'manuscript');
-  if (!q) {
-    $('#search-count').textContent = '';
-    paintHighlights();
-    return;
-  }
+// every place q appears in the tab, in reading order, any case
+function findRanges(q) {
+  const found = [];
+  if (!q) return found;
   const ql = q.toLowerCase();
   for (const body of searchRoots()) {
     if (!body) continue;
@@ -8361,11 +8418,25 @@ function runSearch() {
         const range = document.createRange();
         range.setStart(node, pos);
         range.setEnd(node, pos + q.length);
-        searchState.matches.push({ range });
+        found.push(range);
         pos += q.length;
       }
     }
   }
+  return found;
+}
+
+// Scan the whole tab every time. Matches are highlighted, not selected.
+function runSearch() {
+  const q = $('#search-input').value;
+  searchState = { matches: [], idx: -1, query: q, tab: currentTab };
+  $('#searchbar').classList.toggle('find-only', currentTab !== 'manuscript');
+  if (!q) {
+    $('#search-count').textContent = '';
+    paintHighlights();
+    return;
+  }
+  searchState.matches = findRanges(q).map((range) => ({ range }));
   const n = searchState.matches.length;
   $('#search-count').textContent = n ? `${n} found` : 'none';
   paintHighlights();
@@ -8445,7 +8516,7 @@ $('#search-input').addEventListener('input', () => {
 });
 $('#search-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); freshSearchIfStale(); gotoMatch(searchState.idx + (e.shiftKey ? -1 : 1)); }
-  if (e.key === 'Escape') { e.stopPropagation(); closeSearch(); }
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); returnFromSearch(); }
   if (e.key === 'Tab' && !e.shiftKey) {
     const m = searchState.matches[Math.max(0, searchState.idx)];
     if (m) {
@@ -8462,7 +8533,7 @@ $('#search-input').addEventListener('keydown', (e) => {
 });
 $('#replace-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); replaceCurrent(); }
-  if (e.key === 'Escape') { e.stopPropagation(); closeSearch(); }
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); returnFromSearch(); }
 });
 $('#search-next').onclick = () => { freshSearchIfStale(); gotoMatch(searchState.idx + 1); };
 $('#search-prev').onclick = () => { freshSearchIfStale(); gotoMatch(searchState.idx - 1); };
@@ -9638,7 +9709,8 @@ function bookShortcutSections() {
       ['o O', tk('Write in a new paragraph below or above')],
       ['v', tk('Select'), tk('Move to stretch it, then y to copy or d to cut.')],
       ['x', tk('Delete the letter under the caret')],
-      ['/', tk('Find')]
+      ['/', tk('Find')],
+      ['n N', tk('Next or previous match')]
     ] }] : [])
   ];
 }
