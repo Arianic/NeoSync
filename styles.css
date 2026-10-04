@@ -941,6 +941,30 @@ body.light .ob-card { box-shadow: 0 0 0 1px #d9d3c4, 0 3px 8px rgba(60,50,30,0.1
 #outline-board.tiles.script-board .ob-card { height: 64px; }
 #outline-board.tiles .ob-scene .ob-text { display: none; }
 
+/* the + on the seam after a card, and the card that ends the board */
+.ob-plus {
+  position: absolute; right: -11px; top: 50%; transform: translateY(-50%); z-index: 3;
+  width: 22px; height: 22px; padding: 0; border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); background: var(--bg);
+  color: var(--accent); font: 15px/19px -apple-system, BlinkMacSystemFont, sans-serif; text-align: center;
+  opacity: 0; transition: opacity 0.12s; cursor: pointer;
+}
+.ob-cell:hover .ob-plus, .ob-cell:focus-visible .ob-plus { opacity: 1; }
+.ob-cell.open .ob-plus, .ob-cell[data-new] .ob-plus, body.ob-dragging .ob-plus { display: none; }
+.ob-plus:hover { background: var(--accent); color: var(--bg); }
+.ob-add {
+  margin: calc(8px * var(--cz)) 5px; min-height: calc(112px * var(--cz)); border-radius: 6px;
+  border: 1px dashed color-mix(in srgb, var(--muted) 60%, transparent); background: none;
+  color: var(--muted); font: 13px -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; cursor: pointer;
+}
+.ob-add:hover, .ob-add:focus-visible { color: var(--accent); border-color: var(--accent); }
+#outline-board.tiles .ob-add { min-height: 58px; }
+#outline-board.script-board .ob-add { margin: 0 calc(7px * var(--cz)); min-height: calc(146px * var(--cz)); }
+.ob-from {
+  font-family: var(--body-font); font-size: 0.85em; line-height: 1.4; color: #6f6a5e;
+  border-left: 2px solid #e3b4ae; padding-left: 8px; margin: 2px 0 4px;
+}
+
 /* tiles: zoomed out, a whole novel on one screen */
 #outline-board.tiles .ob-card { height: 58px; font-size: 11px; padding: 5px 8px; }
 #outline-board.tiles .ob-mark { font-size: 24px; }
@@ -960,7 +984,8 @@ body.light .ob-card { box-shadow: 0 0 0 1px #d9d3c4, 0 3px 8px rgba(60,50,30,0.1
 .ob-cell.open-left .ob-card { left: auto; right: 0; }
 .ob-cell.open .ob-text { -webkit-line-clamp: unset; display: block; overflow: visible; min-height: 4.2em; color: var(--card-ink); font-style: normal; cursor: text; }
 .ob-text[contenteditable="true"]:empty::before { content: attr(data-ph); color: #9a9486; font-style: italic; }
-.ob-tools { display: flex; align-items: center; gap: 12px; font-size: 11px; color: var(--card-soft); padding-top: 6px; }
+.ob-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 11px; color: var(--card-soft); padding-top: 6px; }
+.ob-tools button { white-space: nowrap; }
 .ob-tools button {
   background: none; border: 1px solid #cfc8b8; border-radius: 12px; padding: 3px 10px;
   font: inherit; color: #5b5648; cursor: pointer;

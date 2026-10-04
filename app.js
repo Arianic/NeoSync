@@ -7451,7 +7451,8 @@ function outlineBoard() {
   board.addEventListener('keydown', (e) => {
     const cell = e.target.closest && e.target.closest('.ob-cell');
     if (!cell || cell.classList.contains('open')) return;
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCard(cell); }
+    if (e.key === 'Enter' && e.altKey) { e.preventDefault(); newCardAfter(cell); }
+    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCard(cell); }
     else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); cardMenu(cell, 0, 0); }
     else if (['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(e.key)) {
       e.preventDefault();
@@ -7529,7 +7530,7 @@ function renderBoard() {
   board.style.setProperty('--cz', z);
   board.classList.toggle('tiles', z < 0.8);
   board.classList.remove('script-board');
-  if (isScript()) { renderScriptBoard(board); boardHint(board); return; }
+  if (isScript()) { renderScriptBoard(board); boardAddCard(board); boardHint(board); return; }
   const solo = soloStory();
   for (const chId of book.chapterOrder) {
     const kind = chapterKind(chId);
@@ -7555,6 +7556,7 @@ function renderBoard() {
       board.appendChild(cell);
     });
   }
+  boardAddCard(board);
   boardHint(board);
 }
 
@@ -7568,10 +7570,10 @@ function boardHint(board) {
   }
   hint.hidden = false;
   hint.textContent = NO_HOVER
-    ? t('Tap a card to write on it · hold a card to move it · hold and let go for more')
+    ? t('Tap a card to write on it · hold a card to move it · hold and let go for more · + adds a card')
     : isScript()
-      ? t('Click a card to write on it · drag it to move the scene · right-click for more · Enter starts the next scene')
-      : t('Click a card to write on it · drag it to move it, writing and all · right-click for more · Enter starts the next card');
+      ? t('Click a card to write on it · drag it to move the scene · right-click for more · + adds a scene')
+      : t('Click a card to write on it · drag it to move it, writing and all · right-click for more · + adds a card');
 }
 
 function boardPartRow(chId) {
@@ -7599,7 +7601,43 @@ function cardCell(kind, chId) {
   const card = document.createElement('div');
   card.className = 'ob-card ob-' + kind;
   cell.appendChild(card);
+  if (kind !== 'loose') {
+    // a + on the seam after the card: a new card right there
+    const plus = document.createElement('button');
+    plus.type = 'button';
+    plus.className = 'ob-plus';
+    plus.textContent = '+';
+    plus.title = kind === 'scene' ? t('New scene after this one') : t('New card after this one');
+    plus.setAttribute('aria-label', plus.title);
+    plus.tabIndex = -1; // the keyboard has ⌥Enter
+    plus.addEventListener('click', (e) => { e.stopPropagation(); if (!cell.dataset.new) newCardAfter(cell); });
+    cell.appendChild(plus);
+  }
   return { cell, card };
+}
+
+// the last place on the board: a new chapter (or scene) at the end
+function boardAddCard(board) {
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'ob-add';
+  const script = isScript();
+  add.textContent = script ? t('+ Scene') : t('+ Chapter');
+  add.addEventListener('click', () => {
+    if (script) {
+      const cells = [...board.querySelectorAll('.ob-cell[data-kind="scene"]')];
+      const last = cells[cells.length - 1];
+      if (last) { newCardAfter(last); return; }
+      const fresh = sceneCard({ k: -1, s: { p: null }, id: null, slug: '', eighths: 0, cast: [], first: '' });
+      fresh.dataset.new = '1';
+      fresh.dataset.after = '-1';
+      add.before(fresh);
+      openCard(fresh, { fresh: true });
+      return;
+    }
+    newChapterCard(storyEnd());
+  });
+  board.appendChild(add);
 }
 
 const cardWords = (n) => (n ? t('{n} words', { n: n.toLocaleString() }) : '');
@@ -7696,7 +7734,17 @@ function openCard(cell, { fresh = false } = {}) {
   cell.classList.toggle('open-left', r.left + r.width * 2 > b.right + 4);
   text.classList.remove('excerpt', 'empty');
   text.textContent = note;
-  text.dataset.ph = cell.dataset.excerpt || (cell.dataset.kind === 'chapter' ? t('What happens in this chapter…') : cell.dataset.kind === 'scene' ? t('What happens in this scene…') : t('What happens in this section…'));
+  // the page's own first line stays in view above the note, so opening a
+  // card never looks like it wiped what was on it
+  if (cell.dataset.excerpt && cell.dataset.kind !== 'loose') {
+    const from = document.createElement('div');
+    from.className = 'ob-from';
+    from.textContent = cell.dataset.excerpt;
+    text.before(from);
+    text.dataset.ph = t('Write a note…');
+  } else {
+    text.dataset.ph = cell.dataset.kind === 'chapter' ? t('What happens in this chapter…') : cell.dataset.kind === 'scene' ? t('What happens in this scene…') : cell.dataset.kind === 'loose' ? t('Write a note…') : t('What happens in this section…');
+  }
   text.contentEditable = 'true';
   text.spellcheck = false;
   text.setAttribute('role', 'textbox');
@@ -7721,8 +7769,16 @@ function openCard(cell, { fresh = false } = {}) {
     go.onclick = () => { const c = cardEditor && cardEditor.cell; closeCardEditor(); if (c) goToCard(c); };
     tools.appendChild(go);
   }
+  if (cell.dataset.kind !== 'loose') {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.textContent = cell.dataset.kind === 'scene' ? t('New scene') : t('New card');
+    more.addEventListener('mousedown', (e) => e.preventDefault());
+    more.onclick = () => { const c = cardEditor && cardEditor.cell; if (c) newCardAfter(c); };
+    tools.appendChild(more);
+  }
   const tip = document.createElement('span');
-  tip.textContent = t('Enter: next card · Esc: done');
+  tip.textContent = t('Enter: done · Tab: next card · {key}: new card', { key: K('⌥Enter', 'Alt+Enter') });
   tools.appendChild(tip);
   cell.querySelector('.ob-card').appendChild(tools);
   cardEditor = { cell, text, slug, before: note, slugBefore: slug ? slug.textContent : null, fresh };
@@ -7774,6 +7830,7 @@ function closeCardEditor(quiet = false) {
   text.removeAttribute('role');
   cell.classList.remove('open', 'open-left');
   cell.querySelector('.ob-tools')?.remove();
+  cell.querySelector('.ob-from')?.remove();
   const val = text.textContent.replace(/\s+/g, ' ').trim();
   if (slug) {
     slug.removeEventListener('keydown', slugKeys);
@@ -7876,30 +7933,42 @@ function cardKeys(e) {
     if (cell.isConnected) cell.focus();
     return;
   }
+  if (e.isComposing || e.keyCode === 229) return;
+  // Enter: the card is done (and stays where the keyboard is)
   if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
     e.preventDefault();
-    if (e.isComposing || e.keyCode === 229) return;
+    closeCardEditor();
+    if (cell.isConnected) cell.focus();
+    else renderBoardFocus(cell);
+    return;
+  }
+  // Tab and ⇧Tab: on to the next card, or back to the one before
+  if (e.key === 'Tab' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    const list = cell.closest('#loose-list') || outlineBoard();
+    const cells = [...list.querySelectorAll('.ob-cell')];
+    const at = cells.indexOf(cell);
+    const ahead = e.shiftKey ? cells.slice(0, at).reverse() : cells.slice(at + 1);
+    closeCardEditor();
+    const next = ahead.find((c) => c.isConnected);
+    if (next) openCard(next);
+    else if (cell.isConnected) cell.focus();
+    return;
+  }
+  // ⌥Enter (Alt+Enter): a new card after this one; on an empty new card,
+  // a new chapter instead (the manuscript's Enter, Enter)
+  if (e.key === 'Enter' && e.altKey && !e.metaKey && !e.ctrlKey) {
+    e.preventDefault();
     const empty = !text.textContent.trim();
-    // Enter on a fresh, empty card: it becomes the next chapter (Enter,
-    // Enter, as in the manuscript)
     if (empty && cell.dataset.new && cell.dataset.kind === 'section') {
       const chId = cell.dataset.ch;
       cardEditor = null;
       cell.remove();
-      snapshotStructure('card new chapter');
-      const at = book.chapterOrder.indexOf(chId) + 1;
-      const newId = createChapterAt(at);
-      renderBoard();
-      const nc = outlineBoard().querySelector(`.ob-cell[data-kind="chapter"][data-ch="${newId}"]`);
-      if (nc) openCard(nc, { fresh: true });
+      newChapterCard(book.chapterOrder.indexOf(chId) + 1);
       return;
     }
     if (cell.dataset.kind === 'loose') { closeCardEditor(); addLooseCard(); return; }
-    // the next card: a new section after this one
-    const chId = cell.dataset.ch;
-    closeCardEditor();
-    const fresh = makeNewCardAfter(cell, chId);
-    if (fresh) openCard(fresh, { fresh: true });
+    newCardAfter(cell);
     return;
   }
   if (e.key === 'Backspace' && !text.textContent) {
@@ -7918,6 +7987,31 @@ function cardKeys(e) {
       deleteSectionNote(chId, cell.dataset.sec);
     }
   }
+}
+
+// a new card after this one, open to write on
+function newCardAfter(cell) {
+  closeCardEditor();
+  if (!cell.isConnected) return;
+  const fresh = makeNewCardAfter(cell, cell.dataset.ch);
+  if (fresh) openCard(fresh, { fresh: true });
+}
+
+// a new chapter at this place in the book, its card open to write on
+function newChapterCard(at) {
+  closeCardEditor();
+  snapshotStructure('card new chapter');
+  const newId = createChapterAt(at);
+  updateCounters();
+  renderBoard();
+  const nc = outlineBoard().querySelector(`.ob-cell[data-kind="chapter"][data-ch="${newId}"]`);
+  if (nc) openCard(nc, { fresh: true });
+}
+
+// after a redraw, the keyboard goes back to the card it was on
+function renderBoardFocus(cell) {
+  const sel = cell.dataset.sec ? `.ob-cell[data-sec="${cell.dataset.sec}"]` : cell.dataset.kind === 'chapter' ? `.ob-cell[data-kind="chapter"][data-ch="${cell.dataset.ch}"]` : null;
+  setTimeout(() => { const c = sel && outlineBoard().querySelector(sel); if (c) c.focus(); }, 150);
 }
 
 // in a scene's heading: Enter or Tab moves on to the note

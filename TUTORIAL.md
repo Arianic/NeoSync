@@ -53,7 +53,7 @@ Instead of deleting it, select it and drag it down onto the **Darlings** tab at 
 
 Click the Outline tab at the bottom and your book is laid out as index cards. They read like a page: left to right, then down to the next line. Each chapter starts with a card showing its number in big type, and its sections follow it on the same dark mat. When a chapter runs past the edge of the window, its mat continues on the next line, cut square so you can see it carries on. A Part starts a fresh line, the same as it starts a fresh page in your book.
 
-Click any card to write on it. Enter starts the next card. Enter on an empty new card turns it into a new chapter (Enter, Enter, just like in the manuscript). A section's card becomes a gray ghost paragraph in your manuscript, and when you start writing over it, the note rides one line below whatever you're typing so you don't lose track of what the scene was supposed to do. Click Dismiss when you're done with it.
+Click any card to write on it. Enter when you're done; Tab takes you on to the next card, so you can work your way through the whole outline from the keyboard. To add a card, hover over one and click the little + beside it, or press ⌥Enter (Alt+Enter on Windows) while you're writing on it. The dashed + Chapter card at the end of the board adds a chapter. A section's card becomes a gray ghost paragraph in your manuscript, and when you start writing over it, the note rides one line below whatever you're typing so you don't lose track of what the scene was supposed to do. Click Dismiss when you're done with it.
 
 Drag a card to move it. Your writing moves with it, so you can rearrange scenes and chapters right here. ⌘Z puts things back. Right-click a card to make a section its own chapter, or to jump to it on the page.
 
@@ -97,7 +97,7 @@ If you'd rather choose for yourself, ⌘1 through ⌘7 (Ctrl on Windows) are Sce
 
 In a script the left panel stays open (click the little ☉ to tuck it away). Under the elements is every scene, with how long it runs in eighths of a page. Click a scene to jump there. Drag one to move the whole scene; ⌘Z puts it back. Down at the bottom, NEO shows what page you're on and how long the script runs, figured at a page a minute. Click the page counter to count scenes instead.
 
-The Outline tab turns your script into index cards, one per scene: the scene heading, how long it runs, who's in it, and a few lines of notes you can write right on the card (until you do, it shows the scene's first line of action). Drag a card to move the scene. Click a card's heading to change it. Enter on a card starts a new scene after it, so you can lay out a whole script as cards before writing a word, and loose cards in the right-hand panel hold scenes that don't have a place yet.
+The Outline tab turns your script into index cards, one per scene: the scene heading, how long it runs, who's in it, and a few lines of notes you can write right on the card (until you do, it shows the scene's first line of action). Drag a card to move the scene. Click a card's heading to change it. The + beside a card starts a new scene after it (and + Scene at the end adds one there), so you can lay out a whole script as cards before writing a word, and loose cards in the right-hand panel hold scenes that don't have a place yet.
 
 Scroll up to the title page and fill it in: "Written by," your name, your contact info at the bottom left (type it once and every script uses it), and your draft and date at the bottom right.
 
