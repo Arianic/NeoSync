@@ -5518,6 +5518,17 @@ function focusAfterSectionRemoved(list, index, chId) {
   return above ? { secId: above.id } : { chId };
 }
 
+/** Put the caret at the END of an outline line's text, the way moving down the list does. */
+function focusOutlineTextEnd(el) {
+  el.focus();
+  const r = document.createRange();
+  r.selectNodeContents(el);
+  r.collapse(false);
+  const s = window.getSelection();
+  s.removeAllRanges();
+  s.addRange(r);
+}
+
 function renderOutline(focusTarget) {
   book.sectionNotes = book.sectionNotes || {};
   book.chapterNotes = book.chapterNotes || {};
@@ -5676,18 +5687,19 @@ function outlineLine(kind, chId, secId, index, label, text) {
       e.preventDefault();
       const lines = [...document.querySelectorAll('.ol-line .ol-text')];
       const next = lines[lines.indexOf(txt) + (e.key === 'ArrowDown' ? 1 : -1)];
-      if (next) {
-        next.focus();
-        const r = document.createRange();
-        r.selectNodeContents(next);
-        r.collapse(false);
-        const s = window.getSelection();
-        s.removeAllRanges(); s.addRange(r);
-      }
+      if (next) focusOutlineTextEnd(next);
     }
     if (e.key === 'Tab' && !e.shiftKey) {
       e.preventDefault();
-      if (kind !== 'chapter') return;
+      if (kind !== 'chapter') {
+        // A section line is already as indented as an outline line can get, so Tab
+        // moves on to the end of the next line (chapter included) instead of doing
+        // nothing. Tab on a chapter keeps its convert-to-section meaning below.
+        const lines = [...document.querySelectorAll('.ol-line .ol-text')];
+        const next = lines[lines.indexOf(txt) + 1];
+        if (next) focusOutlineTextEnd(next);
+        return;
+      }
       const prevCh = storyBefore(chId);
       if (!prevCh) { toast(t('The first line has to be a chapter')); return; }
       if (countWords(chapterText(chId)) > 0) {
