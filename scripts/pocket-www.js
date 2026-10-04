@@ -52,6 +52,9 @@ const langs = {};
 const labels = {};
 for (const m of block[1].matchAll(/'([\w-]+)': \{ label: '([^']*)', pkg: '(dictionary-[\w-]+)' \}/g)) { langs[m[1]] = m[3]; labels[m[1]] = m[2]; }
 if (!langs['en-US']) throw new Error('SPELL_LANGUAGES has no en-US');
+// Greek's dictionary is nearly half the download on its own: left out of
+// Pocket until someone asks for it
+for (const code of ['el']) { delete langs[code]; delete labels[code]; }
 const dictDir = path.join(www, 'dict');
 fs.rmSync(dictDir, { recursive: true, force: true });
 for (const [code, pkg] of Object.entries(langs)) {

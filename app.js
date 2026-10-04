@@ -4737,8 +4737,9 @@ function focusChapter(chId) {
 
 // ---- screenplay rules: plain functions of the lines, no page (see scripts/screenplay.test.js) ----
 const SP_TYPES = ['heading', 'action', 'character', 'paren', 'dialogue', 'transition', 'shot'];
-// blank lines above each element
-const SP_BEFORE = { heading: 1, action: 1, character: 1, paren: 0, dialogue: 0, transition: 1, shot: 1 };
+// blank lines above each element (two above a scene heading, so each scene
+// stands apart; it costs a few pages, as it does in Final Draft)
+const SP_BEFORE = { heading: 2, action: 1, character: 1, paren: 0, dialogue: 0, transition: 1, shot: 1 };
 // Enter at the end of a line with words: what the next line is
 const SP_AFTER = { heading: 'action', action: 'action', character: 'dialogue', paren: 'dialogue', dialogue: 'action', transition: 'heading', shot: 'action' };
 // Enter on an empty line: what that line becomes. Enter twice after a

@@ -1611,6 +1611,8 @@ body.night #paper.script #chapters { box-shadow: 0 4px 30px rgba(0,0,0,0.7); }
 .sp-geom > p.sp-heading, .sp-geom > p.sp-character, .sp-geom > p.sp-transition, .sp-geom > p.sp-shot { text-transform: uppercase; }
 /* scene headings stand out as you write, and print the same way */
 .sp-geom > p.sp-heading, .sp-narrow > p.sp-heading { font-weight: bold; }
+/* two blank lines above a scene heading (SP_BEFORE in app.js) */
+.sp-geom > p.sp-heading:not(:first-child) { margin-top: 2em; }
 .sp-geom > p.sp-character { margin-left: 13.2em; width: 23.1em; --ind: 13.2em; }
 .sp-geom > p.sp-paren { margin-left: 9.6em; width: 15.3em; --ind: 9.6em; }
 .sp-geom > p.sp-dialogue { margin-left: 6em; width: 21.3em; --ind: 6em; }
@@ -1675,6 +1677,7 @@ body.night #paper.script #chapters { box-shadow: 0 4px 30px rgba(0,0,0,0.7); }
 .sp-narrow > p { margin: 1.3em 0 0; text-indent: 0 !important; white-space: pre-wrap; overflow-wrap: anywhere; position: relative; }
 .sp-narrow > p:first-child { margin-top: 0; }
 .sp-narrow > p.sp-dialogue, .sp-narrow > p.sp-paren { margin-top: 0; }
+.sp-narrow > p.sp-heading:not(:first-child) { margin-top: 2.6em; }
 .sp-narrow > p.sp-heading, .sp-narrow > p.sp-character, .sp-narrow > p.sp-transition, .sp-narrow > p.sp-shot { text-transform: uppercase; }
 .sp-narrow > p.sp-character { margin-left: 6.5em; --ind: 6.5em; }
 .sp-narrow > p.sp-paren { margin-left: 4.5em; margin-right: 3em; --ind: 4.5em; }
