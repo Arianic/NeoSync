@@ -68,19 +68,19 @@ New books are automatically given cover art with a seeded abstract look (six art
 
 **Writing a screenplay**
 
-NEO writes scripts now too. It's tucked away so it doesn't clutter things up for novelists: right-click the + on any shelf and choose **New Script**. (On a phone or tablet, press and hold the +.) Your script lands on the shelf looking like a script, white card stock and brass brads.
+NEO writes scripts now! It's tucked away so it doesn't clutter things up for novelists: right-click the + on any shelf and choose **New Script**. (On a phone or tablet, press and hold the +) Your script lands on the shelf looking like a script, white card stock and brass brads.
 
 Type a title and hit Enter, same as a book. Then write. NEO works out what each line is:
 
 - Start a line with INT. or EXT. and it becomes a scene heading. Hit Tab after INT and NEO adds the period; Tab after the place adds the dash. Places you've already used, and DAY or NIGHT, show up in gray as you type.
 - Type a character's name in capitals and hit Enter. The name jumps to the middle of the page, and the next line is dialogue.
-- Hit Enter at the end of a speech and you're back to action. Hit Enter again on that empty line and it turns into the next speaker's name, with whoever is being answered already filled in gray. Enter once more takes it.
+- Hit Enter at the end of a speech and you're back to action. Hit Enter AGAIN on that empty line and it turns into the next speaker's name, with whoever is being answered already filled in gray. Enter once more accepts the suggestion.
 - Start a line of dialogue with ( and it's a parenthetical.
 - Capitals ending in TO: (CUT TO:, SMASH CUT TO:) make a transition.
 
-Gray text is only ever a suggestion, built from names and places you've already written. Tab or the → key takes it. Keep typing and it goes away. And if NEO guesses wrong (a sound effect in capitals can look like a character's name), hit Backspace on the empty dialogue line below it and it goes back to being action.
+Gray text is only ever a suggestion, built from names and places you've already written. Tab or the → key accepts it. Keep typing and it goes away. And if NEO guesses wrong (a sound effect in capitals can look like a character's name), hit Backspace on the empty dialogue line below it and it goes back to being action.
 
-If you'd rather choose for yourself, ⌘1 through ⌘7 (Ctrl on Windows) are Scene Heading, Action, Character, Parenthetical, Dialogue, Transition, and Shot. Those are Final Draft's keys, so your fingers already know them. Tab steps through them too, and you can click any of them in the left panel.
+If you'd rather choose for yourself, ⌘1 through ⌘7 (Ctrl on Windows) are Scene Heading, Action, Character, Parenthetical, Dialogue, Transition, and Shot. Those are Final Draft's keys, so some of you might already know them. Tab steps through them as well, and you can click any of them in the left panel.
 
 In a script the left panel stays open (click the little ☉ to tuck it away). Under the elements is every scene, with how long it runs in eighths of a page. Click a scene to jump there. Drag one to move the whole scene; ⌘Z puts it back. Down at the bottom, NEO shows what page you're on and how long the script runs, figured at a page a minute. Click the page counter to count scenes instead.
 
