@@ -368,6 +368,22 @@ function writeCatalog() {
 // done and the words not: an empty book.json, and the book gone from its
 // shelf (#219). A missing file or an unlucky moment never costs more than
 // the last few seconds.
+// On Windows the swap is refused while anything else has the file open, even
+// for a moment: antivirus looking at what was just written, the search
+// indexer, a backup or sync client, a tool reading the library. Wait a beat
+// and try again (up to ~0.6 s) before calling the save failed, so a passing
+// glance never reaches the writer as "NEO can't save". A folder that really
+// refuses writes still fails, and is still explained.
+const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function renameIntoPlace(from, to) {
+  for (let wait = 5; ; wait *= 2) {
+    try { return fs.renameSync(from, to); } catch (err) {
+      if (process.platform !== 'win32' || wait > 320 || !['EPERM', 'EACCES', 'EBUSY'].includes(err.code)) throw err;
+      sleepSync(wait);
+    }
+  }
+}
+
 function writeFileDurable(file, data) {
   const tmp = file + '.tmp';
   const fd = fs.openSync(tmp, 'w');
@@ -377,7 +393,7 @@ function writeFileDurable(file, data) {
   } finally {
     fs.closeSync(fd);
   }
-  fs.renameSync(tmp, file);
+  renameIntoPlace(tmp, file);
   // the swap itself, on systems that let a folder be pushed too
   if (process.platform !== 'win32') {
     try { const d = fs.openSync(path.dirname(file), 'r'); try { fs.fsyncSync(d); } finally { fs.closeSync(d); } } catch { /* fine */ }
