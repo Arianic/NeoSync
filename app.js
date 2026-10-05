@@ -11878,7 +11878,7 @@ function buildHtml(data, opts = {}) {
      read "Chapter 3", not "CHAPTER 3" */
   .chapter .hd, .contents .hd { text-align: center; letter-spacing: 4px; font-variant-caps: all-small-caps; font-variant-numeric: oldstyle-nums; font-size: 17pt; font-weight: normal; color: #555; margin: 54px 0 36px; }
   .chapter p { text-indent: 2em; margin: 0; }
-  .chapter .hd + p, .chapter .byline + p, .brk + p, .chapter p.first { text-indent: 0; }
+  .chapter .hd + p, .chapter .byline + p, .chapter .brk + p, .brk + p, .chapter p.first { text-indent: 0; }
   .chapter p.dialogue { text-indent: 2em; }
   /* the drop cap the page sets, two lines deep in its own face. An initial
      letter, not a float: it stays inside its word, so the PDF's copy,
@@ -11887,7 +11887,7 @@ function buildHtml(data, opts = {}) {
      that can't set one gets a raised initial. */
   ${(library.fonts || {}).dropcap === 'none' ? '' : `.chapter p.first:not(.dialogue)::first-letter { -webkit-initial-letter: 2; initial-letter: 2; padding-right: 4px; font-family: ${exportDropCapFont()}; }
   @supports not ((initial-letter: 2) or (-webkit-initial-letter: 2)) { .chapter p.first:not(.dialogue)::first-letter { font-size: 1.8em; line-height: 1; padding-right: 0; } }`}
-  .brk { text-align: center; text-indent: 0 !important; letter-spacing: 8px; color: #888; margin: 2.5em 0; }
+  .chapter .brk, .brk { text-align: center; text-indent: 0 !important; letter-spacing: 8px; color: #888; margin: 2.5em 0; }
   .chapter p.poetry { text-indent: 0; margin: 0 2.5em; }
   .chapter p.flush { text-indent: 0 !important; }
   .chapter p:not(.poetry) + p.poetry, .chapter .hd + p.poetry { margin-top: 0.9em; }
