@@ -2232,6 +2232,7 @@ async function openBook(bookId) {
 
   $('#bookshelf-view').hidden = true;
   $('#editor-view').hidden = false;
+  applyBright();
   document.execCommand('defaultParagraphSeparator', false, 'p');
 
   $('#tp-title').textContent = isUntitled(book.title) ? '' : book.title;
@@ -2261,7 +2262,7 @@ async function openBook(bookId) {
       // pick up right where you left off — here, or on the other device
       currentChapterId = book.lastPosition.chapterId;
       const pos = book.lastPosition;
-      requestAnimationFrame(() => resumePosition(pos));
+      requestAnimationFrame(() => { resumePosition(pos); vimRest(); });
     }
   }
 
@@ -3548,7 +3549,7 @@ function captureBody(body) {
   // (a page marks the lines that say who said it, and a chapter the speech
   // after a scene break, for the screen only)
   // (and a script's page breaks, (CONT'D) and suggestions)
-  return body.innerHTML.replace(/<p\b[^>]*>/g, (tag) => tag.replace(/ data-(?:attr|speech|first)=""/g, '')
+  return body.innerHTML.replace(/<p\b[^>]*>/g, (tag) => tag.replace(/ data-(?:attr|speech|first|walk)=""/g, '')
     .replace(/ data-(?:pg|fill|contd|ghost|ghost-empty|sp-paste)(?:="[^"]*")?/g, ''));
 }
 
@@ -4291,7 +4292,11 @@ document.addEventListener('keydown', (e) => {
     void setEditorFontSize(-1);
   }
   if (e.key === 'Escape') {
-    if (!$('#searchbar').hidden) closeSearch();
+    // from the find bar's buttons too (the arrows take the focus when
+    // clicked): back to the page. Typing on the page with the bar still
+    // open, Esc only closes the bar and leaves the caret where it is.
+    const inBar = !document.activeElement || document.activeElement === document.body || $('#searchbar').contains(document.activeElement);
+    if (!$('#searchbar').hidden) { if (inBar) returnFromSearch(); else closeSearch(); }
     else window.neo.fullscreenEscape().then((exited) => { if (!exited) backToShelf(); });
   }
 });
@@ -4310,21 +4315,28 @@ document.addEventListener('keydown', (e) => {
 // first, before the page or the outline can read them as plain arrows.
 // Pocket takes both: a keyboard paired with a phone or an iPad may be a
 // Mac's (⌘ arrives as Meta) or a PC's (Ctrl).
+// Off the Mac, Ctrl+Page Down / Ctrl+Page Up do the same: GNOME keeps
+// Ctrl+Alt+↑↓ for switching workspaces, so NEO never hears them there, and
+// some Windows graphics drivers turn the screen with them (#254).
 window.addEventListener('keydown', (e) => {
-  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  const arrows = e.key === 'ArrowDown' || e.key === 'ArrowUp';
+  const pages = e.key === 'PageDown' || e.key === 'PageUp';
+  if (!arrows && !pages) return;
   const cmd = IS_POCKET ? (e.metaKey !== e.ctrlKey) : (IS_MAC ? e.metaKey : e.ctrlKey);
-  if (!cmd || !e.altKey || e.shiftKey) return;
+  if (arrows && (!cmd || !e.altKey || e.shiftKey)) return;
+  if (pages && ((IS_MAC && !IS_POCKET) || !e.ctrlKey || e.metaKey || e.altKey || e.shiftKey)) return;
   if ($('#editor-view').hidden || document.querySelector('.modal-backdrop:not([hidden])')) return;
   e.preventDefault();
   e.stopPropagation();
-  gotoChapter(e.key === 'ArrowDown' ? 1 : -1);
+  gotoChapter(e.key === 'ArrowDown' || e.key === 'PageDown' ? 1 : -1);
 }, true);
 
 /* ------------------------------------------------------------------ */
 /*  Vim keys (View → Vim Keys, off unless chosen)                      */
 /*                                                                      */
 /*  The small part of vim that writers use to move around a page. Esc   */
-/*  puts the page in moving mode (the caret turns gold); letters then   */
+/*  puts the page in moving mode (the caret turns gold), and a book     */
+/*  opens in it; letters then                                           */
 /*  move instead of type, and i, a, o and friends go back to writing.   */
 /*  Esc while moving stays put, as in vim. Keys with ⌘ or Ctrl keep     */
 /*  their usual jobs, so none of NEO's shortcuts change.                */
@@ -4337,7 +4349,8 @@ window.addEventListener('keydown', (e) => {
 /*    o O       new paragraph below / above                             */
 /*    v         select: motions stretch it, y copies, d or x cuts       */
 /*    x         delete the letter under the caret                       */
-/*    /         find                     a number first repeats: 3w     */
+/*    /         find (Esc goes back to moving, at the match)            */
+/*    n N       next / previous match    a number first repeats: 3w     */
 /* ------------------------------------------------------------------ */
 let vimEnabled = false;
 let vimNav = false;        // moving, not typing
@@ -4357,6 +4370,13 @@ function toggleVim() {
   toast(vimEnabled ? t('Vim keys on — Esc to move, i to write') : t('Vim keys off'));
 }
 const vimEditor = (el) => el && el.closest && el.closest('.chapter-body, #aux-editor');
+// With vim keys on, the page rests in moving mode, as vim starts: a book
+// opens that way, and so does the Manuscript or Notes tab when you come back
+// to it (#257). i, a or o to write. A click, a title's Enter or the window
+// coming back to the front leave the mode as it was.
+function vimRest() {
+  if (vimEnabled && vimEditor(document.activeElement)) vimSetNav(true);
+}
 function vimSetNav(on) {
   vimNav = on;
   vimVisual = false;
@@ -4465,6 +4485,28 @@ function vimHalfPage(dir) {
   s.removeAllRanges();
   s.addRange(r);
 }
+// n and N: the next or previous place the last search found, from the caret,
+// round to the top (or bottom) when the tab runs out, as vim does
+function vimSearchAgain(dir, times = 1) {
+  const s = window.getSelection();
+  const found = findRanges($('#search-input').value);
+  if (!found.length || !s.rangeCount) return;
+  const here = s.getRangeAt(0);
+  // the first match past the caret (or the last one before it)
+  let i = dir > 0
+    ? found.findIndex((r) => r.compareBoundaryPoints(Range.START_TO_START, here) > 0)
+    : found.findLastIndex((r) => r.compareBoundaryPoints(Range.START_TO_START, here) < 0);
+  if (i < 0) i = dir > 0 ? 0 : found.length - 1;
+  i = (((i + dir * (times - 1)) % found.length) + found.length) % found.length;
+  const r = found[i];
+  const ed = editableOf(r);
+  if (!ed) return;
+  if (vimVisual && ed.contains(s.anchorNode)) { s.extend(r.startContainer, r.startOffset); return; }
+  if (document.activeElement !== ed) ed.focus({ preventScroll: true });
+  r.collapse(true);
+  s.removeAllRanges();
+  s.addRange(r);
+}
 // Moving, a key counts by where it sits on the keyboard, named as on a US
 // one, whatever layout is on: on Russian or Greek the key under the right
 // index finger is still j, and Shift+4 is still $. A dead key, and a key an
@@ -4533,7 +4575,8 @@ function vimKey(e) {
       document.execCommand('insertParagraph');
       vimMove(back, 'character');
       break;
-    case '/': vimSetNav(false); openSearch(); return;
+    case '/': vimSetNav(false); openSearch(true); return;
+    case 'n': case 'N': vimSearchAgain(k === 'n' ? 1 : -1, times); break;
     default: return;
   }
   revealCaret();
@@ -4701,8 +4744,9 @@ function focusChapter(chId) {
 
 // ---- screenplay rules: plain functions of the lines, no page (see scripts/screenplay.test.js) ----
 const SP_TYPES = ['heading', 'action', 'character', 'paren', 'dialogue', 'transition', 'shot'];
-// blank lines above each element
-const SP_BEFORE = { heading: 1, action: 1, character: 1, paren: 0, dialogue: 0, transition: 1, shot: 1 };
+// blank lines above each element (two above a scene heading, so each scene
+// stands apart; it costs a few pages, as it does in Final Draft)
+const SP_BEFORE = { heading: 2, action: 1, character: 1, paren: 0, dialogue: 0, transition: 1, shot: 1 };
 // Enter at the end of a line with words: what the next line is
 const SP_AFTER = { heading: 'action', action: 'action', character: 'dialogue', paren: 'dialogue', dialogue: 'action', transition: 'heading', shot: 'action' };
 // Enter on an empty line: what that line becomes. Enter twice after a
@@ -4750,6 +4794,8 @@ function spParseHeading(t) {
 function spComplete(partial, pool) {
   if (!partial) return '';
   const p = partial.toUpperCase();
+  // a name or place already used just as typed is what's meant (KIM, not KIMBERLY)
+  if (pool.includes(p)) return '';
   for (const w of pool) if (w.startsWith(p) && w.length > p.length) return w.slice(p.length);
   return '';
 }
@@ -5130,6 +5176,7 @@ const SP_SCREEN_ATTRS = ['data-pg', 'data-fill', 'data-contd', 'data-ghost', 'da
 // characters NEO guessed from a line in capitals, and headings it made of
 // INT./EXT.: either goes back to action when the guess turns out wrong
 const spGuessed = new WeakSet();
+const spDismissed = new WeakMap(); // a line → its text when Esc sent its suggestion away
 
 function spType(p) {
   if (!p || !p.classList) return 'action';
@@ -5270,6 +5317,14 @@ function scriptKey(e, body) {
   const p = caretBlock(body);
   if (!p) return false;
   const ghost = p.getAttribute('data-ghost') || '';
+  if (e.key === 'Escape' && ghost) {
+    // not this one: gone until the line changes
+    e.preventDefault();
+    e.stopPropagation();
+    spDismissed.set(p, p.textContent);
+    spRefreshGhost();
+    return true;
+  }
   if (e.key === 'Tab') {
     e.preventDefault();
     spTab(p, e.shiftKey, ghost && !e.shiftKey && spCaretAtEnd(p) ? ghost : '');
@@ -5298,10 +5353,11 @@ function scriptKey(e, body) {
 
 function spEnter(p, body) {
   let type = spType(p);
-  // On an empty name line, Enter takes the one being answered, and the
-  // speech follows. A suggestion for something half typed waits for Tab
-  // or →: Enter keeps what was typed (KIM must not become KIMBERLY).
-  if (p.getAttribute('data-ghost') && !p.textContent && type === 'character') spInsert(p.getAttribute('data-ghost'));
+  // Enter takes the gray suggestion, as in Final Draft: on an empty name
+  // line the one being answered, on a half-typed one the rest of the name
+  // (or place, time, transition). A name already used as typed gets no
+  // suggestion (spComplete), and Esc sends one away.
+  if (p.getAttribute('data-ghost') && spCaretAtEnd(p)) spInsert(p.getAttribute('data-ghost'));
   const text = p.textContent;
   enterRun = 0;
   // (an empty parenthetical is its parentheses)
@@ -5403,6 +5459,10 @@ function scriptInput(body) {
     if (type === 'action' && SP_HEAD_RE.test(text)) { spSetClass(p, 'heading'); spGuessed.add(p); }
     else if (type === 'heading' && spGuessed.has(p) && !SP_HEAD_RE.test(text)) spSetClass(p, 'action');
     else if (type === 'dialogue' && text.startsWith('(')) spSetClass(p, 'paren');
+    // "(" opening the line after a speech: a parenthetical inside it, and
+    // Enter after it goes back to the speech
+    else if (type === 'action' && text.startsWith('(') && p.previousElementSibling &&
+      ['dialogue', 'paren'].includes(spType(p.previousElementSibling))) spSetClass(p, 'paren');
     spLastPara = p;
   }
   spSchedule();
@@ -5414,7 +5474,7 @@ function scriptInput(body) {
 function spRefreshGhost() {
   const p = spCaretPara();
   let ghost = '';
-  if (p && document.activeElement === spBodyOf(p) && ['character', 'heading', 'transition'].includes(spType(p)) && spCaretAtEnd(p)) {
+  if (p && document.activeElement === spBodyOf(p) && ['character', 'heading', 'transition'].includes(spType(p)) && spCaretAtEnd(p) && spDismissed.get(p) !== p.textContent) {
     const ps = spParas();
     ghost = spGhost(spLinesOf(ps), ps.indexOf(p));
   }
@@ -5727,7 +5787,7 @@ function spEditorMode() {
   const tabM = $('.tab[data-tab="manuscript"]');
   if (tabM) setText(tabM, on ? t('Script') : t('Manuscript'));
   const tabO = $('.tab[data-tab="outline"]');
-  if (tabO) tabO.hidden = on;
+  if (tabO) tabO.hidden = false; // a script's outline is its scenes, as cards
   const add = $('#nav-add');
   if (add) add.hidden = on;
   if (!on) setText($('#nav-head span'), t('Chapters'));
@@ -5919,6 +5979,7 @@ p.sp-character { margin-left: 13.2em; width: 23.1em; }
 p.sp-paren { margin-left: 9.6em; width: 15.3em; }
 p.sp-dialogue { margin-left: 6em; width: 21.3em; }
 p.sp-transition { text-align: right; }
+p.sp-heading { font-weight: bold; }
 .title { text-align: center; }
 .tp-main { position: absolute; top: 3.5in; left: 1.5in; width: 6in; }
 .tp-main .gap { margin-top: 2em; }
@@ -6845,6 +6906,9 @@ function darlingFromKeyboard() {
 let tabPlaces = {};
 
 function switchTab(name) {
+  closeCardEditor();
+  $('#editor-view').classList.remove('board-on');
+  sidePaneForTab(name);
   const scroller = $('#paper-scroll');
   if (book && currentTab && currentTab !== name) {
     tabPlaces[currentTab] = currentTab === 'manuscript'
@@ -6852,6 +6916,7 @@ function switchTab(name) {
       : { scroll: scroller.scrollTop };
   }
   currentTab = name;
+  applyBright();
   $$('.tab').forEach((t) => {
     t.classList.toggle('active', t.dataset.tab === name);
     t.setAttribute('aria-selected', t.dataset.tab === name ? 'true' : 'false');
@@ -6876,6 +6941,7 @@ function switchTab(name) {
     if (back && back.caret) restoreCaret(back.caret); // brings the scroll along
     else returnTo();
     findHere();
+    vimRest();
     return;
   }
   paper.hidden = true;
@@ -6883,6 +6949,8 @@ function switchTab(name) {
   auxEditor.hidden = true;
   dList.hidden = true;
   oList.hidden = true;
+  // the outline's cards, their List/Cards switch and their hint belong to the Outline alone
+  for (const id of ['#outline-board', '#outline-views', '#outline-board-hint']) { const el = $(id); if (el) el.hidden = true; }
 
   if (name === 'darlings') {
     $('#aux-title').textContent = t('Darlings');
@@ -6906,6 +6974,7 @@ function switchTab(name) {
       auxEditor.focus({ preventScroll: true });
       returnTo();
       findHere();
+      vimRest();
     });
   }
 }
@@ -6928,7 +6997,22 @@ function focusAfterSectionRemoved(list, index, chId) {
   return above ? { secId: above.id } : { chId };
 }
 
+/** Put the caret at the END of an outline line's text, the way moving down the list does. */
+function focusOutlineTextEnd(el) {
+  el.focus();
+  const r = document.createRange();
+  r.selectNodeContents(el);
+  r.collapse(false);
+  const s = window.getSelection();
+  s.removeAllRanges();
+  s.addRange(r);
+}
+
 function renderOutline(focusTarget) {
+  // the outline as cards, unless the writer chose the list
+  if (showOutlineView()) { renderBoard(); return; }
+  const boardHint = $('#outline-board-hint');
+  if (boardHint) boardHint.hidden = true;
   book.sectionNotes = book.sectionNotes || {};
   book.chapterNotes = book.chapterNotes || {};
   const wrap = $('#outline-list');
@@ -6949,7 +7033,7 @@ function renderOutline(focusTarget) {
 
   const hint = document.createElement('div');
   hint.className = 'ol-hint';
-  hint.textContent = t('Enter — new chapter (or section, from a section line) · Tab — turn a fresh chapter line into a section · Shift+Tab — turn a section into a chapter · Backspace on an empty line removes it');
+  hint.textContent = t('Enter — new chapter · Tab — make it a section, or a new section below one · ⇧Tab — make it a chapter again · Backspace on an empty line removes it');
   wrap.appendChild(hint);
 
   if (focusTarget) {
@@ -7064,55 +7148,48 @@ function outlineLine(kind, chId, secId, index, label, text) {
       e.stopPropagation();
       return;
     }
-    if (e.key === 'Enter') {
+    // Enter: always a new chapter. From a chapter's line it goes right after
+    // that chapter (or before it, from the very start of a line with words);
+    // from a section's line, after the whole chapter the section is in.
+    if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
       e.preventDefault();
-      const above = caretAtStart();
+      if (e.isComposing || e.keyCode === 229) return;
+      const above = kind === 'chapter' && caretAtStart();
       save();
-      snapshotStructure(kind === 'chapter' ? 'outline new chapter' : 'outline new section', { outlineFocus: here() });
-      if (kind === 'chapter') {
-        const at = book.chapterOrder.indexOf(chId) + (above ? 0 : 1);
-        const newId = createChapterAt(at);
-        renderOutline({ chId: newId });
-      } else {
-        const list = book.sectionNotes[chId];
-        const newSec = { id: 'sec-' + Date.now().toString(36), text: '' };
-        list.splice(index + (above ? 0 : 1), 0, newSec);
-        scheduleMetaSave();
-        syncGhosts(chId);
-        renderOutline({ secId: newSec.id });
-      }
+      snapshotStructure('outline new chapter', { outlineFocus: here() });
+      const at = book.chapterOrder.indexOf(chId) + (above ? 0 : 1);
+      const newId = createChapterAt(at);
+      updateCounters();
+      renderOutline({ chId: newId });
     }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       const lines = [...document.querySelectorAll('.ol-line .ol-text')];
       const next = lines[lines.indexOf(txt) + (e.key === 'ArrowDown' ? 1 : -1)];
-      if (next) {
-        next.focus();
-        const r = document.createRange();
-        r.selectNodeContents(next);
-        r.collapse(false);
-        const s = window.getSelection();
-        s.removeAllRanges(); s.addRange(r);
-      }
+      if (next) focusOutlineTextEnd(next);
     }
+    // Tab: always a section. A section's line makes a new one below it; a
+    // chapter's line becomes a section of the chapter above, writing and all
     if (e.key === 'Tab' && !e.shiftKey) {
       e.preventDefault();
-      if (kind !== 'chapter') return;
-      const prevCh = storyBefore(chId);
-      if (!prevCh) { toast(t('The first line has to be a chapter')); return; }
-      if (countWords(chapterText(chId)) > 0) {
-        toast(t('This chapter already has words in it — only empty chapter lines can become sections'));
+      e.stopPropagation();
+      save();
+      if (kind === 'section') {
+        snapshotStructure('outline new section', { outlineFocus: here() });
+        const list = book.sectionNotes[chId];
+        const newSec = { id: newSectionId(), text: '' };
+        list.splice(index + 1, 0, newSec);
+        scheduleMetaSave();
+        syncGhosts(chId);
+        renderOutline({ secId: newSec.id });
         return;
       }
-      save();
-      snapshotStructure('outline chapter to section', { outlineFocus: here() });
-      book.sectionNotes[prevCh] = book.sectionNotes[prevCh] || [];
-      const newSec = { id: 'sec-' + Date.now().toString(36), text: txt.textContent.trim() };
-      book.sectionNotes[prevCh].push(newSec);
-      deleteChapterQuiet(chId).then(() => {
-        syncGhosts(prevCh);
-        renderOutline({ secId: newSec.id });
+      const prevCh = storyBefore(chId);
+      if (!prevCh) { toast(t('The first line has to be a chapter')); return; }
+      joinChapter(chId, prevCh).then((secId) => {
+        if (currentTab === 'outline') renderOutline(secId ? { secId } : { chId: prevCh });
       });
+      return;
     }
     if (e.key === 'Tab' && e.shiftKey) {
       e.preventDefault();
@@ -7187,55 +7264,1725 @@ function sectionWritten(chId, secId) {
 }
 
 // Push section notes into the manuscript as gray ghost paragraphs,
-// with real *** scene breaks between sections.
-// Once a ghost has been written over, it goes away.
+// with real *** scene breaks between sections. A ghost stays where it is
+// (the cards can set one between two written sections); a note the page
+// doesn't have yet goes in before the next section that's already there,
+// else at the end. Once a ghost has been written over, it's prose.
 function syncGhosts(chId) {
   const body = document.querySelector(`.chapter[data-id="${chId}"] .chapter-body`);
   if (!body) return;
   const list = (book.sectionNotes && book.sectionNotes[chId]) || [];
-  const keep = new Set(list.map((s) => s.id));
+  const notes = new Map(list.map((s) => [s.id, s]));
 
-  const breakFor = (secId) => body.querySelector(`p.scene-break[data-sec-brk="${secId}"]`);
-
-  // 1. Sections deleted from the outline: remove their ghost + its break
-  //    (but never touch paragraphs that have been written over)
-  body.querySelectorAll('p.ghost[data-sec-id]').forEach((p) => {
-    if (!keep.has(p.dataset.secId)) {
-      const brk = breakFor(p.dataset.secId);
-      if (brk) brk.remove();
-      p.remove();
-    }
-  });
-
-  // 2. Pull all still-ghost paragraphs out, then re-append in outline order
-  //    so the ghosts always mirror the outline's sequence
+  // 1. a ghost whose note is gone (or emptied) leaves, with the *** made
+  //    for it; the rest take their note's words
   for (const p of [...body.querySelectorAll('p.ghost[data-sec-id]')]) {
-    const brk = breakFor(p.dataset.secId);
-    if (brk) brk.remove();
-    p.remove();
-  }
-  for (const sec of list) {
-    // written over already? Leave it alone
-    const written = body.querySelector(`p[data-sec-id="${sec.id}"]:not(.ghost)`);
-    if (written) continue;
-    if (!sec.text) continue;
-    // *** between this ghost and whatever comes before it
-    const hasContent = body.innerText.trim() !== '';
-    if (hasContent && !(body.lastElementChild && body.lastElementChild.classList.contains('scene-break'))) {
-      const brk = document.createElement('p');
-      brk.className = 'scene-break';
-      brk.dataset.secBrk = sec.id;
-      brk.textContent = '***';
-      body.appendChild(brk);
+    const sec = notes.get(p.dataset.secId);
+    if (sec && sec.text) {
+      if (p.textContent !== sec.text) p.textContent = sec.text;
+      continue;
     }
-    const p = document.createElement('p');
-    p.className = 'ghost';
-    p.dataset.secId = sec.id;
-    p.textContent = sec.text;
-    body.appendChild(p);
+    removeGhost(body, p);
   }
+
+  // 2. a note with no place on the page yet gets one
+  list.forEach((sec, i) => {
+    if (!sec.text || body.querySelector(`p[data-sec-id="${sec.id}"]`)) return;
+    let before = null;
+    for (let j = i + 1; j < list.length && !before; j++) {
+      const el = body.querySelector(`p[data-sec-id="${list[j].id}"]`);
+      if (el) before = segmentStartEl(body, el);
+    }
+    placeGhost(body, sec, before);
+  });
   syncChapter(body, chId);
 }
+
+// where the section holding el begins: its *** (or the body's first line)
+function segmentStartEl(body, el) {
+  let n = el;
+  while (n.parentElement && n.parentElement !== body) n = n.parentElement;
+  for (let q = n; q; q = q.previousElementSibling) {
+    if (q.classList.contains('scene-break')) return q;
+    if (!q.previousElementSibling) return q;
+  }
+  return n;
+}
+
+function newSceneBreak(secId) {
+  const b = document.createElement('p');
+  b.className = 'scene-break';
+  if (secId) b.dataset.secBrk = secId;
+  b.textContent = '***';
+  return b;
+}
+
+function placeGhost(body, sec, before) {
+  const p = document.createElement('p');
+  p.className = 'ghost';
+  p.dataset.secId = sec.id;
+  p.textContent = sec.text;
+  if (before && before.parentElement === body) {
+    if (before.classList.contains('scene-break')) {
+      body.insertBefore(newSceneBreak(sec.id), before);
+      body.insertBefore(p, before);
+    } else {
+      // the first section of the chapter: the ghost goes ahead of it
+      body.insertBefore(p, before);
+      body.insertBefore(newSceneBreak(sec.id), before);
+    }
+    return p;
+  }
+  const hasContent = body.innerText.trim() !== '';
+  if (hasContent && !(body.lastElementChild && body.lastElementChild.classList.contains('scene-break'))) {
+    body.appendChild(newSceneBreak(sec.id));
+  }
+  body.appendChild(p);
+  return p;
+}
+
+// a ghost leaves, and so does the *** that set it apart
+function removeGhost(body, p) {
+  const prev = p.previousElementSibling;
+  const next = p.nextElementSibling;
+  const isBrk = (q) => q && q.classList.contains('scene-break');
+  if (isBrk(prev) && (!next || isBrk(next))) prev.remove();
+  else if (!prev && isBrk(next)) next.remove();
+  p.remove();
+  if (!body.firstElementChild) body.innerHTML = '<p><br></p>';
+}
+
+/* ================================================================== */
+/*  OUTLINE CARDS                                                      */
+/*  The outline as index cards, set like a page: they read left to    */
+/*  right, line after line, so any shape of book fills the window. A   */
+/*  chapter starts at its numeral, and its cards share a mat, rounded  */
+/*  where the chapter starts and ends and cut square where it wraps.   */
+/*  Parts start a fresh line. Sections are the manuscript's own: every */
+/*  *** makes one, outlined or not, and a card shows its note or else  */
+/*  the section's first line, in quotes. Dragging a card moves the     */
+/*  writing with it (⌘Z puts it back). Loose cards, ideas that don't   */
+/*  have a chapter yet, wait in the right-hand pane (book.looseCards). */
+/*  A script's cards are its scenes (book.sceneNotes holds their notes). */
+/* ================================================================== */
+
+const outlineCardsOn = () => !!book && (isScript() || (library.outlineView || 'cards') === 'cards');
+const chapterBodyEl = (chId) => document.querySelector(`.chapter[data-id="${chId}"] .chapter-body`);
+const newSectionId = () => 'sec-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+
+// A chapter cut at its *** lines. Each piece: its *** (none for the first),
+// its paragraphs, the outline note it belongs to (if any), and what's on it.
+// A paragraph split from a written ghost carries the ghost's id along, so
+// only the first piece to hold an id is that note's.
+function chapterSegments(chId) {
+  const body = chapterBodyEl(chId);
+  if (!body) return [];
+  const segs = [];
+  let cur = { brk: null, ps: [] };
+  for (const el of body.children) {
+    if (el.classList.contains('scene-break')) { segs.push(cur); cur = { brk: el, ps: [] }; }
+    else cur.ps.push(el);
+  }
+  segs.push(cur);
+  const notes = new Set(((book.sectionNotes || {})[chId] || []).map((s) => s.id));
+  const claimed = new Set();
+  for (const seg of segs) {
+    const tagged = seg.ps.find((p) => p.dataset && notes.has(p.dataset.secId) && !claimed.has(p.dataset.secId));
+    seg.id = tagged ? tagged.dataset.secId : null;
+    if (seg.id) claimed.add(seg.id);
+    const prose = seg.ps.filter((p) => !p.classList.contains('ghost'));
+    seg.words = countWords(prose.map((p) => p.textContent).join('\n'));
+    seg.first = prose.map((p) => p.textContent.replace(/\s+/g, ' ').trim()).find(Boolean) || '';
+    seg.flag = seg.ps.some((p) => p.querySelector && p.querySelector('.ph-mark'));
+  }
+  return segs;
+}
+
+// the note a section has, if it has one
+const sectionNote = (chId, secId) => ((book.sectionNotes || {})[chId] || []).find((s) => s.id === secId) || null;
+
+// keep a chapter's notes in the order their sections stand on the page
+// (a note with no place yet keeps to the end)
+function orderSectionNotes(chId) {
+  const list = (book.sectionNotes || {})[chId];
+  if (!list) return;
+  const ids = chapterSegments(chId).map((s) => s.id).filter(Boolean);
+  const placed = ids.map((id) => list.find((s) => s.id === id)).filter(Boolean);
+  book.sectionNotes[chId] = placed.concat(list.filter((s) => !ids.includes(s.id)));
+}
+
+function cardZoom() { return Math.min(1.5, Math.max(0.55, library.cardZoom || 1)); }
+const CARD_ZOOMS = [0.55, 0.7, 0.85, 1, 1.15, 1.3, 1.5];
+function stepCardZoom(dir) {
+  const now = cardZoom();
+  let next = now;
+  if (dir === 0) next = 1;
+  else if (dir > 0) next = CARD_ZOOMS.find((z) => z > now + 0.001) || now;
+  else next = [...CARD_ZOOMS].reverse().find((z) => z < now - 0.001) || now;
+  if (next === now) return;
+  library.cardZoom = next;
+  writeLibrary(library);
+  renderBoard();
+  updateZoomDisplay();
+}
+
+// ---- the board ----
+
+function outlineBoard() {
+  let board = $('#outline-board');
+  if (board) return board;
+  board = document.createElement('div');
+  board.id = 'outline-board';
+  board.hidden = true;
+  board.setAttribute('role', 'list');
+  board.setAttribute('aria-label', t('Outline cards'));
+  $('#outline-list').after(board);
+  board.addEventListener('pointerdown', (e) => {
+    const cell = e.target.closest('.ob-cell');
+    if (!cell || e.button !== 0 || cell.classList.contains('open')) return;
+    if (e.target.closest('button')) return;
+    cardPress(e, { kind: cell.dataset.kind, cell });
+  });
+  board.addEventListener('contextmenu', (e) => {
+    const cell = e.target.closest('.ob-cell');
+    if (!cell || cell.classList.contains('open')) return;
+    e.preventDefault();
+    if (NO_HOVER) return; // a long press is the menu there (cardPress)
+    cardMenu(cell, e.clientX, e.clientY);
+  });
+  board.addEventListener('keydown', (e) => {
+    const cell = e.target.closest && e.target.closest('.ob-cell');
+    if (!cell || cell.classList.contains('open')) return;
+    if (e.key === 'Enter' && e.altKey) { e.preventDefault(); newCardAfter(cell); }
+    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCard(cell); }
+    else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); cardMenu(cell, 0, 0); }
+    else if (['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(e.key)) {
+      e.preventDefault();
+      const cells = [...board.querySelectorAll('.ob-cell')];
+      const i = cells.indexOf(cell);
+      let next = null;
+      if (e.key === 'ArrowRight') next = cells[i + 1];
+      else if (e.key === 'ArrowLeft') next = cells[i - 1];
+      else {
+        // the card above or below: the nearest one in the next line
+        const r = cell.getBoundingClientRect();
+        const down = e.key === 'ArrowDown';
+        let best = Infinity;
+        for (const c of cells) {
+          const q = c.getBoundingClientRect();
+          if (down ? q.top <= r.top + 4 : q.top >= r.top - 4) continue;
+          const d = Math.abs(q.top - r.top) * 4 + Math.abs(q.left - r.left);
+          if (d < best) { best = d; next = c; }
+        }
+      }
+      if (next) { next.focus(); next.scrollIntoView({ block: 'nearest' }); }
+    }
+  });
+  return board;
+}
+
+function viewSwitch() {
+  let sw = $('#outline-views');
+  if (sw) return sw;
+  sw = document.createElement('div');
+  sw.id = 'outline-views';
+  sw.setAttribute('role', 'group');
+  sw.setAttribute('aria-label', t('Outline view'));
+  for (const [value, label] of [['list', t('List')], ['cards', t('Cards')]]) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.view = value;
+    b.textContent = label;
+    b.onclick = () => {
+      if ((library.outlineView || 'cards') === value) return;
+      closeCardEditor();
+      library.outlineView = value;
+      writeLibrary(library);
+      renderOutline();
+    };
+    sw.appendChild(b);
+  }
+  $('#aux-title').after(sw);
+  return sw;
+}
+
+// called by renderOutline: shows the list or the board
+function showOutlineView() {
+  const sw = viewSwitch();
+  const cards = outlineCardsOn();
+  sw.hidden = !book || isScript(); // a script has only the cards
+  for (const b of sw.querySelectorAll('button')) {
+    const on = b.dataset.view === (cards ? 'cards' : 'list');
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+  $('#outline-list').hidden = cards;
+  outlineBoard().hidden = !cards;
+  $('#editor-view').classList.toggle('board-on', cards);
+  updateZoomDisplay();
+  return cards;
+}
+
+function renderBoard() {
+  const board = outlineBoard();
+  if (!book) return;
+  closeCardEditor(true);
+  board.innerHTML = '';
+  const z = cardZoom();
+  board.style.setProperty('--cz', z);
+  board.classList.toggle('tiles', z < 0.8);
+  board.classList.remove('script-board');
+  if (isScript()) { renderScriptBoard(board); boardAddCard(board); boardHint(board); return; }
+  const solo = soloStory();
+  for (const chId of book.chapterOrder) {
+    const kind = chapterKind(chId);
+    if (kind === 'part') { board.appendChild(boardPartRow(chId)); continue; }
+    if (!STORY_KINDS.includes(kind)) continue;
+    const segs = chapterSegments(chId);
+    const opening = segs[0] && !segs[0].id ? segs[0] : null;
+    const run = [chapterCard(chId, opening, solo === chId)];
+    let letter = 0;
+    segs.forEach((seg, i) => {
+      if (seg === opening) return;
+      run.push(sectionCard(chId, seg, i, letter++));
+    });
+    // notes the page doesn't hold yet (written but emptied, or just made)
+    const onPage = new Set(segs.map((s) => s.id).filter(Boolean));
+    for (const sec of (book.sectionNotes || {})[chId] || []) {
+      if (onPage.has(sec.id)) continue;
+      run.push(sectionCard(chId, { id: sec.id, ps: [], words: 0, first: '', flag: false, virtual: true }, -1, letter++));
+    }
+    run.forEach((cell, i) => {
+      if (i === 0) cell.classList.add('first');
+      if (i === run.length - 1) cell.classList.add('last');
+      board.appendChild(cell);
+    });
+  }
+  boardAddCard(board);
+  boardHint(board);
+}
+
+function boardHint(board) {
+  let hint = $('#outline-board-hint');
+  if (!hint) {
+    hint = document.createElement('div');
+    hint.id = 'outline-board-hint';
+    hint.className = 'ol-hint';
+    board.after(hint);
+  }
+  hint.hidden = false;
+  hint.textContent = NO_HOVER
+    ? t('Tap a card to write on it · hold a card to move it · hold and let go for more · + adds a card')
+    : isScript()
+      ? t('Click a card to write on it · drag it to move the scene · right-click for more · + adds a scene')
+      : t('Click a card to write on it · drag it to move it, writing and all · right-click for more · + adds a card');
+}
+
+function boardPartRow(chId) {
+  const row = document.createElement('div');
+  row.className = 'ob-part';
+  row.setAttribute('role', 'heading');
+  row.setAttribute('aria-level', '3');
+  const title = partTitleOf(chId);
+  const label = document.createElement('span');
+  label.textContent = chapterName(chId) + (title ? ' · ' + title : '');
+  const rule = document.createElement('span');
+  rule.className = 'ob-rule';
+  row.append(label, rule);
+  row.addEventListener('contextmenu', (e) => { e.preventDefault(); chapterMenu(chId, e.clientX, e.clientY, row); });
+  return row;
+}
+
+function cardCell(kind, chId) {
+  const cell = document.createElement('div');
+  cell.className = 'ob-cell';
+  cell.dataset.kind = kind;
+  cell.dataset.ch = chId;
+  cell.tabIndex = 0;
+  cell.setAttribute('role', 'listitem');
+  const card = document.createElement('div');
+  card.className = 'ob-card ob-' + kind;
+  cell.appendChild(card);
+  if (kind !== 'loose') {
+    // a + on the seam after the card: a new card right there
+    const plus = document.createElement('button');
+    plus.type = 'button';
+    plus.className = 'ob-plus';
+    plus.textContent = '+';
+    plus.title = kind === 'scene' ? t('New scene after this one') : t('New card after this one');
+    plus.setAttribute('aria-label', plus.title);
+    plus.tabIndex = -1; // the keyboard has ⌥Enter
+    plus.addEventListener('click', (e) => { e.stopPropagation(); if (!cell.dataset.new) newCardAfter(cell); });
+    cell.appendChild(plus);
+  }
+  return { cell, card };
+}
+
+// the last place on the board: a new chapter (or scene) at the end
+function boardAddCard(board) {
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'ob-add';
+  const script = isScript();
+  add.textContent = script ? t('+ Scene') : t('+ Chapter');
+  add.addEventListener('click', () => {
+    if (script) {
+      const cells = [...board.querySelectorAll('.ob-cell[data-kind="scene"]')];
+      const last = cells[cells.length - 1];
+      if (last) { newCardAfter(last); return; }
+      const fresh = sceneCard({ k: -1, s: { p: null }, id: null, slug: '', eighths: 0, cast: [], first: '' });
+      fresh.dataset.new = '1';
+      fresh.dataset.after = '-1';
+      add.before(fresh);
+      openCard(fresh, { fresh: true });
+      return;
+    }
+    newChapterCard(storyEnd());
+  });
+  board.appendChild(add);
+}
+
+const cardWords = (n) => (n ? t('{n} words', { n: n.toLocaleString() }) : '');
+const quoted = (s) => '“' + (s.length > 220 ? s.slice(0, 220).trim() + '…' : s) + '”';
+
+function chapterCard(chId, opening, solo) {
+  const { cell, card } = cardCell('chapter', chId);
+  const kind = chapterKind(chId);
+  const head = document.createElement('div');
+  head.className = 'ob-head';
+  const mark = document.createElement('span');
+  mark.className = 'ob-mark';
+  if (solo) { mark.textContent = t('The story'); mark.classList.add('ob-word'); }
+  else if (kind === 'chapter') mark.textContent = String(chapterNumber(chId));
+  else { mark.textContent = chapterName(chId); mark.classList.add('ob-word'); }
+  const words = document.createElement('span');
+  words.className = 'ob-words';
+  const n = countWords(chapterText(chId));
+  words.textContent = cardWords(n);
+  head.append(mark, words);
+  if (chapterHasFlag(chId)) head.appendChild(cardFlag());
+  const text = document.createElement('div');
+  text.className = 'ob-text';
+  card.append(head, text);
+  cell.dataset.excerpt = opening && opening.first ? quoted(opening.first) : '';
+  fillCardText(cell, (book.chapterNotes || {})[chId] || '');
+  cell.setAttribute('aria-label', (solo ? t('The story') : chapterName(chId)) + '. ' + text.textContent);
+  return cell;
+}
+
+function sectionCard(chId, seg, segIdx, letterIdx) {
+  const { cell, card } = cardCell('section', chId);
+  cell.dataset.seg = String(segIdx);
+  if (seg.id) cell.dataset.sec = seg.id;
+  if (seg.virtual) cell.dataset.virtual = '1';
+  const note = seg.id ? sectionNote(chId, seg.id) : null;
+  const head = document.createElement('div');
+  head.className = 'ob-head';
+  const letter = document.createElement('span');
+  letter.className = 'ob-letter';
+  letter.textContent = secLetter(letterIdx);
+  head.appendChild(letter);
+  if (seg.flag) head.appendChild(cardFlag());
+  const text = document.createElement('div');
+  text.className = 'ob-text';
+  const foot = document.createElement('div');
+  foot.className = 'ob-foot';
+  foot.textContent = seg.words ? cardWords(seg.words) : t('not written yet');
+  card.append(head, text, foot);
+  card.classList.toggle('unwritten', !seg.words);
+  cell.dataset.written = seg.words ? '1' : '';
+  cell.dataset.excerpt = seg.first ? quoted(seg.first) : '';
+  fillCardText(cell, note ? note.text : '');
+  cell.setAttribute('aria-label', t('Section {letter}', { letter: letter.textContent }) + '. ' + text.textContent + '. ' + foot.textContent);
+  return cell;
+}
+
+// a card shows its note; with none, the section's first line, in quotes
+function fillCardText(cell, note) {
+  const text = cell.querySelector('.ob-text');
+  text.classList.remove('excerpt', 'empty');
+  if (note) text.textContent = note;
+  else if (cell.dataset.excerpt) { text.textContent = cell.dataset.excerpt; text.classList.add('excerpt'); }
+  else {
+    text.textContent = cell.dataset.kind === 'chapter' ? t('What happens in this chapter…') : cell.dataset.kind === 'scene' ? t('What happens in this scene…') : t('What happens in this section…');
+    text.classList.add('empty');
+  }
+}
+
+function cardFlag() {
+  const f = document.createElement('span');
+  f.className = 'ob-flag';
+  f.title = t('Unresolved placeholder');
+  return f;
+}
+function chapterHasFlag(chId) {
+  const body = chapterBodyEl(chId);
+  return !!(body && body.querySelector('.ph-mark'));
+}
+
+// ---- writing on a card ----
+
+let cardEditor = null; // { cell, text, before }
+
+function openCard(cell, { fresh = false } = {}) {
+  closeCardEditor();
+  const text = cell.querySelector('.ob-text');
+  const note = cardNoteOf(cell);
+  cell.classList.add('open');
+  // a card near the right edge opens toward the left
+  const board = outlineBoard();
+  const r = cell.getBoundingClientRect();
+  const b = board.getBoundingClientRect();
+  cell.classList.toggle('open-left', r.left + r.width * 2 > b.right + 4);
+  text.classList.remove('excerpt', 'empty');
+  text.textContent = note;
+  // the page's own first line stays in view above the note, so opening a
+  // card never looks like it wiped what was on it
+  if (cell.dataset.excerpt && cell.dataset.kind !== 'loose') {
+    const from = document.createElement('div');
+    from.className = 'ob-from';
+    from.textContent = cell.dataset.excerpt;
+    text.before(from);
+    text.dataset.ph = t('Write a note…');
+  } else {
+    text.dataset.ph = cell.dataset.kind === 'chapter' ? t('What happens in this chapter…') : cell.dataset.kind === 'scene' ? t('What happens in this scene…') : cell.dataset.kind === 'loose' ? t('Write a note…') : t('What happens in this section…');
+  }
+  text.contentEditable = 'true';
+  text.spellcheck = false;
+  text.setAttribute('role', 'textbox');
+  // a scene's heading can be set right on its card
+  const slug = cell.querySelector('.ob-slug');
+  if (slug) {
+    slug.contentEditable = 'true';
+    slug.spellcheck = false;
+    slug.setAttribute('role', 'textbox');
+    slug.addEventListener('keydown', slugKeys);
+    if (!slug.textContent.trim()) slug.textContent = '';
+  }
+  // the way to the page, and what Enter does
+  const tools = document.createElement('div');
+  tools.className = 'ob-tools';
+  if (!cell.dataset.new && !cell.dataset.virtual) {
+    const go = document.createElement('button');
+    go.className = 'ob-go';
+    go.type = 'button';
+    go.textContent = t('Go to the page');
+    go.addEventListener('mousedown', (e) => e.preventDefault()); // keep the note's focus until we leave
+    go.onclick = () => { const c = cardEditor && cardEditor.cell; closeCardEditor(); if (c) goToCard(c); };
+    tools.appendChild(go);
+  }
+  if (cell.dataset.kind !== 'loose') {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.textContent = cell.dataset.kind === 'scene' ? t('New scene') : t('New card');
+    more.addEventListener('mousedown', (e) => e.preventDefault());
+    more.onclick = () => { const c = cardEditor && cardEditor.cell; if (c) newCardAfter(c); };
+    tools.appendChild(more);
+  }
+  const tip = document.createElement('span');
+  tip.textContent = t('Enter: done · Tab: next card · {key}: new card', { key: K('⌥Enter', 'Alt+Enter') });
+  tools.appendChild(tip);
+  cell.querySelector('.ob-card').appendChild(tools);
+  cardEditor = { cell, text, slug, before: note, slugBefore: slug ? slug.textContent : null, fresh };
+  text.addEventListener('keydown', cardKeys);
+  text.addEventListener('blur', cardBlur);
+  text.addEventListener('paste', (e) => {
+    e.preventDefault();
+    document.execCommand('insertText', false, (e.clipboardData.getData('text/plain') || '').replace(/\s+/g, ' '));
+  });
+  const first = slug && fresh ? slug : text;
+  first.focus();
+  const sel = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(first);
+  range.collapse(false);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  cell.scrollIntoView({ block: 'nearest' });
+}
+
+function cardNoteOf(cell) {
+  if (cell.dataset.new) return '';
+  const chId = cell.dataset.ch;
+  if (cell.dataset.kind === 'chapter') return (book.chapterNotes || {})[chId] || '';
+  if (cell.dataset.kind === 'loose') return (book.looseCards || []).find((c) => c.id === cell.dataset.loose)?.text || '';
+  if (cell.dataset.kind === 'scene') return (cell.dataset.sid && (book.sceneNotes || {})[cell.dataset.sid]) || '';
+  const note = cell.dataset.sec ? sectionNote(chId, cell.dataset.sec) : null;
+  return note ? note.text : '';
+}
+
+function cardBlur() {
+  // the window losing focus isn't the writer leaving the card
+  setTimeout(() => {
+    if (!cardEditor || !document.hasFocus()) return;
+    if (cardEditor.cell.contains(document.activeElement) && document.activeElement.isContentEditable) return;
+    closeCardEditor();
+  }, 0);
+}
+
+// save what's on the open card and put it down
+function closeCardEditor(quiet = false) {
+  const ed = cardEditor;
+  if (!ed) return;
+  cardEditor = null;
+  const { cell, text, slug } = ed;
+  text.removeEventListener('keydown', cardKeys);
+  text.removeEventListener('blur', cardBlur);
+  text.contentEditable = 'false';
+  text.removeAttribute('role');
+  cell.classList.remove('open', 'open-left');
+  cell.querySelector('.ob-tools')?.remove();
+  cell.querySelector('.ob-from')?.remove();
+  const val = text.textContent.replace(/\s+/g, ' ').trim();
+  if (slug) {
+    slug.removeEventListener('keydown', slugKeys);
+    slug.removeEventListener('blur', cardBlur);
+    slug.contentEditable = 'false';
+    slug.removeAttribute('role');
+    const sv = slug.textContent.replace(/\s+/g, ' ').trim();
+    if (!quiet || val !== ed.before || sv !== ed.slugBefore) saveSceneCard(cell, val, sv);
+    if (cell.isConnected && cell.dataset.new) cell.remove();
+    else if (cell.isConnected) { fillCardText(cell, val); renderBoardLater(); }
+    return;
+  }
+  if (!quiet || val !== ed.before) saveCard(cell, val);
+  if (!cell.isConnected) return;
+  if (cell.dataset.new && !val) { cell.remove(); return; }
+  if (cell.dataset.kind !== 'loose') fillCardText(cell, cardNoteOf(cell));
+}
+
+function saveCard(cell, val) {
+  if (!book) return;
+  const chId = cell.dataset.ch;
+  const kind = cell.dataset.kind;
+  if (kind === 'loose') { saveLooseCard(cell.dataset.loose, val); return; }
+  if (kind === 'chapter') {
+    book.chapterNotes = book.chapterNotes || {};
+    if ((book.chapterNotes[chId] || '') === val) return;
+    book.chapterNotes[chId] = val;
+    scheduleMetaSave();
+    scheduleNavRefresh();
+    return;
+  }
+  book.sectionNotes = book.sectionNotes || {};
+  const list = book.sectionNotes[chId] = book.sectionNotes[chId] || [];
+  if (cell.dataset.new) {
+    if (!val) return;
+    // a new card: a gray ghost on the page, after the card it came from
+    const sec = { id: newSectionId(), text: val };
+    const body = chapterBodyEl(chId);
+    if (!body) return;
+    const segs = chapterSegments(chId);
+    const after = Number(cell.dataset.after);
+    const next = segs[after + 1];
+    list.push(sec);
+    placeGhost(body, sec, next ? (next.brk || next.ps[0]) : null);
+    orderSectionNotes(chId);
+    syncChapter(body, chId);
+    scheduleMetaSave();
+    delete cell.dataset.new;
+    cell.dataset.sec = sec.id;
+    reindexChapterCards(chId);
+    return;
+  }
+  if (cell.dataset.sec) {
+    const sec = list.find((s) => s.id === cell.dataset.sec);
+    if (!sec || sec.text === val) return;
+    sec.text = val;
+    scheduleMetaSave();
+    syncGhosts(chId);
+    return;
+  }
+  if (!val) return;
+  // a section written without an outline gets its first note: its first
+  // line of prose carries the note's id from now on
+  const seg = chapterSegments(chId)[Number(cell.dataset.seg)];
+  const anchor = seg && seg.ps.find((p) => !p.classList.contains('ghost'));
+  if (!anchor) return;
+  const sec = { id: newSectionId(), text: val };
+  anchor.dataset.secId = sec.id;
+  list.push(sec);
+  orderSectionNotes(chId);
+  syncChapter(chapterBodyEl(chId), chId);
+  scheduleMetaSave();
+  cell.dataset.sec = sec.id;
+}
+
+// after a card is set on the page, the chapter's cards learn their places
+// (and letters) again, without redrawing the board under the writer's hand
+function reindexChapterCards(chId) {
+  const segs = chapterSegments(chId);
+  const placed = segs.filter((sg, i) => !(i === 0 && !sg.id));
+  const cells = [...outlineBoard().querySelectorAll(`.ob-cell[data-kind="section"][data-ch="${chId}"]`)];
+  let k = 0;
+  let letter = 0;
+  for (const cell of cells) {
+    if (!cell.dataset.new) cell.querySelector('.ob-letter').textContent = secLetter(letter++);
+    if (cell.dataset.new || cell.dataset.virtual) continue;
+    const seg = placed[k++];
+    if (seg) cell.dataset.seg = String(segs.indexOf(seg));
+  }
+}
+
+function cardKeys(e) {
+  const ed = cardEditor;
+  if (!ed) return;
+  const { cell, text } = ed;
+  e.stopPropagation();
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeCardEditor();
+    if (cell.isConnected) cell.focus();
+    return;
+  }
+  if (e.isComposing || e.keyCode === 229) return;
+  // Enter: the card is done (and stays where the keyboard is)
+  if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    closeCardEditor();
+    if (cell.isConnected) cell.focus();
+    else renderBoardFocus(cell);
+    return;
+  }
+  // Tab and ⇧Tab: on to the next card, or back to the one before
+  if (e.key === 'Tab' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    const list = cell.closest('#loose-list') || outlineBoard();
+    const cells = [...list.querySelectorAll('.ob-cell')];
+    const at = cells.indexOf(cell);
+    const ahead = e.shiftKey ? cells.slice(0, at).reverse() : cells.slice(at + 1);
+    closeCardEditor();
+    const next = ahead.find((c) => c.isConnected);
+    if (next) openCard(next);
+    else if (cell.isConnected) cell.focus();
+    return;
+  }
+  // ⌥Enter (Alt+Enter): a new card after this one; on an empty new card,
+  // a new chapter instead (the manuscript's Enter, Enter)
+  if (e.key === 'Enter' && e.altKey && !e.metaKey && !e.ctrlKey) {
+    e.preventDefault();
+    const empty = !text.textContent.trim();
+    if (empty && cell.dataset.new && cell.dataset.kind === 'section') {
+      const chId = cell.dataset.ch;
+      cardEditor = null;
+      cell.remove();
+      newChapterCard(book.chapterOrder.indexOf(chId) + 1);
+      return;
+    }
+    if (cell.dataset.kind === 'loose') { closeCardEditor(); addLooseCard(); return; }
+    newCardAfter(cell);
+    return;
+  }
+  if (e.key === 'Backspace' && !text.textContent) {
+    e.preventDefault();
+    if (cell.dataset.new) {
+      const prev = cell.previousElementSibling;
+      cardEditor = null;
+      cell.remove();
+      if (prev && prev.classList.contains('ob-cell')) openCard(prev);
+      return;
+    }
+    if (cell.dataset.kind === 'loose') { cardEditor = null; removeLooseCard(cell.dataset.loose); return; }
+    if (cell.dataset.kind === 'section' && cell.dataset.sec && !cell.dataset.written) {
+      const chId = cell.dataset.ch;
+      cardEditor = null;
+      deleteSectionNote(chId, cell.dataset.sec);
+    }
+  }
+}
+
+// a new card after this one, open to write on
+function newCardAfter(cell) {
+  closeCardEditor();
+  if (!cell.isConnected) return;
+  const fresh = makeNewCardAfter(cell, cell.dataset.ch);
+  if (fresh) openCard(fresh, { fresh: true });
+}
+
+// a new chapter at this place in the book, its card open to write on
+function newChapterCard(at) {
+  closeCardEditor();
+  snapshotStructure('card new chapter');
+  const newId = createChapterAt(at);
+  updateCounters();
+  renderBoard();
+  const nc = outlineBoard().querySelector(`.ob-cell[data-kind="chapter"][data-ch="${newId}"]`);
+  if (nc) openCard(nc, { fresh: true });
+}
+
+// after a redraw, the keyboard goes back to the card it was on
+function renderBoardFocus(cell) {
+  const sel = cell.dataset.sec ? `.ob-cell[data-sec="${cell.dataset.sec}"]` : cell.dataset.kind === 'chapter' ? `.ob-cell[data-kind="chapter"][data-ch="${cell.dataset.ch}"]` : null;
+  setTimeout(() => { const c = sel && outlineBoard().querySelector(sel); if (c) c.focus(); }, 150);
+}
+
+// in a scene's heading: Enter or Tab moves on to the note
+function slugKeys(e) {
+  e.stopPropagation();
+  if (e.key === 'Escape') { e.preventDefault(); const c = cardEditor && cardEditor.cell; closeCardEditor(); if (c && c.isConnected) c.focus(); return; }
+  if ((e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) || (e.key === 'Tab' && !e.shiftKey)) {
+    e.preventDefault();
+    const text = cardEditor && cardEditor.text;
+    if (!text) return;
+    text.focus();
+    const r = document.createRange();
+    r.selectNodeContents(text);
+    r.collapse(false);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(r);
+  }
+}
+
+// once a scene card is put down, the board takes in what changed
+let boardLater = null;
+function renderBoardLater() {
+  clearTimeout(boardLater);
+  boardLater = setTimeout(() => {
+    if (!cardEditor && !cardDrag && currentTab === 'outline' && boardShowing()) renderBoard();
+  }, 120);
+}
+
+// a blank card right after this one, in its chapter
+function makeNewCardAfter(cell, chId) {
+  if (!cell.isConnected) return null;
+  if (cell.dataset.kind === 'scene') {
+    const fresh = sceneCard({ k: -1, s: { p: null }, id: null, slug: '', eighths: 0, cast: [], first: '' });
+    fresh.dataset.new = '1';
+    fresh.dataset.after = cell.dataset.scene;
+    fresh.querySelector('.ob-letter').textContent = '+';
+    cell.after(fresh);
+    return fresh;
+  }
+  const segs = chapterSegments(chId);
+  let after;
+  if (cell.dataset.kind === 'chapter') after = segs[0] && !segs[0].id ? 0 : -1;
+  else if (cell.dataset.virtual || Number(cell.dataset.seg) < 0) after = segs.length - 1;
+  else after = Number(cell.dataset.seg);
+  const fresh = sectionCard(chId, { id: null, ps: [], words: 0, first: '', flag: false }, -1, 0);
+  fresh.dataset.new = '1';
+  fresh.dataset.after = String(after);
+  fresh.querySelector('.ob-letter').textContent = '+';
+  // it joins the chapter's mat
+  cell.classList.remove('last');
+  fresh.classList.add('last');
+  let spot = cell;
+  // a chapter card's new card goes before its first section
+  if (cell.dataset.kind === 'chapter') spot = cell;
+  spot.after(fresh);
+  // if it landed mid-chapter, it isn't the end of the mat
+  const n = fresh.nextElementSibling;
+  if (n && n.classList.contains('ob-cell') && n.dataset.ch === chId) fresh.classList.remove('last');
+  return fresh;
+}
+
+function deleteSectionNote(chId, secId) {
+  snapshotStructure('card removed');
+  book.sectionNotes[chId] = (book.sectionNotes[chId] || []).filter((s) => s.id !== secId);
+  scheduleMetaSave();
+  syncGhosts(chId);
+  renderBoard();
+}
+
+// the card's place in the manuscript
+function goToCard(cell) {
+  if (cell.dataset.kind === 'scene') { goToScene(cell); return; }
+  const chId = cell.dataset.ch;
+  switchTab('manuscript');
+  if (cell.dataset.kind === 'chapter') {
+    focusChapterStart(chId);
+    document.querySelector(`.chapter[data-id="${chId}"]`)?.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
+    return;
+  }
+  const seg = chapterSegments(chId)[Number(cell.dataset.seg)];
+  const p = seg && seg.ps[0];
+  const body = chapterBodyEl(chId);
+  if (!p || !body) { focusChapterStart(chId); return; }
+  body.focus({ preventScroll: true });
+  const r = document.createRange();
+  if (p.classList.contains('ghost')) r.selectNodeContents(p); // ready to be written over
+  else { r.setStart(p, 0); r.collapse(true); }
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(r);
+  currentChapterId = chId;
+  highlightNav();
+  p.scrollIntoView({ behavior: scrollBehavior(), block: 'center' });
+}
+
+async function cardMenu(cell, x, y) {
+  const chId = cell.dataset.ch;
+  if (cell.dataset.kind === 'chapter') { await chapterMenu(chId, x, y, cell); return; }
+  if (cell.dataset.kind === 'loose') {
+    const v = await popMenu(x, y, [{ label: t('Delete card'), value: 'delete', danger: true }], { from: cell });
+    if (v === 'delete') removeLooseCard(cell.dataset.loose);
+    return;
+  }
+  if (cell.dataset.new) return;
+  if (cell.dataset.kind === 'scene') {
+    const v = await popMenu(x, y, [
+      { label: t('Go to the page'), value: 'go' },
+      '-',
+      { label: t('Delete the note'), value: 'delete', danger: true, disabled: !cell.dataset.sid }
+    ], { from: cell });
+    if (v === 'go') goToScene(cell);
+    else if (v === 'delete') {
+      snapshotStructure('scene note removed');
+      delete book.sceneNotes[cell.dataset.sid];
+      scheduleMetaSave();
+      renderBoard();
+    }
+    return;
+  }
+  const linked = !!cell.dataset.sec;
+  const written = !!cell.dataset.written;
+  const choice = await popMenu(x, y, [
+    { label: t('Go to the page'), value: 'go', disabled: !!cell.dataset.virtual },
+    { label: t('Make it a chapter'), value: 'chapter', disabled: !!cell.dataset.virtual },
+    { label: t('Move to loose cards'), value: 'loose', disabled: written || !linked },
+    '-',
+    { label: t('Delete the note'), value: 'delete', danger: true, disabled: !linked }
+  ], { from: cell });
+  if (choice === 'go') goToCard(cell);
+  else if (choice === 'chapter') sectionToChapter(chId, Number(cell.dataset.seg));
+  else if (choice === 'loose') sectionToLoose(chId, Number(cell.dataset.seg));
+  else if (choice === 'delete') {
+    deleteSectionNote(chId, cell.dataset.sec);
+    if (written) toast(t('The note is gone; the writing stays on the page'));
+  }
+}
+
+// ---- moving cards ----
+
+// lift a section out of its chapter: its *** and its lines
+function liftSegment(body, seg) {
+  if (seg.brk) seg.brk.remove();
+  for (const p of seg.ps) p.remove();
+  // the chapter's first section left: the next one's *** would open the chapter
+  if (!seg.brk) {
+    const f = body.firstElementChild;
+    if (f && f.classList.contains('scene-break')) f.remove();
+  }
+  if (!body.firstElementChild) body.innerHTML = '<p><br></p>';
+}
+
+// set lines down in a chapter, before a section (or at the end)
+function setSegmentDown(body, ps, brk, target) {
+  const blank = !body.innerText.trim() && !body.querySelector('.scene-break, .ghost, .ph-mark');
+  if (!target && blank) {
+    body.innerHTML = '';
+    for (const p of ps) body.appendChild(p);
+    return;
+  }
+  const tBrk = target && target.brk && target.brk.isConnected ? target.brk : null;
+  const tFirst = target && target.ps.find((p) => p.isConnected);
+  if (tBrk) {
+    body.insertBefore(brk || newSceneBreak(), tBrk);
+    for (const p of ps) body.insertBefore(p, tBrk);
+    return;
+  }
+  if (tFirst) {
+    // ahead of the chapter's first section
+    for (const p of ps) body.insertBefore(p, tFirst);
+    body.insertBefore(brk || newSceneBreak(), tFirst);
+    return;
+  }
+  if (!(body.lastElementChild && body.lastElementChild.classList.contains('scene-break'))) body.appendChild(brk || newSceneBreak());
+  for (const p of ps) body.appendChild(p);
+}
+
+// placeholders keep their sticky notes pointed at the chapter they're in
+function repointStickies(ps, chId) {
+  let changed = false;
+  for (const p of ps) {
+    for (const m of p.querySelectorAll ? p.querySelectorAll('.ph-mark') : []) {
+      const s = stickies.find((x) => x.id === m.dataset.sid);
+      if (s && s.chapterId !== chId) { s.chapterId = chId; changed = true; }
+    }
+  }
+  if (changed) { window.neo.writeJSON(book.id, 'stickies', stickies); renderStickies(); }
+}
+
+// to = { ch, before }: before is a section's index in that chapter, or null for the end
+function moveSection(fromCh, segIdx, to) {
+  const fromBody = chapterBodyEl(fromCh);
+  const toBody = chapterBodyEl(to.ch);
+  if (!fromBody || !toBody) return;
+  const fromSegs = chapterSegments(fromCh);
+  const seg = fromSegs[segIdx];
+  if (!seg) return;
+  const toSegs = fromCh === to.ch ? fromSegs : chapterSegments(to.ch);
+  const target = to.before == null ? null : toSegs[to.before] || null;
+  if (target === seg) return;
+  if (fromCh === to.ch && (to.before === segIdx + 1 || (to.before == null && segIdx === fromSegs.length - 1))) return;
+  snapshotStructure('card moved');
+  liftSegment(fromBody, seg);
+  setSegmentDown(toBody, seg.ps, seg.brk, target);
+  if (seg.id && fromCh !== to.ch) {
+    const from = book.sectionNotes[fromCh] || [];
+    const note = from.find((s) => s.id === seg.id);
+    book.sectionNotes[fromCh] = from.filter((s) => s.id !== seg.id);
+    if (note) (book.sectionNotes[to.ch] = book.sectionNotes[to.ch] || []).push(note);
+  }
+  orderSectionNotes(fromCh);
+  if (fromCh !== to.ch) orderSectionNotes(to.ch);
+  syncChapter(fromBody, fromCh);
+  if (fromCh !== to.ch) syncChapter(toBody, to.ch);
+  repointStickies(seg.ps, to.ch);
+  scheduleMetaSave();
+  updateCounters();
+}
+
+function moveChapterCard(chId, index) {
+  const from = book.chapterOrder.indexOf(chId);
+  if (from === -1 || index === from || index === from + 1) return;
+  snapshotStructure('chapter reorder');
+  const order = book.chapterOrder.filter((c) => c !== chId);
+  order.splice(index > from ? index - 1 : index, 0, chId);
+  book.chapterOrder = order;
+  saveMeta();
+  renderChapters();
+}
+
+// a section on its own becomes the next chapter: its writing, and its note
+// as the chapter's
+function sectionToChapter(chId, segIdx) {
+  const body = chapterBodyEl(chId);
+  const seg = chapterSegments(chId)[segIdx];
+  if (!body || !seg) return;
+  snapshotStructure('card to chapter');
+  liftSegment(body, seg);
+  syncChapter(body, chId);
+  const note = seg.id ? sectionNote(chId, seg.id) : null;
+  if (seg.id) book.sectionNotes[chId] = book.sectionNotes[chId].filter((s) => s.id !== seg.id);
+  const prose = seg.ps.filter((p) => !p.classList.contains('ghost'));
+  for (const p of prose) delete p.dataset.secId;
+  const html = prose.length ? prose.map((p) => p.outerHTML).join('') : '<p><br></p>';
+  const newId = newEntryId();
+  book.chapterOrder.splice(book.chapterOrder.indexOf(chId) + 1, 0, newId);
+  chapterHTML[newId] = html;
+  persistChapter(newId, html);
+  book.chapterNotes = book.chapterNotes || {};
+  if (note && note.text) book.chapterNotes[newId] = note.text;
+  for (const s of stickies) if (prose.some((p) => p.querySelector(`.ph-mark[data-sid="${s.id}"]`))) s.chapterId = newId;
+  window.neo.writeJSON(book.id, 'stickies', stickies);
+  saveMeta();
+  renderChapters();
+  renderStickies();
+  updateCounters();
+  if (currentTab === 'outline') renderOutline();
+}
+
+function sectionToLoose(chId, segIdx) {
+  const seg = chapterSegments(chId)[segIdx];
+  if (!seg) return;
+  if (seg.words) { toast(t('That section has writing in it. Drag it to another chapter instead.')); return; }
+  const note = seg.id ? sectionNote(chId, seg.id) : null;
+  if (!note) return;
+  snapshotStructure('card to loose');
+  book.sectionNotes[chId] = book.sectionNotes[chId].filter((s) => s.id !== seg.id);
+  (book.looseCards = book.looseCards || []).push({ id: 'lc-' + Date.now().toString(36), text: note.text });
+  scheduleMetaSave();
+  syncGhosts(chId);
+  renderLooseCards();
+  renderBoard();
+}
+
+function looseToSection(looseId, to) {
+  const card = (book.looseCards || []).find((c) => c.id === looseId);
+  const body = chapterBodyEl(to.ch);
+  if (!card || !body) return;
+  snapshotStructure('loose card placed');
+  book.looseCards = book.looseCards.filter((c) => c.id !== looseId);
+  const sec = { id: newSectionId(), text: card.text };
+  (book.sectionNotes[to.ch] = book.sectionNotes[to.ch] || []).push(sec);
+  if (sec.text) {
+    const target = to.before == null ? null : chapterSegments(to.ch)[to.before];
+    placeGhost(body, sec, target ? (target.brk || target.ps[0]) : null);
+  }
+  orderSectionNotes(to.ch);
+  syncChapter(body, to.ch);
+  scheduleMetaSave();
+  renderLooseCards();
+}
+
+// ---- one chapter becomes a section of another ----
+// Tab on a chapter's line in the List, or a chapter card dropped on the
+// middle of another: the chapter's writing goes to the end of the other
+// one, after a ***, its note (or its title) becomes that section's note,
+// and its own sections come along. Nothing is lost; ⌘Z puts it back.
+// Resolves to the new section's id, or null when it can't be done.
+async function joinChapter(chId, intoCh) {
+  if (!book || !intoCh || chId === intoCh) return null;
+  if (!isStory(chId) || !isStory(intoCh)) { toast(t('Only chapters can become sections')); return null; }
+  const from = chapterBodyEl(chId);
+  const into = chapterBodyEl(intoCh);
+  if (!from || !into) return null;
+  closeCardEditor();
+  snapshotStructure('chapter joined', { outlineFocus: { chId } });
+  book.sectionNotes = book.sectionNotes || {};
+  const notes = book.sectionNotes[intoCh] = book.sectionNotes[intoCh] || [];
+  const sec = { id: newSectionId(), text: ((book.chapterNotes || {})[chId] || '').trim() || ((book.chapterTitles || {})[chId] || '').trim() };
+  // what the chapter holds (a chapter of one empty line holds nothing)
+  const kids = [...from.children];
+  const hasLines = kids.some((el) => el.textContent.trim() || el.querySelector('.ph-mark'));
+  const moving = hasLines ? kids : [];
+  const intoBlank = !into.innerText.trim() && !into.querySelector('.scene-break, .ghost, .ph-mark');
+  if (hasLines) {
+    if (intoBlank) into.innerHTML = '';
+    else if (!(into.lastElementChild && into.lastElementChild.classList.contains('scene-break'))) into.appendChild(newSceneBreak(sec.id));
+    // a chapter that opened with a *** keeps just the one
+    if (moving[0].classList.contains('scene-break') && into.lastElementChild && into.lastElementChild.classList.contains('scene-break')) moving.shift().remove();
+    for (const el of moving) into.appendChild(el);
+    // the chapter's opening carries the new section's note; an opening
+    // that's only outline gets the note as a ghost of its own
+    const opening = moving[0] && !moving[0].classList.contains('scene-break') && !moving[0].classList.contains('ghost') ? moving[0] : null;
+    if (opening) opening.dataset.secId = sec.id;
+    else if (sec.text && moving[0]) placeGhost(into, sec, moving[0]);
+    repointStickies(moving, intoCh);
+  }
+  notes.push(sec);
+  for (const n of book.sectionNotes[chId] || []) notes.push(n);
+  delete book.sectionNotes[chId];
+  if (!hasLines && sec.text) placeGhost(into, sec, null);
+  orderSectionNotes(intoCh);
+  syncChapter(into, intoCh);
+  // the words are safe in the other chapter before this one's file goes
+  try { await persistChapter(intoCh); } catch (err) { window.neo.logError('join: ' + (err && err.message || err)); return null; }
+  if (book.chapterTitles) delete book.chapterTitles[chId];
+  await deleteChapterQuiet(chId);
+  updateCounters();
+  return sec.id;
+}
+
+// ---- dragging (pointer events, so a finger works the same as a mouse) ----
+
+let cardDrag = null;
+document.addEventListener('touchmove', (e) => { if (cardDrag && cardDrag.live) e.preventDefault(); }, { passive: false });
+
+function cardPress(e, src) {
+  const touch = e.pointerType !== 'mouse';
+  const st = { src, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, live: false, held: false, timer: null, float: null, target: null };
+  cardDrag = st;
+  const finish = () => {
+    clearTimeout(st.timer);
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    window.removeEventListener('pointercancel', cancel);
+    window.removeEventListener('keydown', esc, true);
+    endCardDrag(st);
+    if (cardDrag === st) cardDrag = null;
+  };
+  const move = (ev) => {
+    st.x = ev.clientX;
+    st.y = ev.clientY;
+    const far = Math.hypot(st.x - st.x0, st.y - st.y0);
+    if (!st.live) {
+      if (touch && !st.held) { if (far > 8) finish(); return; } // a scroll, not a press
+      if (!touch && far < 5) return;
+      beginCardDrag(st);
+    }
+    dragOver(st);
+  };
+  const up = () => {
+    const { live, held } = st;
+    const target = st.target;
+    finish();
+    if (live) { dropCard(st.src, target); return; }
+    // a press that went nowhere: a click (or, held on a touch screen, the menu)
+    const cell = st.src.cell;
+    if (held) cardMenu(cell, st.x, st.y);
+    else openCard(cell);
+  };
+  const cancel = () => finish();
+  const esc = (ev) => { if (ev.key === 'Escape' && st.live) { ev.preventDefault(); ev.stopPropagation(); st.target = null; finish(); } };
+  if (touch) st.timer = setTimeout(() => { st.held = true; if (navigator.vibrate) try { navigator.vibrate(10); } catch { /* fine */ } }, 380);
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', cancel);
+  window.addEventListener('keydown', esc, true);
+}
+
+function beginCardDrag(st) {
+  st.live = true;
+  closeCardEditor();
+  const card = st.src.cell.querySelector('.ob-card');
+  const r = card.getBoundingClientRect();
+  const float = card.cloneNode(true);
+  float.classList.add('ob-float');
+  float.style.width = r.width + 'px';
+  float.style.height = r.height + 'px';
+  st.dx = st.x0 - r.left;
+  st.dy = st.y0 - r.top;
+  document.body.appendChild(float);
+  st.float = float;
+  st.src.cell.classList.add('ob-lifted');
+  document.body.classList.add('ob-dragging');
+  // the loose pane opens to take a card
+  if (st.src.kind === 'section' && !st.src.cell.dataset.written && st.src.cell.dataset.sec) $('#side-pane').classList.add('drop-ready');
+}
+
+function endCardDrag(st) {
+  if (st.float) st.float.remove();
+  st.src.cell.classList.remove('ob-lifted');
+  document.body.classList.remove('ob-dragging');
+  $('#side-pane').classList.remove('drop-ready', 'drop-over');
+  $('#ob-caret')?.remove();
+  $('#ob-join-tip')?.remove();
+  for (const c of $$('.ob-cell.ob-join')) c.classList.remove('ob-join');
+  clearInterval(st.scroller);
+}
+
+function dragOver(st) {
+  st.float.style.left = (st.x - st.dx) + 'px';
+  st.float.style.top = (st.y - st.dy) + 'px';
+  // the right edge opens the loose cards for a card that can go there
+  const pane = $('#side-pane');
+  if (pane.classList.contains('drop-ready') && st.x > window.innerWidth - 36) pane.classList.add('open');
+  st.target = dragTarget(st);
+  showDropCaret(st.target);
+  // near the top or bottom: the board scrolls
+  const sc = $('#paper-scroll');
+  const r = sc.getBoundingClientRect();
+  const edge = st.y < r.top + 50 ? -1 : st.y > r.bottom - 50 ? 1 : 0;
+  clearInterval(st.scroller);
+  if (edge) st.scroller = setInterval(() => { sc.scrollTop += edge * 14; st.target = dragTarget(st); showDropCaret(st.target); }, 30);
+}
+
+// where a card would land: { cell, side } on the board, or the loose pane
+function dragTarget(st) {
+  const kind = st.src.kind;
+  const pane = $('#side-pane');
+  const pr = pane.getBoundingClientRect();
+  const overPane = pane.classList.contains('open') && st.x >= pr.left && st.x <= pr.right && st.y >= pr.top && st.y <= pr.bottom;
+  pane.classList.toggle('drop-over', overPane && pane.classList.contains('drop-ready'));
+  if (overPane) return pane.classList.contains('drop-ready') ? { loose: true } : null;
+  const cells = [...outlineBoard().querySelectorAll('.ob-cell:not(.ob-lifted):not([data-new])')];
+  if (!cells.length) return null;
+  // the card under the pointer, or the nearest one in its line
+  let best = null;
+  let bestD = Infinity;
+  for (const c of cells) {
+    const r = c.getBoundingClientRect();
+    const dy = st.y < r.top ? r.top - st.y : st.y > r.bottom ? st.y - r.bottom : 0;
+    const dx = st.x < r.left ? r.left - st.x : st.x > r.right ? st.x - r.right : 0;
+    const d = dy * 3 + dx;
+    if (d < bestD) { bestD = d; best = c; }
+  }
+  const r = best.getBoundingClientRect();
+  // over the middle of a chapter card: into that chapter (a chapter joins
+  // it as a section; a section or loose card goes to its end)
+  const middle = st.x > r.left + r.width * 0.25 && st.x < r.right - r.width * 0.25 && st.y >= r.top && st.y <= r.bottom;
+  if (middle && best.dataset.kind === 'chapter' && (kind === 'section' || kind === 'loose' || (kind === 'chapter' && best.dataset.ch !== st.src.cell.dataset.ch))) {
+    return { cell: best, side: 'into' };
+  }
+  let side = st.x < r.left + r.width / 2 ? 'before' : 'after';
+  // a chapter goes in only between chapters
+  if (kind === 'chapter') {
+    if (best.dataset.kind !== 'chapter' || side === 'after') {
+      // after this card's chapter
+      const run = cells.filter((c) => c.dataset.ch === best.dataset.ch);
+      best = run[run.length - 1];
+      side = 'after';
+    }
+  }
+  return { cell: best, side };
+}
+
+function showDropCaret(target) {
+  let caret = $('#ob-caret');
+  for (const c of $$('.ob-cell.ob-join')) if (!target || c !== target.cell || target.side !== 'into') c.classList.remove('ob-join');
+  let tip = $('#ob-join-tip');
+  if (target && target.side === 'into') {
+    if (caret) caret.remove();
+    target.cell.classList.add('ob-join');
+    if (!tip) {
+      tip = document.createElement('div');
+      tip.id = 'ob-join-tip';
+      document.body.appendChild(tip);
+    }
+    const name = chapterName(target.cell.dataset.ch);
+    tip.textContent = cardDrag && cardDrag.src.kind === 'chapter'
+      ? t('becomes a section of {chapter}', { chapter: name })
+      : t('goes to the end of {chapter}', { chapter: name });
+    const r = target.cell.getBoundingClientRect();
+    tip.style.left = (r.left + 8) + 'px';
+    tip.style.top = (r.bottom + 4) + 'px';
+    return;
+  }
+  if (tip) tip.remove();
+  if (!target || !target.cell) { if (caret) caret.remove(); return; }
+  if (!caret) {
+    caret = document.createElement('div');
+    caret.id = 'ob-caret';
+    document.body.appendChild(caret);
+  }
+  const r = target.cell.getBoundingClientRect();
+  caret.style.left = (target.side === 'before' ? r.left - 2 : r.right - 1) + 'px';
+  caret.style.top = (r.top + 6) + 'px';
+  caret.style.height = Math.max(10, r.height - 12) + 'px';
+}
+
+function dropCard(src, target) {
+  if (!target || !book) return;
+  const cell = src.cell;
+  if (target.loose) {
+    if (src.kind === 'section') sectionToLoose(cell.dataset.ch, Number(cell.dataset.seg));
+    return;
+  }
+  const tc = target.cell;
+  if (target.side === 'into') {
+    const into = tc.dataset.ch;
+    if (src.kind === 'chapter') { joinChapter(cell.dataset.ch, into).then(() => { if (currentTab === 'outline') renderBoard(); }); return; }
+    if (src.kind === 'loose') looseToSection(cell.dataset.loose, { ch: into, before: null });
+    else if (cell.dataset.virtual) moveVirtualNote(cell.dataset.ch, cell.dataset.sec, into);
+    else moveSection(cell.dataset.ch, Number(cell.dataset.seg), { ch: into, before: null });
+    renderBoard();
+    return;
+  }
+  if (tc.dataset.kind === 'scene') {
+    const idx = Number(tc.dataset.scene);
+    const to = target.side === 'before' ? idx : idx + 1;
+    if (src.kind === 'scene') spMoveScene(Number(cell.dataset.scene), to);
+    else if (src.kind === 'loose') looseToScene(cell.dataset.loose, to);
+    renderBoard();
+    return;
+  }
+  if (src.kind === 'chapter') {
+    const at = book.chapterOrder.indexOf(tc.dataset.ch) + (target.side === 'after' ? 1 : 0);
+    moveChapterCard(cell.dataset.ch, at);
+    renderBoard();
+    return;
+  }
+  // a section (or a loose card): which chapter, and before which section
+  let to;
+  if (tc.dataset.kind === 'chapter') {
+    if (target.side === 'after') to = { ch: tc.dataset.ch, before: firstSectionIndex(tc.dataset.ch) };
+    else {
+      const prev = storyBefore(tc.dataset.ch);
+      to = prev ? { ch: prev, before: null } : { ch: tc.dataset.ch, before: firstSectionIndex(tc.dataset.ch) };
+    }
+  } else {
+    const idx = Number(tc.dataset.seg);
+    if (target.side === 'before') to = { ch: tc.dataset.ch, before: idx >= 0 ? idx : null };
+    else {
+      const segs = chapterSegments(tc.dataset.ch);
+      to = { ch: tc.dataset.ch, before: idx >= 0 && idx + 1 < segs.length ? idx + 1 : null };
+    }
+  }
+  if (src.kind === 'loose') looseToSection(cell.dataset.loose, to);
+  else if (cell.dataset.virtual) {
+    // a note that isn't on the page yet just changes chapters
+    moveVirtualNote(cell.dataset.ch, cell.dataset.sec, to.ch);
+  } else moveSection(cell.dataset.ch, Number(cell.dataset.seg), to);
+  renderBoard();
+}
+
+function firstSectionIndex(chId) {
+  const segs = chapterSegments(chId);
+  const i = segs[0] && !segs[0].id ? 1 : 0;
+  return i < segs.length ? i : null;
+}
+
+function moveVirtualNote(fromCh, secId, toCh) {
+  if (fromCh === toCh) return;
+  snapshotStructure('card moved');
+  const note = sectionNote(fromCh, secId);
+  book.sectionNotes[fromCh] = book.sectionNotes[fromCh].filter((s) => s.id !== secId);
+  if (note) (book.sectionNotes[toCh] = book.sectionNotes[toCh] || []).push(note);
+  scheduleMetaSave();
+}
+
+// ---- a script's board: every scene a card ----
+// A scene is its heading and the lines under it (spLayout.scenes). Its card
+// shows the heading, how long it runs in eighths of a page, who's in it, and
+// the writer's note (book.sceneNotes, keyed by an id on the heading line;
+// the first heading to carry an id owns it), or else its first line of
+// action. Dragging a card moves the scene, as dragging it in the pane does.
+
+const newSceneId = () => 'sc-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+
+// the scene's lines, heading first
+function sceneNodes(s) {
+  const nodes = [s.p];
+  for (let n = s.p.nextElementSibling; n && !(n.tagName === 'P' && spType(n) === 'heading'); n = n.nextElementSibling) nodes.push(n);
+  return nodes;
+}
+
+function scriptScenes() {
+  spRepaginate();
+  const notes = book.sceneNotes || {};
+  const claimed = new Set();
+  return (spLayout.scenes || []).filter((s) => s.p.isConnected).map((s, k) => {
+    const nodes = sceneNodes(s);
+    let id = s.p.dataset.sceneId || null;
+    if (id && (claimed.has(id) || !(id in notes))) id = null;
+    if (id) claimed.add(id);
+    const cast = [];
+    for (const n of nodes) {
+      if (spType(n) !== 'character') continue;
+      const name = n.textContent.replace(/\(.*?\)/g, '').replace(/\^$/, '').trim().toUpperCase();
+      if (name && !cast.includes(name)) cast.push(name);
+    }
+    const action = nodes.slice(1).find((n) => spType(n) === 'action' && n.textContent.trim());
+    return { k, s, id, slug: s.slug, eighths: spEighths(s.lines), cast, first: action ? action.textContent.replace(/\s+/g, ' ').trim() : '' };
+  });
+}
+
+function renderScriptBoard(board) {
+  board.classList.add('script-board');
+  for (const sc of scriptScenes()) board.appendChild(sceneCard(sc));
+}
+
+function sceneCard(sc) {
+  const { cell, card } = cardCell('scene', spChapterOf(sc.s.p) || '');
+  cell.dataset.scene = String(sc.k);
+  if (sc.id) cell.dataset.sid = sc.id;
+  const head = document.createElement('div');
+  head.className = 'ob-head';
+  const num = document.createElement('span');
+  num.className = 'ob-letter';
+  num.textContent = String(sc.k + 1);
+  const len = document.createElement('span');
+  len.className = 'ob-words';
+  len.textContent = sc.eighths ? spEighthsText(sc.eighths) : '';
+  head.append(num, len);
+  const slug = document.createElement('div');
+  slug.className = 'ob-slug';
+  slug.textContent = sc.slug;
+  slug.dataset.ph = t('INT. PLACE - DAY');
+  const text = document.createElement('div');
+  text.className = 'ob-text';
+  const foot = document.createElement('div');
+  foot.className = 'ob-foot';
+  foot.textContent = sc.cast.join(' · ');
+  card.append(head, slug, text, foot);
+  cell.dataset.excerpt = sc.first ? quoted(sc.first) : '';
+  fillCardText(cell, sc.id ? book.sceneNotes[sc.id] : '');
+  cell.setAttribute('aria-label', t('Scene {n}', { n: sc.k + 1 }) + '. ' + (sc.slug || '') + '. ' + text.textContent);
+  return cell;
+}
+
+// the scene a card stands for, as the page has it now
+function sceneOfCell(cell) {
+  return scriptScenes()[Number(cell.dataset.scene)] || null;
+}
+
+// a new scene, after scene k (-1: before the first), with its heading and an
+// empty line of action under it
+function insertScene(k, slug) {
+  const scenes = scriptScenes();
+  const h = document.createElement('p');
+  h.className = 'sp-heading';
+  if (slug) h.textContent = slug; else h.appendChild(document.createElement('br'));
+  const a = document.createElement('p');
+  a.appendChild(document.createElement('br'));
+  let body;
+  if (k < 0 && scenes[0]) {
+    body = spBodyOf(scenes[0].s.p);
+    scenes[0].s.p.before(h, a);
+  } else if (scenes[k]) {
+    const nodes = sceneNodes(scenes[k].s);
+    body = spBodyOf(scenes[k].s.p);
+    nodes[nodes.length - 1].after(h, a);
+  } else {
+    const bodies = spBodies();
+    body = bodies[bodies.length - 1];
+    if (!body) return null;
+    const last = body.lastElementChild;
+    // an empty last line becomes the heading's place
+    if (last && !last.textContent.trim() && spType(last) === 'action' && body.children.length > 1) last.remove();
+    body.append(h, a);
+  }
+  syncChapter(body, body.closest('.chapter').dataset.id);
+  breakRun++;
+  spRepaginate();
+  return h;
+}
+
+function saveSceneCard(cell, note, slug) {
+  if (cell.dataset.new) {
+    if (!note && !slug) return;
+    snapshotStructure('scene added');
+    if (slug) slug = slug.replace(/\s[–—]\s/g, ' - ');
+    const h = insertScene(Number(cell.dataset.after), slug);
+    if (!h) return;
+    delete cell.dataset.new;
+    cell.dataset.scene = String((spLayout.scenes || []).findIndex((x) => x.p === h));
+    if (note) {
+      const id = newSceneId();
+      (book.sceneNotes = book.sceneNotes || {})[id] = note;
+      h.dataset.sceneId = id;
+      syncChapter(spBodyOf(h), spChapterOf(h));
+      scheduleMetaSave();
+    }
+    renderNav();
+    return;
+  }
+  const sc = sceneOfCell(cell);
+  if (!sc) return;
+  const h = sc.s.p;
+  // a heading keeps its plain hyphens (the card's typing makes dashes of them)
+  if (slug) slug = slug.replace(/\s[–—]\s/g, ' - ');
+  let changed = false;
+  if (slug !== null && slug !== sc.slug) {
+    h.textContent = slug;
+    if (!slug) h.appendChild(document.createElement('br'));
+    changed = true;
+  }
+  const had = sc.id ? book.sceneNotes[sc.id] : '';
+  if (note !== had) {
+    book.sceneNotes = book.sceneNotes || {};
+    let id = sc.id;
+    if (!id) {
+      if (!note) return;
+      id = newSceneId();
+      h.dataset.sceneId = id;
+      changed = true;
+    }
+    book.sceneNotes[id] = note;
+    scheduleMetaSave();
+  }
+  if (changed) {
+    syncChapter(spBodyOf(h), spChapterOf(h));
+    spRepaginate();
+    renderNav();
+  }
+}
+
+function looseToScene(looseId, before) {
+  const card = (book.looseCards || []).find((c) => c.id === looseId);
+  if (!card) return;
+  snapshotStructure('loose card placed');
+  book.looseCards = book.looseCards.filter((c) => c.id !== looseId);
+  const h = insertScene(before - 1, '');
+  if (h && card.text) {
+    const id = newSceneId();
+    (book.sceneNotes = book.sceneNotes || {})[id] = card.text;
+    h.dataset.sceneId = id;
+    syncChapter(spBodyOf(h), spChapterOf(h));
+  }
+  scheduleMetaSave();
+  renderLooseCards();
+  renderNav();
+}
+
+function goToScene(cell) {
+  const sc = sceneOfCell(cell);
+  switchTab('manuscript');
+  if (!sc) return;
+  const p = sc.s.p;
+  spBodyOf(p).focus({ preventScroll: true });
+  spCaretToEnd(p);
+  spLastPara = p;
+  const scr = $('#paper-scroll');
+  scr.scrollTop += p.getBoundingClientRect().top - scr.getBoundingClientRect().top - scr.clientHeight / 4;
+  updateCounters();
+}
+
+// ---- loose cards: the right-hand pane, while the outline is up ----
+
+function looseList() {
+  let list = $('#loose-list');
+  if (list) return list;
+  const head = $('#side-head > span');
+  if (head) {
+    head.classList.add('side-title-notes');
+    const alt = document.createElement('span');
+    alt.className = 'side-title-loose';
+    alt.textContent = t('Loose cards');
+    head.after(alt);
+  }
+  list = document.createElement('div');
+  list.id = 'loose-list';
+  $('#sticky-list').after(list);
+  list.addEventListener('pointerdown', (e) => {
+    const cell = e.target.closest('.ob-cell');
+    if (!cell || e.button !== 0 || cell.classList.contains('open') || e.target.closest('button')) return;
+    cardPress(e, { kind: 'loose', cell });
+  });
+  list.addEventListener('contextmenu', (e) => {
+    const cell = e.target.closest('.ob-cell');
+    if (!cell) return;
+    e.preventDefault();
+    if (!NO_HOVER) cardMenu(cell, e.clientX, e.clientY);
+  });
+  list.addEventListener('keydown', (e) => {
+    const cell = e.target.closest && e.target.closest('.ob-cell');
+    if (!cell || cell.classList.contains('open')) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCard(cell); }
+  });
+  return list;
+}
+
+function renderLooseCards() {
+  const list = looseList();
+  list.innerHTML = '';
+  if (!book) return;
+  for (const c of book.looseCards || []) {
+    const { cell, card } = cardCell('loose', '');
+    cell.dataset.loose = c.id;
+    const text = document.createElement('div');
+    text.className = 'ob-text';
+    text.textContent = c.text;
+    card.appendChild(text);
+    list.appendChild(cell);
+  }
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'loose-add';
+  add.textContent = t('+ card');
+  add.onclick = () => addLooseCard();
+  list.appendChild(add);
+  if (!(book.looseCards || []).length) {
+    const tip = document.createElement('div');
+    tip.className = 'loose-tip';
+    tip.textContent = t('Ideas without a chapter yet. Drag one onto the board when it finds its place.');
+    list.appendChild(tip);
+  }
+}
+
+function addLooseCard() {
+  if (!book) return;
+  const id = 'lc-' + Date.now().toString(36);
+  (book.looseCards = book.looseCards || []).push({ id, text: '' });
+  renderLooseCards();
+  const cell = looseList().querySelector(`.ob-cell[data-loose="${id}"]`);
+  if (cell) openCard(cell);
+}
+
+function saveLooseCard(id, val) {
+  const cards = book.looseCards || [];
+  const c = cards.find((x) => x.id === id);
+  if (!c) return;
+  if (!val) { book.looseCards = cards.filter((x) => x.id !== id); scheduleMetaSave(); setTimeout(renderLooseCards, 0); return; }
+  if (c.text === val) return;
+  c.text = val;
+  scheduleMetaSave();
+}
+
+function removeLooseCard(id) {
+  snapshotStructure('loose card removed');
+  book.looseCards = (book.looseCards || []).filter((x) => x.id !== id);
+  scheduleMetaSave();
+  renderLooseCards();
+}
+
+// the right-hand pane holds loose cards while the Outline is up (there are
+// no placeholders to show there)
+function sidePaneForTab(name) {
+  const outline = name === 'outline' && !!book;
+  $('#editor-view').classList.toggle('outline-tab', outline);
+  if (outline) renderLooseCards();
+}
+
+// ---- the note walks ahead ----
+// Writing over a section's gray ghost used to take the note away with the
+// first key. Now, while the caret is in a section that has an outline note,
+// the note rides one line below the paragraph being written: faint, out of
+// the text (it's never saved or exported), with a quiet Dismiss. Leave the
+// section and it waits; come back and it's there, until it's dismissed.
+let walkEl = null;
+let walkP = null;
+let walkQueued = false;
+
+// the outline note of the section holding p (the first section to carry an
+// id is its owner: lines split from a written ghost carry the id along)
+function sectionIdAt(body, p) {
+  const chId = body.closest('.chapter')?.dataset.id;
+  const notes = new Set(((book.sectionNotes || {})[chId] || []).map((s) => s.id));
+  const claimed = new Set();
+  let id = null;
+  let mine = false;
+  let ghost = false;
+  for (const el of body.children) {
+    if (el.classList.contains('scene-break')) {
+      if (mine) break;
+      if (id) claimed.add(id);
+      id = null;
+      ghost = false;
+      continue;
+    }
+    if (!id && el.dataset && notes.has(el.dataset.secId) && !claimed.has(el.dataset.secId)) id = el.dataset.secId;
+    if (el.classList.contains('ghost')) ghost = true;
+    if (el === p) mine = true;
+  }
+  return mine && !ghost ? { chId, id } : null;
+}
+
+function hideWalkNote() {
+  // (a paragraph split from the one holding the room takes the mark along)
+  for (const q of document.querySelectorAll('.chapter-body p[data-walk]')) q.removeAttribute('data-walk');
+  if (walkEl) walkEl.remove();
+  walkEl = null;
+  walkP = null;
+}
+
+function walkNoteUpdate() {
+  walkQueued = false;
+  if (!book || currentTab !== 'manuscript' || isScript()) { hideWalkNote(); return; }
+  const sel = window.getSelection();
+  let el = sel.rangeCount ? sel.anchorNode : null;
+  if (el && el.nodeType === Node.TEXT_NODE) el = el.parentElement;
+  const p = el && el.closest ? el.closest('.chapter-body > p') : null;
+  const body = p && p.parentElement;
+  if (!p || p.classList.contains('ghost') || p.classList.contains('scene-break')) { hideWalkNote(); return; }
+  const at = sectionIdAt(body, p);
+  const note = at && at.id ? sectionNote(at.chId, at.id) : null;
+  if (!note || !note.text || note.dismissed) { hideWalkNote(); return; }
+  const chapter = body.closest('.chapter');
+  if (!walkEl || !walkEl.isConnected || walkEl.parentElement !== chapter || walkEl.dataset.sec !== note.id) {
+    hideWalkNote();
+    walkEl = document.createElement('div');
+    walkEl.className = 'walk-note';
+    walkEl.contentEditable = 'false';
+    walkEl.dataset.sec = note.id;
+    walkEl.dataset.ch = at.chId;
+    const text = document.createElement('span');
+    text.className = 'wn-text';
+    text.textContent = note.text;
+    const dismiss = document.createElement('button');
+    dismiss.type = 'button';
+    dismiss.className = 'wn-dismiss';
+    dismiss.textContent = t('Dismiss');
+    dismiss.title = t('Put this outline note away for this section (it stays on its card)');
+    dismiss.addEventListener('mousedown', (e) => e.preventDefault()); // the caret stays where it is
+    dismiss.addEventListener('click', () => {
+      const n = sectionNote(walkEl.dataset.ch, walkEl.dataset.sec);
+      if (n) { n.dismissed = true; scheduleMetaSave(); }
+      hideWalkNote();
+    });
+    walkEl.append(text, dismiss);
+    chapter.appendChild(walkEl);
+  }
+  if (walkP !== p) {
+    for (const q of body.querySelectorAll('p[data-walk]')) if (q !== p) q.removeAttribute('data-walk');
+    walkP = p;
+    p.setAttribute('data-walk', '');
+  }
+  placeWalkNote();
+}
+
+function placeWalkNote() {
+  if (!walkEl || !walkP || !walkP.isConnected) return;
+  const chapter = walkEl.parentElement;
+  const body = walkP.parentElement;
+  const c = chapter.getBoundingClientRect();
+  const b = body.getBoundingClientRect();
+  walkEl.style.left = (b.left - c.left) + 'px';
+  walkEl.style.width = b.width + 'px';
+  chapter.style.setProperty('--walk-h', (walkEl.offsetHeight + 8) + 'px');
+  const p = walkP.getBoundingClientRect();
+  walkEl.style.top = (p.bottom - c.top + 2) + 'px';
+}
+
+function queueWalkNote() {
+  if (walkQueued) return;
+  walkQueued = true;
+  requestAnimationFrame(walkNoteUpdate);
+}
+document.addEventListener('selectionchange', queueWalkNote);
+document.addEventListener('input', (e) => { if (e.target && e.target.closest && e.target.closest('.chapter-body')) queueWalkNote(); }, true);
+window.addEventListener('resize', queueWalkNote);
 
 let auxDirty = false;
 $('#aux-editor').addEventListener('keydown', (e) => { if (styleKeepScroll(e)) return; smartKeys(e, e.currentTarget); });
@@ -7602,6 +9349,10 @@ async function saveMeta() {
 
 function flushAllSaves(e) {
   if (!book) return;
+  // An open outline card holds its draft in the editor, outside book metadata.
+  // Commit it before leaving/closing or explicitly syncing. The background tick
+  // must not take focus away from a card the writer is still editing.
+  if (e !== 'tick') closeCardEditor();
   // remember where you were, for next session and for the other device:
   // the chapter, the paragraph and the letter (the same place on any
   // screen) plus the scroll (this screen's). `at` changes only when the
@@ -7877,6 +9628,7 @@ async function backToShelf() {
   undoStack = [];
   $('#editor-view').hidden = true;
   $('#bookshelf-view').hidden = false;
+  applyBright();
   spEditorMode(); // a script's pane, page and title page go
   spReportState();
   renderShelves();
@@ -8021,6 +9773,8 @@ function snapshotStructure(label, opts) {
     chapterTitles: { ...(book.chapterTitles || {}) },
     chapterNotes: { ...(book.chapterNotes || {}) },
     sectionNotes: JSON.parse(JSON.stringify(book.sectionNotes || {})),
+    looseCards: JSON.parse(JSON.stringify(book.looseCards || [])),
+    sceneNotes: { ...(book.sceneNotes || {}) },
     darlings: JSON.parse(JSON.stringify(darlings)),
     stickies: JSON.parse(JSON.stringify(stickies))
   });
@@ -8036,6 +9790,8 @@ async function structuralUndo() {
   book.chapterTitles = snap.chapterTitles;
   book.chapterNotes = snap.chapterNotes;
   book.sectionNotes = snap.sectionNotes;
+  book.looseCards = snap.looseCards || [];
+  book.sceneNotes = snap.sceneNotes || {};
   darlings = snap.darlings;
   stickies = snap.stickies;
   // resurrect any chapter files the action may have deleted
@@ -8049,7 +9805,7 @@ async function structuralUndo() {
   renderChapters();
   renderStickies();
   if (currentTab === 'darlings') renderDarlings();
-  if (currentTab === 'outline') renderOutline(snap.outlineFocus || undefined);
+  if (currentTab === 'outline') { renderOutline(snap.outlineFocus || undefined); sidePaneForTab('outline'); }
   updateCounters();
   restoreCaret(snap.caret); // back to work, no announcement
   if (snap.rejoin) rejoinAtCaret();
@@ -8293,11 +10049,24 @@ document.addEventListener('keydown', (e) => {
 /* ================================================================== */
 
 let searchState = { matches: [], idx: -1, query: '' };
+// where the caret was on the page when Find opened, and whether vim's / opened
+// it: Esc in the find bar goes back there (see returnFromSearch)
+let searchHome = null;
+let searchFromVim = false;
 
-function openSearch() {
+// the editable a range sits in: a chapter, the Notes, an outline line
+function editableOf(range) {
+  const n = range && (range.startContainer.nodeType === Node.TEXT_NODE ? range.startContainer.parentElement : range.startContainer);
+  return (n && n.closest && n.closest('[contenteditable="true"]')) || null;
+}
+
+function openSearch(fromVim = false) {
   if ($('#editor-view').hidden || !book) { toast(t('Open a book first')); return; }
   const sel = window.getSelection();
   const preset = sel && !sel.isCollapsed ? sel.toString().slice(0, 80).trim() : '';
+  // ⌘F again from the bar itself keeps the place it first came from
+  if (sel && sel.rangeCount && editableOf(sel.getRangeAt(0))) searchHome = sel.getRangeAt(0).cloneRange();
+  searchFromVim = fromVim;
   $('#searchbar').hidden = false;
   const inp = $('#search-input');
   if (preset) inp.value = preset;
@@ -8309,10 +10078,32 @@ function openSearch() {
 function closeSearch() {
   $('#searchbar').hidden = true;
   searchState = { matches: [], idx: -1, query: '' };
+  searchFromVim = false;
   if (window.CSS && CSS.highlights) {
     CSS.highlights.delete('neo-search');
     CSS.highlights.delete('neo-search-current');
   }
+}
+
+// Esc in the find bar. Hiding the bar took the caret with it, so the writer
+// was nowhere, and the next Esc closed the book. Now the caret goes back to
+// the page: to the match last gone to, or else where it was before Find.
+// A search vim's / began goes back to moving, as in vim.
+function returnFromSearch() {
+  const m = searchState.idx >= 0 && searchState.matches[searchState.idx];
+  let r = null;
+  if (m && m.range.startContainer.isConnected) { r = m.range.cloneRange(); r.collapse(true); }
+  else if (searchHome && searchHome.startContainer.isConnected) r = searchHome.cloneRange();
+  const fromVim = searchFromVim;
+  closeSearch();
+  const ed = editableOf(r);
+  if (!ed) return;
+  ed.focus({ preventScroll: true });
+  const s = window.getSelection();
+  s.removeAllRanges();
+  s.addRange(r);
+  revealCaret();
+  if (fromVim && vimEnabled && vimEditor(ed)) vimSetNav(true);
 }
 
 function paintHighlights() {
@@ -8331,21 +10122,15 @@ function paintHighlights() {
 // with the manuscript, where ⌘Z can take a Replace All back.
 function searchRoots() {
   if (currentTab === 'manuscript') return book.chapterOrder.map((chId) => document.querySelector(`.chapter[data-id="${chId}"] .chapter-body`));
-  if (currentTab === 'outline') return $$('#outline-list .ol-text');
+  if (currentTab === 'outline') return boardShowing() ? $$('#outline-board .ob-text, #loose-list .ob-text') : $$('#outline-list .ol-text');
   if (currentTab === 'darlings') return $$('#darlings-list .darling > :first-child');
   return [$('#aux-editor')];
 }
 
-// Scan the whole tab every time. Matches are highlighted, not selected.
-function runSearch() {
-  const q = $('#search-input').value;
-  searchState = { matches: [], idx: -1, query: q, tab: currentTab };
-  $('#searchbar').classList.toggle('find-only', currentTab !== 'manuscript');
-  if (!q) {
-    $('#search-count').textContent = '';
-    paintHighlights();
-    return;
-  }
+// every place q appears in the tab, in reading order, any case
+function findRanges(q) {
+  const found = [];
+  if (!q) return found;
   const ql = q.toLowerCase();
   for (const body of searchRoots()) {
     if (!body) continue;
@@ -8358,11 +10143,25 @@ function runSearch() {
         const range = document.createRange();
         range.setStart(node, pos);
         range.setEnd(node, pos + q.length);
-        searchState.matches.push({ range });
+        found.push(range);
         pos += q.length;
       }
     }
   }
+  return found;
+}
+
+// Scan the whole tab every time. Matches are highlighted, not selected.
+function runSearch() {
+  const q = $('#search-input').value;
+  searchState = { matches: [], idx: -1, query: q, tab: currentTab };
+  $('#searchbar').classList.toggle('find-only', currentTab !== 'manuscript');
+  if (!q) {
+    $('#search-count').textContent = '';
+    paintHighlights();
+    return;
+  }
+  searchState.matches = findRanges(q).map((range) => ({ range }));
   const n = searchState.matches.length;
   $('#search-count').textContent = n ? `${n} found` : 'none';
   paintHighlights();
@@ -8442,7 +10241,7 @@ $('#search-input').addEventListener('input', () => {
 });
 $('#search-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); freshSearchIfStale(); gotoMatch(searchState.idx + (e.shiftKey ? -1 : 1)); }
-  if (e.key === 'Escape') { e.stopPropagation(); closeSearch(); }
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); returnFromSearch(); }
   if (e.key === 'Tab' && !e.shiftKey) {
     const m = searchState.matches[Math.max(0, searchState.idx)];
     if (m) {
@@ -8459,7 +10258,7 @@ $('#search-input').addEventListener('keydown', (e) => {
 });
 $('#replace-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); replaceCurrent(); }
-  if (e.key === 'Escape') { e.stopPropagation(); closeSearch(); }
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); returnFromSearch(); }
 });
 $('#search-next').onclick = () => { freshSearchIfStale(); gotoMatch(searchState.idx + 1); };
 $('#search-prev').onclick = () => { freshSearchIfStale(); gotoMatch(searchState.idx - 1); };
@@ -8943,10 +10742,54 @@ const FOCUS_LEVELS = ['off', 'paragraph', 'sentence'];
 const FOCUS_LABELS = { off: tk('Focus mode off'), sentence: tk('Focus: sentence'), paragraph: tk('Focus: paragraph') };
 let focusLevel = 'off';
 
-// the View menu's ticks (focus level, page, brighter interface) follow the page
+// The paragraph alignment the Format menu should tick. `null` means no tick belongs to the caret:
+// outside the manuscript, or the caret is not inside a paragraph. No alignment rule IS left.
+function currentAlign() {
+  if (!book || currentTab !== 'manuscript') return null;
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount) return null;
+  let el = sel.getRangeAt(0).startContainer;
+  if (el.nodeType === Node.TEXT_NODE) el = el.parentElement;
+  const body = el && el.closest ? el.closest('.chapter-body') : null;
+  const p = el && el.closest ? el.closest('p') : null;
+  if (!body || !p || !body.contains(p)) return null;
+  const value = (p.style && p.style.textAlign) || 'left';
+  return ['left', 'center', 'right', 'justify'].includes(value) ? value : null;
+}
+
+// the View and Format menus' ticks (focus level, page, brighter interface, body font, drop cap,
+// alignment) follow the page. Selection changes call this often, so an unchanged payload is
+// not sent again.
+let viewStateSent = '';
+
+// Brighter Interface, remembered two ways: while writing (where a faint
+// interface keeps out of the way) and everywhere else in a book, the
+// Outline, Notes and Darlings, where the tips need reading (bright unless
+// the writer turns it down). The shelf goes with writing.
+const brightAside = () => !!book && !$('#editor-view').hidden && currentTab !== 'manuscript';
+function brightNow() {
+  if (brightAside()) return library.uiBrightAside === undefined ? true : !!library.uiBrightAside;
+  return library.uiBright === undefined ? SYSTEM_CONTRAST.matches : !!library.uiBright;
+}
+function applyBright() {
+  if (!library) return;
+  document.body.classList.toggle('bright', brightNow());
+  reportViewState();
+}
 function reportViewState() {
   if (!window.neo.viewState || !library) return;
-  window.neo.viewState({ focus: focusLevel, pageTheme: library.pageTheme || 'night', uiBright: document.body.classList.contains('bright') });
+  const payload = {
+    focus: focusLevel,
+    pageTheme: library.pageTheme || 'night',
+    uiBright: document.body.classList.contains('bright'),
+    bodyFont: (library.fonts && library.fonts.body) || '',
+    dropCap: (library.fonts && library.fonts.dropcap) || 'literary',
+    align: currentAlign(),
+  };
+  const key = JSON.stringify(payload);
+  if (key === viewStateSent) return;
+  viewStateSent = key;
+  window.neo.viewState(payload);
 }
 
 function applyFocus() {
@@ -9051,6 +10894,10 @@ function isBreakPara(p) { return p.classList.contains('scene-break'); }
 document.addEventListener('selectionchange', () => {
   if (focusLevel === 'off') return;
   requestAnimationFrame(() => { try { updateFocus(); } catch { /* mid-mutation */ } });
+});
+// the Format menu's alignment tick follows the caret
+document.addEventListener('selectionchange', () => {
+  requestAnimationFrame(() => { try { reportViewState(); } catch { /* mid-mutation */ } });
 });
 document.addEventListener('input', () => {
   if (focusLevel === 'off') return;
@@ -9346,8 +11193,7 @@ function applyFonts() {
   document.body.classList.toggle('light', library.pageTheme === 'light');
   // the system's "Increase contrast" turns it on too, until the writer
   // chooses in the View menu
-  document.body.classList.toggle('bright', library.uiBright === undefined ? SYSTEM_CONTRAST.matches : !!library.uiBright);
-  reportViewState();
+  applyBright();
   // View → Interface Size: everything but the page
   const uiZoom = [1, 1.25, 1.5, 2, 2.5, 3].includes(library.uiZoom) ? library.uiZoom : 1;
   document.documentElement.style.setProperty('--ui-zoom', uiZoom);
@@ -9432,8 +11278,11 @@ async function pickLocalFont() {
 let zoomSaveTimer = null;
 function updateZoomDisplay() {
   const el = $('#zoom-level');
-  if (el) el.textContent = Math.round((library.pageZoom || 1) * 100) + '%';
+  // on the outline's cards, the zoom is the cards' size
+  const z = boardShowing() ? cardZoom() : (library.pageZoom || 1);
+  if (el) el.textContent = Math.round(z * 100) + '%';
 }
+const boardShowing = () => !!book && currentTab === 'outline' && $('#editor-view').classList.contains('board-on');
 // Zooming or resizing the text reflows the whole book, and the same scroll
 // offset lands somewhere else. Pin a spot in the text first: the caret if
 // it's on screen, otherwise the point being pinched, otherwise the middle
@@ -9480,18 +11329,30 @@ function setPageZoom(next, at) {
   clearTimeout(zoomSaveTimer);
   zoomSaveTimer = setTimeout(() => { writeLibrary(library); }, 600);
 }
+let cardWheel = 0;
 $('#editor-view').addEventListener('wheel', (e) => {
   if (!e.ctrlKey) return;
   e.preventDefault();
+  if (boardShowing()) {
+    // a pinch steps the cards a size at a time
+    cardWheel += e.deltaY;
+    if (Math.abs(cardWheel) > 40) { stepCardZoom(cardWheel < 0 ? 1 : -1); cardWheel = 0; }
+    return;
+  }
   setPageZoom((library.pageZoom || 1) * Math.exp(-e.deltaY * 0.005), { x: e.clientX, y: e.clientY });
 }, { passive: false });
 
 // zoom control in the bottom bar: buttons, click-to-reset, and scroll
-$('#zoom-in').onclick = () => setPageZoom((library.pageZoom || 1) + 0.1);
-$('#zoom-out').onclick = () => setPageZoom((library.pageZoom || 1) - 0.1);
-$('#zoom-level').onclick = () => setPageZoom(1);
+$('#zoom-in').onclick = () => (boardShowing() ? stepCardZoom(1) : setPageZoom((library.pageZoom || 1) + 0.1));
+$('#zoom-out').onclick = () => (boardShowing() ? stepCardZoom(-1) : setPageZoom((library.pageZoom || 1) - 0.1));
+$('#zoom-level').onclick = () => (boardShowing() ? stepCardZoom(0) : setPageZoom(1));
 $('#zoom-control').addEventListener('wheel', (e) => {
   e.preventDefault();
+  if (boardShowing()) {
+    cardWheel += e.deltaY;
+    if (Math.abs(cardWheel) > 40) { stepCardZoom(cardWheel < 0 ? 1 : -1); cardWheel = 0; }
+    return;
+  }
   setPageZoom((library.pageZoom || 1) * Math.exp(-e.deltaY * 0.002));
 }, { passive: false });
 
@@ -9515,6 +11376,7 @@ function applyAlign(value) {
     if (!p.getAttribute('style')) p.removeAttribute('style');
   }
   syncChapter(body, chId);
+  reportViewState(); // the Format menu's alignment tick
 }
 
 // Menu accelerators and editor shortcuts, plus NEO's distinct writing gestures.
@@ -9578,8 +11440,8 @@ function bookShortcutSections() {
       [[K('⌘⇧F', 'Ctrl+Shift+F'), K('⌘Enter', 'Ctrl+Enter')], tk('Toggle full screen')],
       [K('⌘⇧T', 'Ctrl+Shift+T'), tk('Toggle typewriter scrolling')],
       [K('⌘⇧O', 'Ctrl+Shift+O'), tk('Cycle focus mode'), tk('Off → paragraph → sentence → off.')],
-      [K('⌥⌘↓', 'Ctrl+Alt+↓'), tk('Go to the next chapter')],
-      [K('⌥⌘↑', 'Ctrl+Alt+↑'), tk('Go to the previous chapter')],
+      [IS_MAC ? '⌥⌘↓' : ['Ctrl+Alt+↓', 'Ctrl+Page Down'], tk('Go to the next chapter')],
+      [IS_MAC ? '⌥⌘↑' : ['Ctrl+Alt+↑', 'Ctrl+Page Up'], tk('Go to the previous chapter')],
       [['F6', K('⌃Tab', 'Ctrl+Tab')], tk('Move between the page, the chapters, the notes and the bottom bar'), tk('Add Shift to go back. Esc returns to the page. On the shelf: the books, then the header.')],
       ...(IS_MAC ? [
         ['⌘H', tk('Hide NEO')],
@@ -9601,7 +11463,8 @@ function bookShortcutSections() {
       ['o O', tk('Write in a new paragraph below or above')],
       ['v', tk('Select'), tk('Move to stretch it, then y to copy or d to cut.')],
       ['x', tk('Delete the letter under the caret')],
-      ['/', tk('Find')]
+      ['/', tk('Find')],
+      ['n N', tk('Next or previous match')]
     ] }] : [])
   ];
 }
@@ -10987,6 +12850,8 @@ async function showAbout() {
 // Text size and the reset travel with page zoom; the menu item and the
 // keyboard fallback share this so the two cannot drift.
 async function setEditorFontSize(value) {
+  // ⌘+ and ⌘− on the outline's cards make the cards larger and smaller
+  if (boardShowing()) { stepCardZoom(value); return; }
   // a script's type is the page's: larger and smaller zoom the page
   if (book && isScript()) {
     setPageZoom(value === 0 ? 1 : (library.pageZoom || 1) * (value > 0 ? 1.1 : 1 / 1.1));
@@ -11308,7 +13173,9 @@ window.neo.onMenu(async (msg) => {
     applyFonts();
   }
   if (msg.type === 'uiBright') {
-    library.uiBright = !document.body.classList.contains('bright');
+    // the tab you're on decides which of the two settings this is
+    if (brightAside()) library.uiBrightAside = !document.body.classList.contains('bright');
+    else library.uiBright = !document.body.classList.contains('bright');
     await writeLibrary(library);
     applyFonts();
   }

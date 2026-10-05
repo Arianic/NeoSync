@@ -63,13 +63,32 @@ app.whenReady().then(async () => {
     assert.equal(fs.readFileSync(path.join(root, ids.book, 'chapters', ids.chapter + '.html'), 'utf8'), '<p>Offline autosave survives.</p>');
     win.webContents.send('menu', { type: 'syncPrepare', token: 'editor-test' });
     await tick(); assert.equal(await js('document.body.inert'), false);
+    // Upstream outline cards must reach disk before the bookshelf permits sync.
+    await js(`
+      switchTab('outline');
+      openCard(document.querySelector('#outline-board .ob-cell[data-kind="chapter"]'));
+      cardEditor.text.textContent = 'Outline note before leaving the book';
+      flushAllSaves('tick');
+    `);
+    assert.equal(await js('!!cardEditor'), true, 'Background saves must not close a card being edited');
+    await js('backToShelf()');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, ids.book, 'book.json'), 'utf8')).chapterNotes[ids.chapter], 'Outline note before leaving the book');
+    await js(`(async () => {
+      await openBook(${JSON.stringify(ids.book)});
+      switchTab('outline');
+      openCard(document.querySelector('#outline-board .ob-cell[data-kind="chapter"]'));
+      cardEditor.text.textContent = 'Outline note before window close';
+      flushAllSaves({ type: 'beforeunload' });
+      await window.neo.syncDrain();
+    })()`);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, ids.book, 'book.json'), 'utf8')).chapterNotes[ids.chapter], 'Outline note before window close');
     await js('backToShelf()');
     win.webContents.send('menu', { type: 'syncPrepare', token: 'shelf-test' });
     await tick(); assert.equal(await js('document.body.inert'), true);
     win.webContents.send('menu', { type: 'syncApplied', token: 'shelf-test' });
     await tick(); assert.equal(await js('document.body.inert'), false);
     assert.ok(app.getPath('userData').startsWith(tmp + path.sep));
-    console.log('Desktop smoke passed: identity, settings, preload, offline save, editor/shelf apply handoff.');
+    console.log('Desktop smoke passed: identity, settings, preload, offline save, outline-card flush, editor/shelf apply handoff.');
     console.log('Temporary profile retained until Electron exits: ' + tmp);
     clearTimeout(timeout); app.exit(0);
   } catch (err) { console.error(err); clearTimeout(timeout); app.exit(1); }
