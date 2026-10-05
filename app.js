@@ -11922,7 +11922,7 @@ function buildHtml(data, opts = {}) {
   }
   if (!placed) body += contents;
   return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>${escHtml(d.title)}</title>
+<html lang="${escHtml(d.language || writingLanguage())}"><head><meta charset="utf-8"><title>${escHtml(d.title)}</title>
 <style>
   ${opts.fonts || ''}
   body { font-family: ${exportBodyFont()}; color: #1c1c1c; max-width: 620px; margin: 40px auto; line-height: 1.7; font-size: 13pt; }
@@ -11936,7 +11936,10 @@ function buildHtml(data, opts = {}) {
   /* headings in small capitals rather than capitals, so the PDF's bookmarks
      read "Chapter 3", not "CHAPTER 3" */
   .chapter .hd, .contents .hd { text-align: center; letter-spacing: 4px; font-variant-caps: all-small-caps; font-variant-numeric: oldstyle-nums; font-size: 17pt; font-weight: normal; color: #555; margin: 54px 0 36px; }
-  .chapter p { text-indent: 2em; margin: 0; }
+  /* set like a printed book: justified, hyphenated in the book's language,
+     no line left alone at the top or foot of a page */
+  .chapter p { text-indent: 2em; margin: 0; text-align: justify; hyphens: auto; -webkit-hyphens: auto; widows: 2; orphans: 2; }
+  .chapter p.poetry { text-align: left; hyphens: manual; -webkit-hyphens: manual; }
   .chapter .hd + p, .chapter .byline + p, .chapter .brk + p, .brk + p, .chapter p.first { text-indent: 0; }
   .chapter p.dialogue { text-indent: 2em; }
   /* the drop cap the page sets, two lines deep in its own face. An initial
