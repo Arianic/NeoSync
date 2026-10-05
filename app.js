@@ -4783,7 +4783,7 @@ function focusChapter(chId) {
 const SP_TYPES = ['heading', 'action', 'character', 'paren', 'dialogue', 'transition', 'shot'];
 // blank lines above each element (two above a scene heading, so each scene
 // stands apart; it costs a few pages, as it does in Final Draft)
-const SP_BEFORE = { heading: 2, action: 1, character: 1, paren: 0, dialogue: 0, transition: 1, shot: 1 };
+const SP_BEFORE = { heading: 2, action: 1, character: 1, paren: 0, dialogue: 0, transition: 1, shot: 2 };
 // Enter at the end of a line with words: what the next line is
 const SP_AFTER = { heading: 'action', action: 'action', character: 'dialogue', paren: 'dialogue', dialogue: 'action', transition: 'heading', shot: 'action' };
 // Enter on an empty line: what that line becomes. Enter twice after a
@@ -5874,6 +5874,59 @@ function spPaste(e, body, chId) {
   return true;
 }
 
+// Lines joined by a delete: the engine keeps the upper line and pours the
+// lower one into it. When the upper line goes entirely (a shot selected and
+// deleted, an empty line Backspaced away from below), what's left is the
+// lower line, so it stays what it was: a scene heading stays a heading, and
+// its card keeps its note. NEO makes that cut itself; ⌘Z puts it back.
+document.addEventListener('beforeinput', (e) => {
+  const body = e.target && e.target.closest ? e.target.closest('.script-body') : null;
+  if (!body || e.defaultPrevented || !/^delete(Content|Word|SoftLine|HardLine|ByCut)/.test(e.inputType || '')) return;
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const r = sel.getRangeAt(0);
+  const lineOf = (n) => {
+    const el = n && n.nodeType === Node.TEXT_NODE ? n.parentElement : n;
+    const p = el && el.closest ? el.closest('p') : null;
+    return p && p.parentElement === body ? p : null;
+  };
+  let upper = null;
+  let lower = null;
+  if (!r.collapsed) {
+    upper = lineOf(r.startContainer);
+    lower = lineOf(r.endContainer);
+    if (!upper || !lower || upper === lower) return;
+    // the upper line keeps words: the join is the engine's, as usual
+    const before = document.createRange();
+    before.selectNodeContents(upper);
+    before.setEnd(r.startContainer, r.startOffset);
+    if (before.toString().length) return;
+  } else if (/Backward$/.test(e.inputType)) {
+    lower = lineOf(r.startContainer);
+    upper = lower && lower.previousElementSibling;
+    if (!upper || upper.tagName !== 'P' || upper.textContent.length || !spCaretAtStart(lower)) return;
+  } else if (/Forward$/.test(e.inputType)) {
+    upper = lineOf(r.startContainer);
+    lower = upper && upper.nextElementSibling;
+    if (!lower || lower.tagName !== 'P' || upper.textContent.length) return;
+  } else return;
+  e.preventDefault();
+  const chId = spChapterOf(lower);
+  snapshotStructure('lines removed');
+  if (!r.collapsed) {
+    const cut = document.createRange();
+    cut.setStart(lower, 0);
+    cut.setEnd(r.endContainer, r.endOffset);
+    cut.deleteContents();
+  }
+  for (let n = upper; n && n !== lower;) { const next = n.nextElementSibling; n.remove(); n = next; }
+  if (!lower.textContent && !lower.querySelector('br')) lower.appendChild(document.createElement('br'));
+  placeCaret(lower, 0);
+  syncChapter(body, chId);
+  breakRun++;
+  spAfterChange(lower);
+}, true);
+
 // A whole script pasted in: the engine's own paste takes seconds per few
 // hundred lines (and minutes for a feature), so the lines go straight onto
 // the page, and ⌘Z takes the paste back as one move
@@ -6018,7 +6071,7 @@ p.sp-character { margin-left: 13.2em; width: 23.1em; }
 p.sp-paren { margin-left: 9.6em; width: 15.3em; }
 p.sp-dialogue { margin-left: 6em; width: 21.3em; }
 p.sp-transition { text-align: right; }
-p.sp-heading { font-weight: bold; }
+p.sp-heading, p.sp-shot { font-weight: bold; }
 .title { text-align: center; }
 .tp-main { position: absolute; top: 3.5in; left: 1.5in; width: 6in; }
 .tp-main .gap { margin-top: 2em; }
@@ -8700,7 +8753,27 @@ function scriptScenes() {
 
 function renderScriptBoard(board) {
   board.classList.add('script-board');
+  rescueSceneNotes();
   for (const sc of scriptScenes()) board.appendChild(sceneCard(sc));
+}
+
+// A note whose heading is gone from the page (its scene cut away, or its
+// line made into something else) goes to the loose cards, not nowhere
+function rescueSceneNotes() {
+  const notes = book.sceneNotes || {};
+  const ids = Object.keys(notes);
+  if (!ids.length) return;
+  const ps = spParas();
+  if (!ps.length) return; // the page isn't up yet
+  const onPage = new Set(ps.filter((p) => spType(p) === 'heading').map((p) => p.dataset.sceneId).filter(Boolean));
+  let moved = false;
+  for (const id of ids) {
+    if (onPage.has(id)) continue;
+    if (String(notes[id] || '').trim()) (book.looseCards = book.looseCards || []).push({ id: 'lc-' + id, text: notes[id] });
+    delete notes[id];
+    moved = true;
+  }
+  if (moved) { scheduleMetaSave(); renderLooseCards(); }
 }
 
 function sceneCard(sc) {

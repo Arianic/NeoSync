@@ -910,7 +910,7 @@ body.light .ob-card { box-shadow: 0 0 0 1px #d9d3c4, 0 3px 8px rgba(60,50,30,0.1
 .ob-chapter { background: var(--card-head); }
 .ob-head { display: flex; align-items: baseline; gap: 7px; min-height: 0; }
 .ob-chapter .ob-head { align-items: flex-end; border-bottom: 1px solid #e3b4ae; padding-bottom: 2px; }
-.ob-mark { font-family: var(--dropcap-font); font-size: 2.6em; line-height: 1; color: var(--card-mark); }
+.ob-mark { font-family: var(--dropcap-font); font-size: 1.7em; line-height: 1; color: var(--card-mark); }
 .ob-mark.ob-word { font-family: inherit; font-size: 0.82em; letter-spacing: 2px; text-transform: uppercase; padding-bottom: 4px; }
 .ob-words { margin-left: auto; font-size: 0.82em; color: var(--card-soft); padding-bottom: 3px; white-space: nowrap; }
 .ob-letter { font-size: 0.82em; font-weight: 600; color: var(--card-mark); }
@@ -920,8 +920,9 @@ body.light .ob-card { box-shadow: 0 0 0 1px #d9d3c4, 0 3px 8px rgba(60,50,30,0.1
   flex: 1; min-height: 0; font-family: var(--body-font); line-height: 1.4; overflow: hidden;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; outline: none;
 }
-.ob-chapter .ob-text { padding-top: 3px; }
-.ob-text.excerpt { color: #4a463e; }
+.ob-chapter .ob-text { padding-top: 1px; -webkit-line-clamp: 4; }
+/* the page's own words, quoted: grayed, so they don't read as a note */
+.ob-text.excerpt { color: #8f897b; }
 .ob-text.empty { color: #9a9486; font-style: italic; }
 .ob-card.unwritten .ob-text:not(.empty) { color: #807a6c; font-style: italic; }
 .ob-foot { font-size: 0.82em; color: var(--card-soft); }
@@ -1812,9 +1813,11 @@ body.night #paper.script #chapters { box-shadow: 0 4px 30px rgba(0,0,0,0.7); }
 .chapter + .chapter .sp-geom > p.sp-dialogue:first-child, .chapter + .chapter .sp-geom > p.sp-paren:first-child { margin-top: 0; }
 .sp-geom > p.sp-heading, .sp-geom > p.sp-character, .sp-geom > p.sp-transition, .sp-geom > p.sp-shot { text-transform: uppercase; }
 /* scene headings stand out as you write, and print the same way */
-.sp-geom > p.sp-heading, .sp-narrow > p.sp-heading { font-weight: bold; }
-/* two blank lines above a scene heading (SP_BEFORE in app.js) */
-.sp-geom > p.sp-heading:not(:first-child) { margin-top: 2em; }
+.sp-geom > p.sp-heading, .sp-narrow > p.sp-heading,
+.sp-geom > p.sp-shot, .sp-narrow > p.sp-shot { font-weight: bold; }
+/* two blank lines above a scene heading, and a shot, which is a heading
+   without INT./EXT. (SP_BEFORE in app.js) */
+.sp-geom > p.sp-heading:not(:first-child), .sp-geom > p.sp-shot:not(:first-child) { margin-top: 2em; }
 .sp-geom > p.sp-character { margin-left: 13.2em; width: 23.1em; --ind: 13.2em; }
 .sp-geom > p.sp-paren { margin-left: 9.6em; width: 15.3em; --ind: 9.6em; }
 .sp-geom > p.sp-dialogue { margin-left: 6em; width: 21.3em; --ind: 6em; }
@@ -1879,7 +1882,7 @@ body.night #paper.script #chapters { box-shadow: 0 4px 30px rgba(0,0,0,0.7); }
 .sp-narrow > p { margin: 1.3em 0 0; text-indent: 0 !important; white-space: pre-wrap; overflow-wrap: anywhere; position: relative; }
 .sp-narrow > p:first-child { margin-top: 0; }
 .sp-narrow > p.sp-dialogue, .sp-narrow > p.sp-paren { margin-top: 0; }
-.sp-narrow > p.sp-heading:not(:first-child) { margin-top: 2.6em; }
+.sp-narrow > p.sp-heading:not(:first-child), .sp-narrow > p.sp-shot:not(:first-child) { margin-top: 2.6em; }
 .sp-narrow > p.sp-heading, .sp-narrow > p.sp-character, .sp-narrow > p.sp-transition, .sp-narrow > p.sp-shot { text-transform: uppercase; }
 .sp-narrow > p.sp-character { margin-left: 6.5em; --ind: 6.5em; }
 .sp-narrow > p.sp-paren { margin-left: 4.5em; margin-right: 3em; --ind: 4.5em; }
