@@ -5787,6 +5787,8 @@ function spEditorMode() {
   $('#paper').classList.toggle('narrow', narrow);
   $('#editor-view').classList.toggle('script-mode', on);
   $('#nav-pane').classList.toggle('script', on);
+  // novel and script each keep their own page zoom: entering one applies its own
+  applyPageZoom();
   const tabM = $('.tab[data-tab="manuscript"]');
   if (tabM) setText(tabM, on ? t('Script') : t('Manuscript'));
   const tabO = $('.tab[data-tab="outline"]');
@@ -7414,7 +7416,39 @@ function orderSectionNotes(chId) {
   book.sectionNotes[chId] = placed.concat(list.filter((s) => !ids.includes(s.id)));
 }
 
-function cardZoom() { return Math.min(1.5, Math.max(0.55, library.cardZoom || 1)); }
+// Zoom is per mode and per device. Novel and script keep their own page zoom, and the outline's
+// cards keep their own; none of them travel in library.json, so a phone never inherits the zoom a
+// desktop set. `library.pageZoom` / `library.cardZoom` stay as the fallback for devices that have
+// not chosen yet, which keeps an existing zoom as the default.
+const PAGE_ZOOM_RANGE = { min: 0.75, max: 3 };
+const CARD_ZOOM_RANGE = { min: 0.55, max: 1.5 };
+const CARD_ZOOM_KEY = 'neo.cardZoom';
+const pageZoomKey = () => 'neo.pageZoom.' + (isScript() ? 'script' : 'novel');
+
+/** The stored zoom, or the fallback, always inside the range. Split out so a test can hold it. */
+function resolveStoredZoom(raw, fallback, min, max) {
+  const value = raw === null || raw === '' ? NaN : Number(raw);
+  const chosen = Number.isFinite(value) ? value : fallback;
+  return Math.min(max, Math.max(min, chosen));
+}
+
+function readStoredZoom(key, fallback, range) {
+  let raw = null;
+  try { raw = localStorage.getItem(key); } catch { /* storage can be off */ }
+  return resolveStoredZoom(raw, fallback || 1, range.min, range.max);
+}
+
+function rememberZoom(key, value) {
+  try { localStorage.setItem(key, String(value)); } catch { /* storage can be off */ }
+}
+
+const activePageZoom = () => readStoredZoom(pageZoomKey(), library.pageZoom || 1, PAGE_ZOOM_RANGE);
+function applyPageZoom() {
+  document.documentElement.style.setProperty('--page-zoom', activePageZoom());
+  updateZoomDisplay();
+}
+
+function cardZoom() { return readStoredZoom(CARD_ZOOM_KEY, library.cardZoom || 1, CARD_ZOOM_RANGE); }
 const CARD_ZOOMS = [0.55, 0.7, 0.85, 1, 1.15, 1.3, 1.5];
 function stepCardZoom(dir) {
   const now = cardZoom();
@@ -7423,8 +7457,7 @@ function stepCardZoom(dir) {
   else if (dir > 0) next = CARD_ZOOMS.find((z) => z > now + 0.001) || now;
   else next = [...CARD_ZOOMS].reverse().find((z) => z < now - 0.001) || now;
   if (next === now) return;
-  library.cardZoom = next;
-  writeLibrary(library);
+  rememberZoom(CARD_ZOOM_KEY, next);
   renderBoard();
   updateZoomDisplay();
 }
@@ -11208,9 +11241,7 @@ function applyFonts() {
   if (window.neo.uiZoomState) window.neo.uiZoomState(uiZoom);
   const size = Math.min(22, Math.max(14, library.editorFontSize || 17));
   document.documentElement.style.setProperty('--editor-size', size + 'px');
-  const zoom = Math.min(3, Math.max(0.75, library.pageZoom || 1));
-  document.documentElement.style.setProperty('--page-zoom', zoom);
-  updateZoomDisplay();
+  applyPageZoom();
 }
 
 // A built-in choice, or a font the writer picked from their own computer.
@@ -11282,11 +11313,10 @@ async function pickLocalFont() {
 
 // Pinch (trackpad) or Ctrl+scroll: page and text zoom together.
 // A pinch arrives as a wheel event with ctrlKey set.
-let zoomSaveTimer = null;
 function updateZoomDisplay() {
   const el = $('#zoom-level');
   // on the outline's cards, the zoom is the cards' size
-  const z = boardShowing() ? cardZoom() : (library.pageZoom || 1);
+  const z = boardShowing() ? cardZoom() : activePageZoom();
   if (el) el.textContent = Math.round(z * 100) + '%';
 }
 const boardShowing = () => !!book && currentTab === 'outline' && $('#editor-view').classList.contains('board-on');
@@ -11329,12 +11359,10 @@ function setPageZoom(next, at) {
   // up to 300%: on a large monitor 160% still read small. The page itself
   // never grows past the window (max-width in styles.css), only the type does.
   next = Math.min(3, Math.max(0.75, next));
-  if (next === (library.pageZoom || 1)) return;
-  library.pageZoom = next;
+  if (next === activePageZoom()) return;
+  rememberZoom(pageZoomKey(), next);
   keepReadingPlace(() => document.documentElement.style.setProperty('--page-zoom', next), at);
   updateZoomDisplay();
-  clearTimeout(zoomSaveTimer);
-  zoomSaveTimer = setTimeout(() => { writeLibrary(library); }, 600);
 }
 let cardWheel = 0;
 $('#editor-view').addEventListener('wheel', (e) => {
@@ -11346,12 +11374,12 @@ $('#editor-view').addEventListener('wheel', (e) => {
     if (Math.abs(cardWheel) > 40) { stepCardZoom(cardWheel < 0 ? 1 : -1); cardWheel = 0; }
     return;
   }
-  setPageZoom((library.pageZoom || 1) * Math.exp(-e.deltaY * 0.005), { x: e.clientX, y: e.clientY });
+  setPageZoom(activePageZoom() * Math.exp(-e.deltaY * 0.005), { x: e.clientX, y: e.clientY });
 }, { passive: false });
 
 // zoom control in the bottom bar: buttons, click-to-reset, and scroll
-$('#zoom-in').onclick = () => (boardShowing() ? stepCardZoom(1) : setPageZoom((library.pageZoom || 1) + 0.1));
-$('#zoom-out').onclick = () => (boardShowing() ? stepCardZoom(-1) : setPageZoom((library.pageZoom || 1) - 0.1));
+$('#zoom-in').onclick = () => (boardShowing() ? stepCardZoom(1) : setPageZoom(activePageZoom() + 0.1));
+$('#zoom-out').onclick = () => (boardShowing() ? stepCardZoom(-1) : setPageZoom(activePageZoom() - 0.1));
 $('#zoom-level').onclick = () => (boardShowing() ? stepCardZoom(0) : setPageZoom(1));
 $('#zoom-control').addEventListener('wheel', (e) => {
   e.preventDefault();
@@ -11360,7 +11388,7 @@ $('#zoom-control').addEventListener('wheel', (e) => {
     if (Math.abs(cardWheel) > 40) { stepCardZoom(cardWheel < 0 ? 1 : -1); cardWheel = 0; }
     return;
   }
-  setPageZoom((library.pageZoom || 1) * Math.exp(-e.deltaY * 0.002));
+  setPageZoom(activePageZoom() * Math.exp(-e.deltaY * 0.002));
 }, { passive: false });
 
 // Format → Align Paragraph: applies to every paragraph the selection touches
@@ -12860,12 +12888,12 @@ async function setEditorFontSize(value) {
   if (boardShowing()) { stepCardZoom(value); return; }
   // a script's type is the page's: larger and smaller zoom the page
   if (book && isScript()) {
-    setPageZoom(value === 0 ? 1 : (library.pageZoom || 1) * (value > 0 ? 1.1 : 1 / 1.1));
+    setPageZoom(value === 0 ? 1 : activePageZoom() * (value > 0 ? 1.1 : 1 / 1.1));
     return;
   }
   const cur = library.editorFontSize || 17;
   library.editorFontSize = value === 0 ? 17 : Math.min(22, Math.max(14, cur + value));
-  if (value === 0) library.pageZoom = 1; // ⌘0 resets pinch zoom too
+  if (value === 0) rememberZoom(pageZoomKey(), 1); // ⌘0 resets this mode's pinch zoom too
   await writeLibrary(library);
   keepReadingPlace(applyFonts);
 }
