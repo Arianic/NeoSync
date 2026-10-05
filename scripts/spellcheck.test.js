@@ -169,6 +169,7 @@ function mainContext(temp, systemLocale, settings = {}, library = {}, raw = null
   const electron = {
     app: {
       commandLine: { appendSwitch() {} },
+      setName() {}, setPath() {},
       getPath: () => temp,
       getLocale: () => systemLocale,
       requestSingleInstanceLock: () => true,

@@ -41,6 +41,8 @@ concurrency:
 
 jobs:
   android:
+    # No built-in sync adapter for Pocket: never publish it from this fork.
+    if: github.repository == 'hughhowey/neo'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

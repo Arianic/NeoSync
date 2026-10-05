@@ -6,6 +6,12 @@ const { app, BrowserWindow, ipcMain, dialog, Menu, MenuItem, utilityProcess, scr
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+// A private fork must never share upstream settings, credentials or updates.
+app.setName('NeoSync');
+app.setPath('userData', path.join(app.getPath('appData'), 'NeoSync'));
+let desktopSync = null;
+let syncConfigurationBusy = false;
+const UPSTREAM_UPDATES = false;
 
 // Every disk request from the page passes through here: a write the system
 // refuses (see reportBlockedWrite) is explained to the writer, then the error
@@ -30,7 +36,7 @@ app.commandLine.appendSwitch('blink-settings', 'smartInsertDeleteEnabled=false')
 // ---------------------------------------------------------------------------
 // Resolved properly at startup via app.getPath('documents') — this default
 // covers any early access and non-redirected setups.
-let LIBRARY_DIR = path.join(os.homedir(), 'Documents', 'NEO Library');
+let LIBRARY_DIR = path.join(os.homedir(), 'Documents', 'NeoSync Library');
 let LIBRARY_FILE = path.join(LIBRARY_DIR, 'library.json');
 
 // NEO's few app-level settings (today: a custom library folder) live in the
@@ -150,7 +156,7 @@ ipcMain.handle('i18n:reload', (e) => {
 // The library is plain files, so the writer moves them; NEO only follows.
 async function chooseLibraryFolder() {
   const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-  const defaultDir = path.join(app.getPath('documents'), 'NEO Library');
+  const defaultDir = path.join(app.getPath('documents'), 'NeoSync Library');
   const custom = LIBRARY_DIR !== defaultDir;
   const ask = await dialog.showMessageBox(win, {
     type: 'question',
@@ -220,9 +226,9 @@ function fallbackLibraryDir() {
   const spots = [];
   try {
     const docs = path.join(home, 'Documents');
-    if (fs.statSync(docs).isDirectory()) spots.push(path.join(docs, 'NEO Library'));
+    if (fs.statSync(docs).isDirectory()) spots.push(path.join(docs, 'NeoSync Library'));
   } catch { /* no plain Documents folder here */ }
-  spots.push(path.join(home, 'NEO Library'));
+  spots.push(path.join(home, 'NeoSync Library'));
   return spots.find((dir) => dir !== LIBRARY_DIR && folderWritable(dir)) || null;
 }
 function useLibraryDir(dir) {
@@ -382,6 +388,8 @@ function writeFileDurable(file, data) {
   if (process.platform !== 'win32') {
     try { const d = fs.openSync(path.dirname(file), 'r'); try { fs.fsyncSync(d); } finally { fs.closeSync(d); } } catch { /* fine */ }
   }
+  // Queue only AFTER the local save succeeds. Sync failures cannot reject it.
+  try { desktopSync?.changed(file); } catch { /* the next scan recovers pending work */ }
 }
 
 // JSON reads fall back on the copies a write leaves: the .tmp a write was
@@ -563,6 +571,7 @@ ipcMain.handle('chapter:write', (_e, bookId, chapterId, html) => {
 
 ipcMain.handle('chapter:delete', (_e, bookId, chapterId) => {
   const file = path.join(bookDir(bookId), 'chapters', libName(chapterId) + '.html');
+  desktopSync?.deleting([file]);
   if (fs.existsSync(file)) fs.unlinkSync(file);
   return true;
 });
@@ -604,6 +613,11 @@ ipcMain.handle('book:delete', async (_e, bookId, title) => {
   if (response === 1) {
     const { shell } = require('electron');
     try {
+      if (desktopSync?.active) {
+        const files = Object.keys(desktopSync.local.scan()).filter(p => p.startsWith(libName(bookId) + '/'));
+        desktopSync.deleting(files.map(p => path.join(LIBRARY_DIR, p)));
+        desktopSync.deletionInProgress = true;
+      }
       await shell.trashItem(bookDir(bookId));
       return true;
     } catch (err) {
@@ -616,6 +630,8 @@ ipcMain.handle('book:delete', async (_e, bookId, title) => {
         detail: t('The book is untouched. Its folder is highlighted so you can deal with it yourself.')
       });
       return false;
+    } finally {
+      if (desktopSync) { desktopSync.deletionInProgress = false; desktopSync.schedule(100); }
     }
   }
   return false;
@@ -642,7 +658,10 @@ ipcMain.handle('cover:pick', async () => {
 
 function clearCovers(dir) {
   for (const f of fs.readdirSync(dir)) {
-    if (/^cover-\d+\./.test(f)) fs.unlinkSync(path.join(dir, f));
+    if (/^cover-\d+\./.test(f)) {
+      desktopSync?.deleting([path.join(dir, f)]);
+      fs.unlinkSync(path.join(dir, f));
+    }
   }
 }
 
@@ -653,7 +672,7 @@ ipcMain.handle('cover:set', (_e, bookId, srcPath) => {
   if (!fs.existsSync(dir)) return null;
   clearCovers(dir);
   const fname = 'cover-' + Date.now() + '.' + (ext === 'jpeg' ? 'jpg' : ext);
-  fs.copyFileSync(srcPath, path.join(dir, fname));
+  writeFileDurable(path.join(dir, fname), fs.readFileSync(srcPath));
   return fname;
 });
 
@@ -739,10 +758,13 @@ ipcMain.handle('cover:paint', (_e, bookId, text, options) => {
       });
       // sweep older paintings; the writer's own cover-*.png files are untouched
       for (const f of fs.readdirSync(dir)) {
-        if (/^art-\d+\.(png|jpg|webp)$/.test(f)) fs.unlinkSync(path.join(dir, f));
+        if (/^art-\d+\.(png|jpg|webp)$/.test(f)) {
+          desktopSync?.deleting([path.join(dir, f)]);
+          fs.unlinkSync(path.join(dir, f));
+        }
       }
       const fname = 'art-' + Date.now() + '.' + (out.ext || 'jpg');
-      fs.writeFileSync(path.join(dir, fname), out.buffer);
+      writeFileDurable(path.join(dir, fname), out.buffer);
       // the brief sits beside the picture, so a future repaint can start from it
       writeJSON(path.join(dir, 'art.json'), {
         file: fname,
@@ -1731,6 +1753,7 @@ function buildMenu() {
         },
         { label: t('Reshelve a Book…'), click: () => sendToWindow({ type: 'reshelve' }) },
         { label: t('Library Folder…'), click: () => { chooseLibraryFolder().catch((err) => logError('library folder', err)); } },
+        { label: t('Nextcloud Sync…'), click: () => sendToWindow({ type: 'syncSettings' }) },
         { type: 'separator' },
         ...(isMac ? [{ role: 'close', label: t('Close Window') }] : [{ role: 'quit', label: t('Quit') }])
       ]
@@ -2125,6 +2148,32 @@ function compareVersions(a, b) {
 // newer Chromium ignores attribute changes on text it has already looked at
 ipcMain.handle('app:version', () => app.getVersion());
 
+// Desktop only: credentials and filesystem objects never cross this bridge.
+ipcMain.handle('sync:action', async (_e, action, value) => {
+  if (!desktopSync) return { error: t('Sync could not initialize. Check the device-local sync state and restart.') };
+  const configuring = ['connect', 'disconnect', 'resolve'].includes(action);
+  if (configuring && syncConfigurationBusy) return { error: t('A connection or recovery operation is already running.') };
+  if (configuring) syncConfigurationBusy = true;
+  try {
+    switch (action) {
+      case 'status': return desktopSync.info();
+      case 'test': return await desktopSync.test(value);
+      case 'connect': return await desktopSync.connect(value);
+      case 'disconnect': return await desktopSync.disconnect();
+      case 'login': return await desktopSync.login(value);
+      case 'loginPoll': return await desktopSync.loginPoll();
+      case 'now': return await desktopSync.run(true);
+      case 'editing': desktopSync.setEditing(value); return true;
+      case 'compare': return await desktopSync.compare(value);
+      case 'recovery': return await desktopSync.recovery();
+      case 'resolve': return await desktopSync.resolve(value.id, value.choice);
+      default: throw new Error('Unknown sync action');
+    }
+  } catch (err) { return { error: err.message }; }
+  finally { if (configuring) syncConfigurationBusy = false; }
+});
+ipcMain.on('sync:ready', (_e, token, value) => desktopSync?.ready(token, value));
+
 // Updating
 //
 // Packaged builds keep themselves current without being asked: a few seconds
@@ -2141,6 +2190,7 @@ let updaterReady = false;    // an update is downloaded and waiting
 // where the background download stands, so the window can pick it up mid-way
 const upd = { state: 'idle', version: '', percent: 0, transferred: 0, total: 0, message: '' };
 function getUpdater() {
+  if (!UPSTREAM_UPDATES) return null;
   if (updater || !app.isPackaged) return updater;
   const { autoUpdater } = require('electron-updater');
   autoUpdater.logger = null;
@@ -2187,7 +2237,7 @@ function lookForUpdate() {
 
 // what's on GitHub, for the fallback path and the release link
 async function latestReleaseFromGitHub() {
-  const res = await fetch('https://api.github.com/repos/hughhowey/neo/releases/latest', {
+  const res = await fetch('https://api.github.com/repos/Arianic/NeoSync/releases/latest', {
     headers: { 'User-Agent': 'NEO-App' }
   });
   if (!res.ok) throw new Error('GitHub API returned ' + res.status);
@@ -2198,6 +2248,7 @@ async function latestReleaseFromGitHub() {
 
 ipcMain.handle('update:check', async () => {
   const currentVersion = app.getVersion();
+  if (!UPSTREAM_UPDATES) return { disabled: true, hasUpdate: false, currentVersion, canInstall: false };
   try {
     const u = getUpdater();
     if (u) {
@@ -2241,6 +2292,7 @@ ipcMain.handle('update:install', () => {
 
 // the renderer may only open the release page fetched above — never arbitrary URLs
 ipcMain.handle('update:openRelease', () => {
+  if (!UPSTREAM_UPDATES) return false;
   if (lastReleaseUrl && /^https:\/\/github\.com\//.test(lastReleaseUrl)) {
     require('electron').shell.openExternal(lastReleaseUrl);
   }
@@ -2267,6 +2319,7 @@ if (!app.requestSingleInstanceLock()) {
 // unsigned build never notices.
 const UPDATE_EVERY = 60 * 60 * 1000;
 function checkForUpdates() {
+  if (!UPSTREAM_UPDATES) return;
   if (!app.isPackaged) return;
   const look = () => { lookForUpdate().catch(() => { /* logged in lookForUpdate */ }); };
   setTimeout(look, 8000);
@@ -2285,7 +2338,7 @@ app.whenReady().then(() => {
     if (process.platform === 'darwin' && fs.existsSync(devIcon)) {
       if (app.dock) app.dock.setIcon(devIcon);
       app.setAboutPanelOptions({
-        applicationName: 'NEO',
+        applicationName: 'NeoSync',
         applicationVersion: app.getVersion(),
         iconPath: devIcon
       });
@@ -2297,7 +2350,7 @@ app.whenReady().then(() => {
   try {
     // the real Documents folder (handles OneDrive-redirected Windows setups)
     try {
-      LIBRARY_DIR = path.join(app.getPath('documents'), 'NEO Library');
+      LIBRARY_DIR = path.join(app.getPath('documents'), 'NeoSync Library');
       // …unless the writer chose their own folder (File → Library Folder…)
       const chosen = readSettings().libraryDir;
       if (chosen && fs.existsSync(chosen) && fs.statSync(chosen).isDirectory()) LIBRARY_DIR = chosen;
@@ -2330,6 +2383,13 @@ app.whenReady().then(() => {
     try { initLanguage(); } catch (err) { logError('language', err); }
     try { checkLibraryWritable(); } catch (err) { logError('library check', err); }
     try { ensureLibrary(); } catch (err) { logError('library', err); }
+    try {
+      const { DesktopSync } = require('./sync/desktop');
+      const { safeStorage, shell, powerMonitor } = require('electron');
+      desktopSync = new DesktopSync({ root: LIBRARY_DIR, userData: app.getPath('userData'), safeStorage, shell,
+        send: sendToWindow, foreground: () => BrowserWindow.getAllWindows().some(w => w.isVisible() && !w.isMinimized()) });
+      powerMonitor.on('resume', () => desktopSync.schedule(5000));
+    } catch { /* local writing remains available; settings reports initialization failure */ }
     createWindow();
     try { announceLibraryFallback(); } catch (err) { logError('library notice', err); }
     try { initSpell(); } catch (err) { logError('spell', err); }
@@ -2341,7 +2401,7 @@ app.whenReady().then(() => {
     logError('startup', err);
     try {
       dialog.showErrorBox(t('NEO failed to start'),
-        t('Please report this at github.com/hughhowey/neo/issues:') + '\n\n' + String((err && err.stack) || err));
+        t('Please report this at github.com/Arianic/NeoSync/issues:') + '\n\n' + String((err && err.stack) || err));
     } catch { /* nothing left to try */ }
   }
   app.on('activate', () => {

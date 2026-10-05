@@ -21,6 +21,7 @@ function loadMain() {
   const electron = {
     app: {
       commandLine: { appendSwitch() {} },
+      setName() {}, setPath() {},
       getPath: () => os.tmpdir(),
       getLocale: () => 'en',
       requestSingleInstanceLock: () => true,

@@ -1,50 +1,63 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
+const saves = new Set();
+function invoke(channel, ...args) {
+  const pending = ipcRenderer.invoke(channel, ...args);
+  if (/^(library|book|chapter|aux|json|cover):/.test(channel)) {
+    saves.add(pending);
+    pending.then(() => saves.delete(pending), () => saves.delete(pending));
+  }
+  return pending;
+}
+
 contextBridge.exposeInMainWorld('neo', {
-  readLibrary: () => ipcRenderer.invoke('library:read'),
-  writeLibrary: (data) => ipcRenderer.invoke('library:write', data),
+  sync: (action, value) => invoke('sync:action', action, value),
+  syncReady: (token, value) => ipcRenderer.send('sync:ready', token, value),
+  syncDrain: async () => { while (saves.size) await Promise.all([...saves]); },
+  readLibrary: () => invoke('library:read'),
+  writeLibrary: (data) => invoke('library:write', data),
 
-  createBook: (meta) => ipcRenderer.invoke('book:create', meta),
-  listBooks: () => ipcRenderer.invoke('library:listBooks'),
-  readBookMeta: (bookId) => ipcRenderer.invoke('book:readMeta', bookId),
-  writeBookMeta: (bookId, meta) => ipcRenderer.invoke('book:writeMeta', bookId, meta),
-  deleteBook: (bookId, title) => ipcRenderer.invoke('book:delete', bookId, title),
+  createBook: (meta) => invoke('book:create', meta),
+  listBooks: () => invoke('library:listBooks'),
+  readBookMeta: (bookId) => invoke('book:readMeta', bookId),
+  writeBookMeta: (bookId, meta) => invoke('book:writeMeta', bookId, meta),
+  deleteBook: (bookId, title) => invoke('book:delete', bookId, title),
 
-  readChapter: (bookId, chId) => ipcRenderer.invoke('chapter:read', bookId, chId),
-  chapterStamps: (bookId) => ipcRenderer.invoke('chapter:stamps', bookId),
-  writeChapter: (bookId, chId, html) => ipcRenderer.invoke('chapter:write', bookId, chId, html),
-  deleteChapter: (bookId, chId) => ipcRenderer.invoke('chapter:delete', bookId, chId),
+  readChapter: (bookId, chId) => invoke('chapter:read', bookId, chId),
+  chapterStamps: (bookId) => invoke('chapter:stamps', bookId),
+  writeChapter: (bookId, chId, html) => invoke('chapter:write', bookId, chId, html),
+  deleteChapter: (bookId, chId) => invoke('chapter:delete', bookId, chId),
 
-  readAux: (bookId, name) => ipcRenderer.invoke('aux:read', bookId, name),
-  writeAux: (bookId, name, html) => ipcRenderer.invoke('aux:write', bookId, name, html),
+  readAux: (bookId, name) => invoke('aux:read', bookId, name),
+  writeAux: (bookId, name, html) => invoke('aux:write', bookId, name, html),
 
-  readJSON: (bookId, name, fallback) => ipcRenderer.invoke('json:read', bookId, name, fallback),
-  writeJSON: (bookId, name, data) => ipcRenderer.invoke('json:write', bookId, name, data),
+  readJSON: (bookId, name, fallback) => invoke('json:read', bookId, name, fallback),
+  writeJSON: (bookId, name, data) => invoke('json:write', bookId, name, data),
 
-  exportSave: (payload) => ipcRenderer.invoke('export:save', payload),
-  emailDraft: (payload) => ipcRenderer.invoke('email:draft', payload),
-  logError: (msg) => ipcRenderer.invoke('log:error', msg),
-  importPick: () => ipcRenderer.invoke('import:pick'),
-  libraryPath: () => ipcRenderer.invoke('library:path'),
-  pickCover: () => ipcRenderer.invoke('cover:pick'),
-  setCover: (bookId, srcPath) => ipcRenderer.invoke('cover:set', bookId, srcPath),
-  removeCover: (bookId) => ipcRenderer.invoke('cover:remove', bookId),
-  readCover: (bookId, fname) => ipcRenderer.invoke('cover:read', bookId, fname),
-  paintCover: (bookId, text, options) => ipcRenderer.invoke('cover:paint', bookId, text, options),
-  setSecret: (name, value) => ipcRenderer.invoke('secret:set', name, value),
-  hasSecret: (name) => ipcRenderer.invoke('secret:has', name),
-  importFiles: (paths) => ipcRenderer.invoke('import:files', paths),
+  exportSave: (payload) => invoke('export:save', payload),
+  emailDraft: (payload) => invoke('email:draft', payload),
+  logError: (msg) => invoke('log:error', msg),
+  importPick: () => invoke('import:pick'),
+  libraryPath: () => invoke('library:path'),
+  pickCover: () => invoke('cover:pick'),
+  setCover: (bookId, srcPath) => invoke('cover:set', bookId, srcPath),
+  removeCover: (bookId) => invoke('cover:remove', bookId),
+  readCover: (bookId, fname) => invoke('cover:read', bookId, fname),
+  paintCover: (bookId, text, options) => invoke('cover:paint', bookId, text, options),
+  setSecret: (name, value) => invoke('secret:set', name, value),
+  hasSecret: (name) => invoke('secret:has', name),
+  importFiles: (paths) => invoke('import:files', paths),
   pathForFile: (file) => webUtils.getPathForFile(file),
-  fullscreenEscape: () => ipcRenderer.invoke('fullscreen:escape'),
-  fullscreenToggle: () => ipcRenderer.invoke('fullscreen:toggle'),
-  checkForUpdate: () => ipcRenderer.invoke('update:check'),
-  installUpdate: () => ipcRenderer.invoke('update:install'),
-  spellCheckWords: (words) => ipcRenderer.invoke('spell:check', words),
-  spellSuggest: (word) => ipcRenderer.invoke('spell:suggest', word),
-  spellLearn: (word) => ipcRenderer.invoke('spell:learn', word),
-  setSpellLanguage: (code) => ipcRenderer.invoke('spell:setLanguage', code),
-  appVersion: () => ipcRenderer.invoke('app:version'),
-  openRelease: () => ipcRenderer.invoke('update:openRelease'),
+  fullscreenEscape: () => invoke('fullscreen:escape'),
+  fullscreenToggle: () => invoke('fullscreen:toggle'),
+  checkForUpdate: () => invoke('update:check'),
+  installUpdate: () => invoke('update:install'),
+  spellCheckWords: (words) => invoke('spell:check', words),
+  spellSuggest: (word) => invoke('spell:suggest', word),
+  spellLearn: (word) => invoke('spell:learn', word),
+  setSpellLanguage: (code) => invoke('spell:setLanguage', code),
+  appVersion: () => invoke('app:version'),
+  openRelease: () => invoke('update:openRelease'),
 
   poetryState: (on) => ipcRenderer.send('poetry:state', on),
   flushState: (on) => ipcRenderer.send('flush:state', on),
@@ -54,7 +67,7 @@ contextBridge.exposeInMainWorld('neo', {
   uiZoomState: (z) => ipcRenderer.send('uizoom:state', z),
   // interface language, fetched once before the page's scripts run
   i18n: ipcRenderer.sendSync('i18n:get'),
-  reloadForLanguage: () => ipcRenderer.invoke('i18n:reload'),
+  reloadForLanguage: () => invoke('i18n:reload'),
 
   writingStyleState: (st) => ipcRenderer.send('style:state', st),
   viewState: (st) => ipcRenderer.send('view:state', st),

@@ -20,10 +20,11 @@ for (const name of fs.readdirSync(os.tmpdir())) {
   fs.rmSync(path.join(os.tmpdir(), name), { recursive: true, force: true });
 }
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `neo-words-test-${process.pid}-`));
+app.setPath('appData', tmp);
 app.setPath('userData', path.join(tmp, 'app'));
 app.setPath('documents', tmp);
-fs.mkdirSync(path.join(tmp, 'NEO Library'));
-fs.writeFileSync(path.join(tmp, 'NEO Library', 'library.json'), JSON.stringify({
+fs.mkdirSync(path.join(tmp, 'NeoSync Library'));
+fs.writeFileSync(path.join(tmp, 'NeoSync Library', 'library.json'), JSON.stringify({
   authorName: '', penNames: [], firstRunDone: true, pageTheme: 'night',
   shelves: [{ id: 'shelf-1', name: 'Works in Progress', bookIds: [] }]
 }));

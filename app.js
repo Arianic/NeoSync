@@ -177,6 +177,8 @@ const isUntitled = (s) => !s || s === 'Untitled' || s === t('Untitled');
 // ---------- state ----------
 let library = null;          // library.json
 let book = null;             // current book.json
+let syncApplying = false;
+let syncBookOpening = false;
 let chapterHTML = {};        // chapterId -> html (loaded at open)
 let savedHTML = {};          // chapterId -> html as last read from / written to disk
 let savedMetaSig = '';       // book.json as last read/written, minus the volatile bits
@@ -2208,8 +2210,12 @@ $('#author-chip').onclick = async () => {
 /* ================================================================== */
 
 async function openBook(bookId) {
+  if (syncApplying) return;
+  syncBookOpening = true;
+  if (window.neo.sync) await window.neo.sync('editing', true);
   tabPlaces = {}; // a fresh book starts with fresh places
   book = await window.neo.readBookMeta(bookId);
+  syncBookOpening = false;
   if (!book) return;
   currentChapterId = null; // never carry a chapter reference across books
   undoStack = [];
@@ -7649,7 +7655,8 @@ function onlyDrops(page, disk) {
 }
 
 let refreshing = false;
-async function refreshFromDisk() {
+async function refreshFromDisk(forSync = false) {
+  if (syncApplying && !forSync) return;
   if (refreshing) return;
   refreshing = true;
   bookMetaCache.clear(); // whatever another device wrote, the next redraw reads
@@ -7863,6 +7870,7 @@ setInterval(() => { if (book) flushAllSaves('tick'); }, 20000);
 async function backToShelf() {
   if (reading) stopReadAloud(false);
   flushAllSaves();
+  if (window.neo.syncDrain) await window.neo.syncDrain();
   tabPlaces = {};
   book = null;
   currentChapterId = null;
@@ -7872,6 +7880,7 @@ async function backToShelf() {
   spEditorMode(); // a script's pane, page and title page go
   spReportState();
   renderShelves();
+  if (window.neo.sync) await window.neo.sync('editing', false);
 }
 $('#back-to-shelf').onclick = backToShelf;
 
@@ -10911,6 +10920,7 @@ function updateDialogShow(state, info = {}) {
 async function checkForUpdate() {
   if (updateDialog) { updateDialog.focus(); return; }
   const res = await window.neo.checkForUpdate();
+  if (res.disabled) { updateNotice(t('NeoSync updates are installed manually'), t('Upstream automatic updates are disabled for this fork.')); return; }
   // the answer comes in a window, like an update does: a line at the foot
   // of the screen was too easy to miss
   if (res.error) { updateNotice(t('Couldn’t check for updates — try again later')); return; }
@@ -10989,7 +10999,252 @@ async function setEditorFontSize(value) {
   keepReadingPlace(applyFonts);
 }
 
+/* Desktop Nextcloud controls are capability-gated; Pocket keeps its bridge. */
+let syncStatusButton = null;
+let syncPanel = null;
+function syncLabel(state) {
+  const labels = { local: t('Saved locally'), pending: t('Pending sync'), syncing: t('Syncing'), synced: t('Synced'),
+    offline: t('Offline — saved locally'), error: t('Sync error — saved locally'), conflict: t('Sync conflict — review copies') };
+  return labels[state] || labels.local;
+}
+function showSyncStatus(info) {
+  if (!window.neo.sync) return;
+  if (!syncStatusButton) {
+    syncStatusButton = document.createElement('button');
+    syncStatusButton.className = 'sync-status btn-quiet';
+    syncStatusButton.onclick = showSyncSettings;
+    document.body.appendChild(syncStatusButton);
+  }
+  syncStatusButton.textContent = syncLabel(info.state);
+  syncStatusButton.title = info.message || t('Nextcloud Sync');
+  if (syncPanel) syncPanel.update(info);
+}
+async function showSyncSettings() {
+  if (!window.neo.sync || syncPanel || syncApplying) return;
+  const previousFocus = document.activeElement;
+  const bd = document.createElement('div');
+  bd.className = 'modal-backdrop sync-dialog';
+  const node = (tag, text, parent, className) => {
+    const el = document.createElement(tag);
+    if (text) el.textContent = text;
+    if (className) el.className = className;
+    parent.appendChild(el); return el;
+  };
+  const box = node('div', '', bd, 'modal sync-modal');
+  box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true');
+  box.setAttribute('aria-labelledby', 'sync-title');
+  node('h2', t('Nextcloud Sync'), box).id = 'sync-title';
+  node('p', t('Your writing, on every device. Always saved here first.'), box, 'sync-intro');
+  const stateBox = node('div', '', box, 'sync-state');
+  stateBox.setAttribute('role', 'status'); stateBox.setAttribute('aria-live', 'polite');
+  const stateTitle = node('strong', '', stateBox);
+  const stateText = node('p', '', stateBox);
+  const notice = node('p', '', box, 'sync-notice'); notice.hidden = true; notice.setAttribute('role', 'alert');
+  const setup = node('div', '', box);
+  const field = (parent, label, type = 'text') => {
+    const row = node('label', label, parent);
+    const input = node('input', '', row); input.type = type; return input;
+  };
+  const signin = node('div', '', setup);
+  const server = field(signin, t('Nextcloud address'), 'url');
+  server.placeholder = 'https://cloud.example.com'; server.autocomplete = 'url'; server.spellcheck = false;
+  node('p', t('Use the website address where you sign in to Nextcloud.'), signin, 'sync-hint');
+  const manual = node('details', '', signin, 'sync-disclosure');
+  node('summary', t('Use an app password instead'), manual);
+  node('p', t('Optional. Browser login fills this in for you. For manual setup, create an app password in Nextcloud → Personal settings → Security.'), manual, 'sync-hint');
+  const loginName = field(manual, t('Nextcloud username')); loginName.autocomplete = 'username';
+  const password = field(manual, t('App password'), 'password'); password.autocomplete = 'off';
+  const destination = node('div', '', setup); destination.hidden = true;
+  const folder = field(destination, t('Folder in Nextcloud')); folder.value = 'NeoSync';
+  node('p', t('Use the same folder on your other devices. We create it if needed.'), destination, 'sync-hint');
+  const checkRow = node('label', '', destination, 'sync-check');
+  const single = node('input', '', checkRow); single.type = 'checkbox';
+  node('span', t('Only NeoSync syncs this local library.'), checkRow);
+  node('p', t('Keep the local library outside folders managed by Nextcloud Desktop, OneDrive, iCloud, or Syncthing.'), destination, 'sync-hint');
+  const account = node('dl', '', box, 'sync-account'); account.hidden = true;
+  node('dt', t('Nextcloud address'), account); const accountServer = node('dd', '', account);
+  node('dt', t('Folder in Nextcloud'), account); const accountFolder = node('dd', '', account);
+  const conflicts = node('div', '', box, 'sync-conflicts');
+  const protection = node('div', '', box, 'sync-protection'); protection.hidden = true;
+  node('strong', t('Unlock password storage'), protection);
+  const protectionText = node('p', '', protection);
+  const more = node('details', '', box, 'sync-disclosure sync-more');
+  node('summary', t('What syncs & connection options'), more);
+  node('p', t('Books, author names, shelves, notes, and covers sync. Backups, exports, and passwords stay on this device.'), more, 'sync-hint');
+  node('p', t('Different versions are kept for review. Recovery copies stay available until you remove them yourself.'), more, 'sync-hint');
+  const controls = node('div', '', more, 'sync-buttons');
+  const footer = node('div', '', box, 'sync-footer');
+  let info = { state: 'local', connected: false, credentials: { available: false } };
+  let phase = 'address', busy = false, poll = null, pollGeneration = 0, loaded = false, loadFailed = false, conflictSignature = '';
+  const buttons = [];
+  const error = message => { notice.textContent = message; notice.hidden = !message; };
+  const request = async (action, value) => {
+    const result = await window.neo.sync(action, value);
+    if (result?.error) throw new Error(result.error);
+    return result;
+  };
+  const action = (label, fn, parent, className = 'btn-quiet') => {
+    const button = node('button', label, parent, className); button.type = 'button'; buttons.push(button);
+    button.onclick = async () => {
+      if (busy) return;
+      busy = true; error(''); render();
+      try {
+        const result = await fn();
+        if (result?.state) showSyncStatus(result);
+      } catch (err) { if (bd.isConnected) error(err.message); }
+      finally { busy = false; if (bd.isConnected) render(); }
+    };
+    return button;
+  };
+  const options = () => ({ server: server.value.trim(), folder: folder.value.trim(), loginName: manual.open ? loginName.value : '', appPassword: manual.open ? password.value : '', singleSync: single.checked });
+  const saved = () => info.configured || info.connected || !!info.server;
+  const retry = action(t('Check again'), async () => {
+    return saved() ? request('now') : request('status');
+  }, protection);
+  const recover = action(t('Open recovery folder'), () => request('recovery'), controls);
+  const disconnect = action(t('Disconnect'), async () => {
+    const choice = await optionModal(t('Disconnect Nextcloud?'),
+      t('This removes the saved connection from this device. Your local books, remote files, and recovery copies stay in place.'),
+      [{ label: t('Disconnect'), value: 'disconnect', danger: true }]);
+    if (choice !== 'disconnect' || !bd.isConnected) return;
+    const result = await request('disconnect'); phase = 'address'; password.value = ''; single.checked = false;
+    return result;
+  }, controls);
+  const back = action(t('Back'), () => { phase = 'address'; pollGeneration++; clearTimeout(poll); }, footer);
+  const close = () => {
+    pollGeneration++; clearTimeout(poll); password.value = ''; bd.remove(); syncPanel = null;
+    if (previousFocus?.isConnected) previousFocus.focus();
+  };
+  const closeButton = node('button', t('Close'), footer, 'btn-quiet m-cancel'); closeButton.type = 'button'; closeButton.onclick = close;
+  const primary = action(t('Log in with Nextcloud'), async () => {
+    if (saved()) { flushAllSaves(); await window.neo.syncDrain(); return request('now'); }
+    if (phase === 'ready') {
+      const result = await request('connect', options()); password.value = ''; manual.open = false; return result;
+    }
+    if (!server.checkValidity()) { server.reportValidity(); return; }
+    if (manual.open) { phase = 'ready'; return; }
+    await request('login', server.value.trim());
+    if (!bd.isConnected) return;
+    phase = 'waiting'; const generation = ++pollGeneration;
+    const check = async () => {
+      try {
+        const ready = await request('loginPoll');
+        if (!bd.isConnected || generation !== pollGeneration) return;
+        if (ready) { phase = 'ready'; render(); folder.focus(); }
+        else poll = setTimeout(check, 2000);
+      } catch (err) {
+        if (!bd.isConnected || generation !== pollGeneration) return;
+        phase = 'address'; error(err.message); render();
+      }
+    };
+    poll = setTimeout(check, 1000);
+  }, footer, 'btn-gold');
+  function render() {
+    const connected = saved(), protectedStore = info.credentials?.available;
+    setup.hidden = connected; account.hidden = !connected;
+    signin.hidden = phase !== 'address'; destination.hidden = phase !== 'ready';
+    accountServer.textContent = info.server || ''; accountFolder.textContent = info.folder || '';
+    protection.hidden = !loaded || loadFailed || !!protectedStore;
+    protectionText.textContent = info.credentials?.platform === 'linux'
+      ? t('Open Passwords and Keys (GNOME Keyring) or KDE Wallet and unlock your keyring. Then choose Check again. If you just installed or started the keyring, restart NeoSync.')
+      : t('NeoSync needs your system password store to remember this connection. Unlock it, then choose Check again. If you just installed or started it, restart NeoSync.');
+    // Show protection failure once, with an action, instead of repeating the
+    // same error in the status, help text and action response.
+    if (!protectedStore && notice.textContent === info.credentials?.message) error('');
+    stateBox.dataset.state = info.state;
+    if (loadFailed) {
+      stateTitle.textContent = t('Sync is unavailable'); stateText.textContent = t('Close and reopen NeoSync, then try again. Your writing stays saved here.');
+    } else if (!loaded) {
+      stateTitle.textContent = t('Checking connection…'); stateText.textContent = t('Your writing stays saved on this device.');
+    } else if (connected) {
+      stateTitle.textContent = !info.connected ? t('Connection needs attention') : syncLabel(info.state);
+      const details = {
+        local: t('Your connection is saved. Choose Sync now to check for changes.'),
+        pending: t('Changes are waiting to sync. You can keep writing.'),
+        syncing: t('Checking Nextcloud and transferring changes…'),
+        synced: t('The last sync completed. Changes sync automatically while the app is open.'),
+        offline: t('Nextcloud could not be reached. Your writing is saved here; we will retry automatically.'),
+        error: t('Sync has paused. Your writing is saved here. Try again after resolving the issue below.'),
+        conflict: t('Both devices changed the same file. Review the saved versions below.')
+      };
+      stateText.textContent = info.message && protectedStore ? info.message : details[info.state] || details.local;
+      if (info.editing && ['pending', 'syncing', 'synced'].includes(info.state)) stateText.textContent = t('Return to the bookshelf to receive changes from your other device. Your edits still upload while you write.');
+    } else {
+      stateTitle.textContent = phase === 'waiting' ? t('Waiting for browser approval') : phase === 'ready' ? t('Choose where to sync') : manual.open ? t('Connect with an app password') : t('Connect your library');
+      stateText.textContent = phase === 'waiting' ? t('Approve access in your browser. This window will continue automatically.')
+        : phase === 'ready' ? t('One last step: choose your folder and confirm how this library is synced.')
+        : manual.open ? t('Use a password generated for NeoSync, not your normal Nextcloud password.') : t('Enter your Nextcloud address, then sign in securely in your browser.');
+    }
+    for (const button of buttons) button.disabled = busy || !loaded || loadFailed;
+    for (const input of [server, folder, loginName, password, single]) input.disabled = busy || phase === 'waiting';
+    retry.disabled = busy; recover.hidden = !info.connected; disconnect.hidden = !connected;
+    back.hidden = connected || phase === 'address';
+    primary.textContent = busy ? t('Please wait…') : connected ? t('Sync now') : phase === 'ready' ? t('Connect') : phase === 'waiting' ? t('Waiting for approval…') : manual.open ? t('Continue') : t('Log in with Nextcloud');
+    primary.disabled = busy || !loaded || loadFailed || !protectedStore || (!connected && (phase === 'waiting' || !server.value.trim() || (phase === 'ready' && (!single.checked || !folder.value.trim())) || (manual.open && (!loginName.value.trim() || !password.value))));
+    if (connected && info.state === 'syncing') primary.disabled = true;
+  }
+  for (const input of [server, folder, loginName, password, single]) input.addEventListener('input', () => { error(''); render(); });
+  manual.addEventListener('toggle', () => { if (!busy) { error(''); render(); } });
+  server.addEventListener('keydown', e => { if (e.key === 'Enter' && !primary.disabled) { e.preventDefault(); primary.click(); } });
+  bd.close = close;
+  bd.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+    if (e.key === 'Tab') {
+      const items = [...box.querySelectorAll('input, button, summary')].filter(el => !el.disabled && el.getClientRects().length);
+      const first = items[0], last = items.at(-1);
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+    }
+  });
+  syncPanel = { update: value => {
+    info = value; loaded = true; loadFailed = false;
+    const signature = JSON.stringify(info.conflicts || []);
+    if (signature === conflictSignature) { render(); return; }
+    conflictSignature = signature;
+    for (let i = buttons.length - 1; i >= 0; i--) if (conflicts.contains(buttons[i])) buttons.splice(i, 1);
+    conflicts.replaceChildren(); conflicts.hidden = !(info.conflicts?.length);
+    for (const c of info.conflicts || []) {
+      const row = node('details', '', conflicts, 'sync-conflict');
+      node('summary', c.path, row);
+      node('p', t('Compare the copies first, then choose which version to use. The other copy stays recoverable.'), row, 'sync-hint');
+      action(t('Compare recovery copies'), () => request('compare', c.id), row);
+      action(t('Keep current local version'), () => request('resolve', { id: c.id, choice: 'local' }), row);
+      action(t('Restore remote version'), () => request('resolve', { id: c.id, choice: 'remote' }), row);
+    }
+    render();
+  } };
+  document.body.appendChild(bd); render();
+  try {
+    const result = await request('status');
+    if (!bd.isConnected) return;
+    server.value = result.server || ''; folder.value = result.folder || 'NeoSync';
+    syncPanel.update(result);
+    if (saved()) closeButton.focus(); else server.focus();
+  } catch (err) { if (bd.isConnected) { loaded = true; loadFailed = true; error(err.message); render(); closeButton.focus(); } }
+}
+if (window.neo.sync) {
+  window.neo.sync('status').then(info => showSyncStatus(info.error ? { state: 'error', message: info.error } : info));
+  window.neo.sync('editing', false);
+}
+
 window.neo.onMenu(async (msg) => {
+  if (msg.type === 'syncPrepare') {
+    const ready = !book && !syncBookOpening && !syncApplying && !refreshing && !libraryWritesPending && !document.querySelector('.modal-backdrop:not(.sync-dialog):not([hidden])');
+    if (!ready) { window.neo.syncReady(msg.token, false); return; }
+    syncApplying = true;
+    document.body.inert = true;
+    try { await window.neo.syncDrain(); window.neo.syncReady(msg.token, true); }
+    catch { window.neo.syncReady(msg.token, false); }
+    return;
+  }
+  if (msg.type === 'syncApplied') {
+    try { if (syncApplying) await refreshFromDisk(true); }
+    finally { syncApplying = false; document.body.inert = false; }
+    return;
+  }
+  if (msg.type === 'syncStatus') { showSyncStatus(msg); return; }
+  if (syncApplying) return;
+  if (msg.type === 'syncSettings') { showSyncSettings(); return; }
   // full screen and focus mode together hide the bottom bar until hovered
   // (styles.css); the window says when it goes in and out, whatever is open
   if (msg.type === 'fullScreen') { document.body.classList.toggle('full-screen', !!msg.value); return; }
