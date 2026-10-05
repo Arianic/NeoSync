@@ -87,6 +87,37 @@ test('independent chapter edits and metadata fields merge on both devices', asyn
   assert.equal(JSON.parse(server.text(metadata)).subtitle, 'Subtitle');
   assert.equal(a.text(metadata), b.text(metadata)); assert.equal(conflicts(b).length, 0);
 });
+test('upstream outline metadata syncs, merges independent cards, and preserves competing notes', async t => {
+  const { device } = fixtures(t), a = device('a'), b = device('b');
+  const outline = {
+    sectionNotes: { a: [{ id: 'section-a', text: 'A section', dismissed: false }] },
+    sceneNotes: { 'scene-a': 'A scene' },
+    looseCards: [{ id: 'loose-a', text: 'An idea' }]
+  };
+  const html = '<p class="sp-heading" data-scene-id="scene-a">INT. ROOM - DAY</p><p data-sec-id="section-a">Words</p>';
+  a.write(chapter, html); a.write(metadata, meta(outline));
+  await a.engine.run(); await b.engine.run();
+  assert.equal(b.text(chapter), html);
+  assert.deepEqual(JSON.parse(b.text(metadata)).sceneNotes, outline.sceneNotes);
+  const left = JSON.parse(a.text(metadata)), right = JSON.parse(b.text(metadata));
+  left.sceneNotes['scene-a'] = 'Revised scene';
+  right.looseCards[0].text = 'Revised idea';
+  right.sectionNotes.a[0].dismissed = true;
+  a.write(metadata, JSON.stringify(left)); b.write(metadata, JSON.stringify(right));
+  await a.engine.run(); await b.engine.run(); await a.engine.run();
+  assert.equal(a.text(metadata), b.text(metadata));
+  const combined = JSON.parse(a.text(metadata));
+  assert.equal(combined.sceneNotes['scene-a'], 'Revised scene');
+  assert.equal(combined.looseCards[0].text, 'Revised idea');
+  assert.equal(combined.sectionNotes.a[0].dismissed, true);
+  const competing = JSON.parse(b.text(metadata));
+  combined.sceneNotes['scene-a'] = 'Local alternative';
+  competing.sceneNotes['scene-a'] = 'Remote alternative';
+  a.write(metadata, JSON.stringify(combined)); b.write(metadata, JSON.stringify(competing));
+  await a.engine.run(); assert.equal(await b.engine.run(), 'conflict');
+  assert.equal(JSON.parse(b.text(metadata)).sceneNotes['scene-a'], 'Remote alternative');
+  assert.equal(JSON.parse(unpack(conflicts(b)[0].remote)).sceneNotes['scene-a'], 'Local alternative');
+});
 test('simultaneous appends combine but incompatible chapter moves preserve alternatives', () => {
   const bytes = s => Buffer.from(s);
   assert.deepEqual(JSON.parse(merge(metadata, bytes(meta({})), bytes(meta({ chapterOrder: ['a', 'b'] })), bytes(meta({ chapterOrder: ['a', 'c'] })))).chapterOrder, ['a', 'b', 'c']);

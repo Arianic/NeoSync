@@ -15,10 +15,12 @@ Start with a clean worktree:
 ```sh
 git switch main
 git pull --ff-only origin main
-git fetch --no-tags upstream
-git switch -c update/neo-YYYY-MM-DD
-git merge upstream/main
+git fetch --no-tags upstream tag v1.3.5
+git switch -c update/neo-1.3.5
+git merge v1.3.5
 ```
+
+Replace `1.3.5` with the upstream release being integrated. A release tag keeps the review focused on that release; `upstream/main` may contain newer, unreleased work. Fetching upstream alone never changes NeoSync or anyone's installed app.
 
 Resolve conflicts deliberately. Keep NeoSync's application identity, user-data directory, credential protection, save/apply handoff and disabled upstream updater. In particular, do not accept upstream `package.json`, README or release-workflow replacements wholesale. Never change the library format without considering compatibility with another device running the previous NeoSync version.
 
