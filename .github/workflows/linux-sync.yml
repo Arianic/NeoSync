@@ -41,8 +41,11 @@ jobs:
             export XDG_CURRENT_DESKTOP=GNOME
             printf "%s" "disposable-test-keyring" | gnome-keyring-daemon --unlock --components=secrets
             npm run test:sync:keyring -- --password-store=gnome-libsecret
+            # Unknown desktop, no forced backend: exercise the app default.
+            env -u KDE_SESSION_VERSION -u KDE_FULL_SESSION XDG_CURRENT_DESKTOP=NeoSyncTestWM DESKTOP_SESSION=NeoSyncTestWM npm run test:sync:keyring
+            env -u KDE_SESSION_VERSION -u KDE_FULL_SESSION XDG_CURRENT_DESKTOP=NeoSyncTestWM DESKTOP_SESSION=NeoSyncTestWM npm run test:sync:desktop
             npm run test:sync:desktop -- --password-store=gnome-libsecret
-            npm run test:sync:restart -- --password-store=gnome-libsecret
+            env -u KDE_SESSION_VERSION -u KDE_FULL_SESSION XDG_CURRENT_DESKTOP=NeoSyncTestWM DESKTOP_SESSION=NeoSyncTestWM npm run test:sync:restart
             npm run test:sync:ui -- --password-store=gnome-libsecret
             npm run test:updates
           '

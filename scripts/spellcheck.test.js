@@ -168,7 +168,7 @@ function mainContext(temp, systemLocale, settings = {}, library = {}, raw = null
   let receive;
   const electron = {
     app: {
-      commandLine: { appendSwitch() {} },
+      commandLine: { appendSwitch() {}, hasSwitch: () => false },
       setName() {}, setPath() {},
       getPath: () => temp,
       getLocale: () => systemLocale,

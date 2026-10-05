@@ -59,9 +59,9 @@ Nextcloud app passwords require an unlocked **GNOME Keyring / Secret Service** o
 
 On GNOME, sign in normally and unlock your login keyring. On KDE, enable/unlock Wallet. On minimal desktops, install and start a compatible Secret Service or Wallet through your distribution's desktop-session setup. The app needs the session D-Bus service; merely having the libsecret client library installed is insufficient.
 
-If your keyring was locked when NeoSync started, unlock it and select **Check again** in the password-storage notice to retry the saved connection. The encrypted credential stays intact while locked. Background polling does not repeatedly retry the locked credential or open prompts. If no keyring service was running when Electron selected its backend, start the service and restart NeoSync.
+If your keyring was locked or unavailable when NeoSync started, unlock/start it and fully close and reopen NeoSync. Electron can remember a failed connection for the rest of the process; **Check again** retries the saved credential but cannot reset that connection. The encrypted credential stays intact while unavailable. Background polling does not repeatedly retry the saved credential or open prompts.
 
-Electron normally chooses the backend from the desktop session. If necessary, explicitly select the matching provider at launch:
+Electron normally chooses the backend from the desktop session. On an unrecognized desktop it can select an unprotected fallback even when GNOME Keyring is unlocked. NeoSync now selects Secret Service on those desktops before Electron starts, while preserving native desktop selection and explicit launch options. For an older build, or to select a different provider, launch with the matching option:
 
 ```sh
 ./NeoSync-1.3.3-beta.1-x86_64.AppImage --password-store=gnome-libsecret

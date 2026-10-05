@@ -20,7 +20,7 @@ function loadMain() {
   const handlers = new Map();
   const electron = {
     app: {
-      commandLine: { appendSwitch() {} },
+      commandLine: { appendSwitch() {}, hasSwitch: () => false },
       setName() {}, setPath() {},
       getPath: () => os.tmpdir(),
       getLocale: () => 'en',
