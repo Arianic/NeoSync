@@ -99,6 +99,14 @@ app.whenReady().then(async () => {
     assert.equal(fs.readFileSync(path.join(root, ids.book, 'chapters', ids.chapter + '.html'), 'utf8'), '<p>Words waiting for disk.</p>');
     assert.equal(await js('document.body.inert'), false);
     await js('updateDialog.close()');
+    // Upstream's new zoom belongs to this device, never a library sync write.
+    const libraryBeforeZoom = fs.readFileSync(path.join(root, 'library.json'), 'utf8');
+    await js('setPageZoom(1.4); switchTab("outline"); stepCardZoom(1);');
+    await js('window.neo.syncDrain()');
+    assert.equal(await js('activePageZoom()'), 1.4);
+    assert.equal(await js('localStorage.getItem("neo.pageZoom.novel")'), '1.4');
+    assert.equal(await js('localStorage.getItem("neo.cardZoom")'), '1.15');
+    assert.equal(fs.readFileSync(path.join(root, 'library.json'), 'utf8'), libraryBeforeZoom);
     // Upstream outline cards must reach disk before the bookshelf permits sync.
     await js(`
       switchTab('outline');
@@ -118,13 +126,25 @@ app.whenReady().then(async () => {
       await window.neo.syncDrain();
     })()`);
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, ids.book, 'book.json'), 'utf8')).chapterNotes[ids.chapter], 'Outline note before window close');
+    // Last-tab metadata must survive the fork's asynchronous save/exit barrier.
+    await js('switchTab("manuscript"); focusChapterStart(book.chapterOrder[0]);');
+    await js('new Promise(resolve => requestAnimationFrame(resolve))');
+    await js('switchTab("notes"); flushAllSaves();');
+    const position = JSON.parse(fs.readFileSync(path.join(root, ids.book, 'book.json'), 'utf8')).lastPosition;
+    assert.equal(position.tab, 'notes');
+    assert.equal(position.chapterId, ids.chapter);
+    await js('backToShelf()');
+    await js(`openBook(${JSON.stringify(ids.book)})`);
+    await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    assert.equal(await js('currentTab'), 'notes');
+    assert.equal(await js('activePageZoom()'), 1.4);
     await js('backToShelf()');
     win.webContents.send('menu', { type: 'syncPrepare', token: 'shelf-test' });
     await tick(); assert.equal(await js('document.body.inert'), true);
     win.webContents.send('menu', { type: 'syncApplied', token: 'shelf-test' });
     await tick(); assert.equal(await js('document.body.inert'), false);
     assert.ok(app.getPath('userData').startsWith(tmp + path.sep));
-    console.log('Desktop smoke passed: identity, settings, preload, offline save, outline-card flush, editor/shelf apply handoff.');
+    console.log('Desktop smoke passed: identity, settings, preload, offline save, outline-card flush, local zoom, last-tab restore, editor/shelf apply handoff.');
     console.log('Temporary profile retained until Electron exits: ' + tmp);
     clearTimeout(timeout); app.exit(0);
   } catch (err) { console.error(err); clearTimeout(timeout); app.exit(1); }
