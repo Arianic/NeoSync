@@ -2256,7 +2256,16 @@ async function openBook(bookId) {
       // pick up right where you left off — here, or on the other device
       currentChapterId = book.lastPosition.chapterId;
       const pos = book.lastPosition;
-      requestAnimationFrame(() => { resumePosition(pos); vimRest(); });
+      requestAnimationFrame(() => {
+        resumePosition(pos);
+        vimRest();
+        // closed on the Outline, Notes or Darlings: it opens there again, at
+        // the same scroll (the manuscript keeps its own place underneath)
+        if (['outline', 'notes', 'darlings'].includes(pos.tab) && book && book.id === bookId) {
+          tabPlaces[pos.tab] = { scroll: pos.tabScroll || 0 };
+          switchTab(pos.tab);
+        }
+      });
     }
   }
 
@@ -9349,17 +9358,28 @@ function flushAllSaves(e) {
   // caret does, so a device that merely scrolled never calls the other
   // one back to an old spot.
   const prev = book.lastPosition || {};
-  const caret = captureCaret();
+  // On another tab, the manuscript's place is the one it had when you left
+  // it (tabPlaces): the Notes page's scroll is not a place in the book.
+  const writing = currentTab === 'manuscript';
+  const kept = !writing ? tabPlaces.manuscript : null;
+  const caret = writing ? captureCaret() : (kept && kept.caret) || null;
   const spot = caret
     ? { chapterId: caret.chId, pIdx: caret.pIdx, off: caret.off }
-    : prev.chapterId === currentChapterId ? { chapterId: prev.chapterId, pIdx: prev.pIdx, off: prev.off } : { chapterId: currentChapterId };
-  const scroll = $('#paper-scroll').scrollTop;
+    : (!writing || prev.chapterId === currentChapterId) && prev.chapterId ? { chapterId: prev.chapterId, pIdx: prev.pIdx, off: prev.off } : { chapterId: currentChapterId };
+  const scroll = writing ? $('#paper-scroll').scrollTop : kept && typeof kept.scroll === 'number' ? kept.scroll : (prev.scroll || 0);
+  // …and the tab you were on, with its own scroll, so the book opens there
+  const tab = currentTab || 'manuscript';
+  const tabScroll = writing ? undefined : $('#paper-scroll').scrollTop;
   const newSpot = spot.chapterId !== prev.chapterId || spot.pIdx !== prev.pIdx;
   const newLetter = newSpot || spot.off !== prev.off;
   // the regular tick while writing saves a new paragraph; leaving NEO (a
   // blur, the app going to the background, closing) saves the exact letter
-  const moved = newSpot || (e !== 'tick' && newLetter) || Math.abs((prev.scroll || 0) - scroll) > 40;
-  if (moved) book.lastPosition = { ...spot, scroll, at: newLetter ? Date.now() : (prev.at || Date.now()) };
+  const newTab = tab !== (prev.tab || 'manuscript') || (!writing && Math.abs((prev.tabScroll || 0) - tabScroll) > 40);
+  const moved = newSpot || newTab || (e !== 'tick' && newLetter) || Math.abs((prev.scroll || 0) - scroll) > 40;
+  if (moved) {
+    book.lastPosition = { ...spot, scroll, at: newLetter ? Date.now() : (prev.at || Date.now()), tab };
+    if (!writing) book.lastPosition.tabScroll = tabScroll;
+  }
   for (const chId of book.chapterOrder) {
     if (chapterHTML[chId] !== undefined && chapterHTML[chId] !== savedHTML[chId]) {
       persistChapter(chId);
