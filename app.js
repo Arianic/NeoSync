@@ -12965,7 +12965,7 @@ async function showSyncSettings() {
   node('dt', t('Folder in Nextcloud'), account); const accountFolder = node('dd', '', account);
   const conflicts = node('div', '', box, 'sync-conflicts');
   const protection = node('div', '', box, 'sync-protection'); protection.hidden = true;
-  node('strong', t('Unlock password storage'), protection);
+  node('strong', t('Password storage needs attention'), protection);
   const protectionText = node('p', '', protection);
   const more = node('details', '', box, 'sync-disclosure sync-more');
   node('summary', t('What syncs & connection options'), more);
@@ -13044,9 +13044,7 @@ async function showSyncSettings() {
     signin.hidden = phase !== 'address'; destination.hidden = phase !== 'ready';
     accountServer.textContent = info.server || ''; accountFolder.textContent = info.folder || '';
     protection.hidden = !loaded || loadFailed || !!protectedStore;
-    protectionText.textContent = info.credentials?.platform === 'linux'
-      ? t('Open Passwords and Keys (GNOME Keyring) or KDE Wallet and unlock your keyring. Then choose Check again. If you just installed or started the keyring, restart NeoSync.')
-      : t('NeoSync needs your system password store to remember this connection. Unlock it, then choose Check again. If you just installed or started it, restart NeoSync.');
+    protectionText.textContent = info.credentials?.message || t('NeoSync needs your system password store to remember this connection. Unlock it, then choose Check again. If you just installed or started it, restart NeoSync.');
     // Show protection failure once, with an action, instead of repeating the
     // same error in the status, help text and action response.
     if (!protectedStore && notice.textContent === info.credentials?.message) error('');

@@ -34,7 +34,7 @@ function computer({ documents = true, chosen = false } = {}) {
   const handlers = new Map();
   const electron = {
     app: {
-      commandLine: { appendSwitch() {} },
+      commandLine: { appendSwitch() {}, hasSwitch: () => false },
       setName() {}, setPath() {},
       getPath: (name) => ({ home, userData, documents: path.dirname(broken) })[name] || os.tmpdir(),
       getLocale: () => 'en',

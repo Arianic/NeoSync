@@ -98,6 +98,11 @@ app.whenReady().then(async () => {
     assert.equal(await js(`document.querySelector('${primary}').disabled`), true);
     assert.equal(await js('document.querySelector(".sync-protection").hidden'), false);
     assert.equal(await js('document.querySelector(".sync-state p").textContent.includes("Unlock the keyring.")'), false);
+    assert.equal(await js('document.querySelector(".sync-protection p").textContent'), locked.credentials.message);
+    const unselected = { ...locked, credentials: { ...locked.credentials, backend: 'basic_text', message: 'NeoSync could not select a keyring. It may already be unlocked.' } };
+    await status(unselected);
+    assert.equal(await js('document.querySelector(".sync-protection strong").textContent'), 'Password storage needs attention');
+    assert.equal(await js('document.querySelector(".sync-protection p").textContent'), unselected.credentials.message);
     await js('document.querySelector(".sync-protection button").click()'); await tick();
     assert.equal(await js('document.querySelector(".sync-protection").hidden'), true);
     await status({ ...current, state: 'offline' }); await shot('offline');

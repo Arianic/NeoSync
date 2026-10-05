@@ -3,6 +3,7 @@
 // through the IPC handlers below (see preload.js for the exposed API).
 
 const { app, BrowserWindow, ipcMain, dialog, Menu, MenuItem, utilityProcess, screen } = require('electron');
+require('./sync/password-store').configurePasswordStore(app);
 const path = require('path');
 const fs = require('fs');
 const os = require('os');

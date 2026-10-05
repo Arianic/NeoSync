@@ -2,6 +2,7 @@
 // Run in a disposable Linux D-Bus/keyring session; see LINUX.md. Uses dummy
 // credentials only and a distinct application key, never a Nextcloud server.
 const { app, safeStorage } = require('electron');
+require('../sync/password-store').configurePasswordStore(app);
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');

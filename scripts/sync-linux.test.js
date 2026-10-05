@@ -7,6 +7,31 @@ const os = require('node:os');
 const { Credentials } = require('../sync/credentials');
 const { DesktopSync } = require('../sync/desktop');
 const { durable } = require('../sync/storage');
+const { configurePasswordStore } = require('../sync/password-store');
+
+test('unknown Linux desktops select Secret Service without changing native desktops or explicit choices', () => {
+  function selected(platform, env, override) {
+    const switches = new Map(override === undefined ? [] : [['password-store', override]]);
+    configurePasswordStore({ commandLine: {
+      hasSwitch: name => switches.has(name),
+      appendSwitch: (name, value) => switches.set(name, value)
+    } }, platform, env);
+    return switches.get('password-store');
+  }
+  for (const env of [{}, { XDG_CURRENT_DESKTOP: 'NeoSyncTestWM' }, { DESKTOP_SESSION: 'custom-wayland' }]) {
+    assert.equal(selected('linux', env), 'gnome-libsecret');
+    for (const platform of ['win32', 'darwin']) assert.equal(selected(platform, env), undefined);
+    for (const override of ['basic', 'gnome-libsecret', 'kwallet6', '']) assert.equal(selected('linux', env, override), override);
+  }
+  for (const env of [
+    { XDG_CURRENT_DESKTOP: 'GNOME' }, { XDG_CURRENT_DESKTOP: 'ubuntu:GNOME' },
+    { XDG_CURRENT_DESKTOP: 'KDE', KDE_SESSION_VERSION: '6' },
+    { XDG_CURRENT_DESKTOP: 'custom:KDE' }, { XDG_CURRENT_DESKTOP: 'LXQt' },
+    { KDE_FULL_SESSION: 'true' }, { KDE_SESSION_VERSION: '5' },
+    { DESKTOP_SESSION: 'plasmawayland' }, { DESKTOP_SESSION: 'kde4' },
+    { DESKTOP_SESSION: 'mate' }, { DESKTOP_SESSION: 'xfce' }
+  ]) assert.equal(selected('linux', env), undefined);
+});
 
 function directory(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'neosync-linux-test-'));
@@ -52,6 +77,23 @@ test('keyring exceptions report unavailability and never enable plaintext storag
   assert.equal(credentials.available(), false);
   assert.throws(() => credentials.save({ appPassword: 'private' }), /unavailable/);
   assert.equal(fs.existsSync(file), false);
+  const failedBackend = new Credentials(file, { isEncryptionAvailable: () => true, getSelectedStorageBackend() { throw new Error('unavailable'); } }, 'linux');
+  assert.equal(failedBackend.available(), false);
+});
+test('credential checks use the initialized backend and distinguish selection failure from access failure', t => {
+  let backend = 'unknown';
+  const safe = { ...provider('unused'),
+    isEncryptionAvailable() { backend = 'gnome_libsecret'; return true; },
+    getSelectedStorageBackend: () => backend
+  };
+  const credentials = new Credentials(path.join(directory(t), 'credential.bin'), safe, 'linux');
+  assert.equal(credentials.available(), true);
+  assert.equal(credentials.protection().backend, 'gnome_libsecret');
+  safe.isEncryptionAvailable = () => false;
+  assert.match(credentials.protection().message, /cannot access the selected keyring/);
+  backend = 'basic_text';
+  assert.match(credentials.protection().message, /could not select a keyring/);
+  assert.match(credentials.protection().message, /may already be unlocked/);
 });
 test('Sync now retries an encrypted saved connection after the keyring unlocks', async t => {
   const dir = directory(t), root = path.join(dir, 'library');
