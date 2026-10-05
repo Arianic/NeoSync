@@ -220,6 +220,7 @@ function setText(el, text) {
 
 // Platform-aware key labels: Macs read ⌘⇧X, everyone else reads Ctrl+Shift+X
 const IS_MAC = navigator.platform.toLowerCase().includes('mac');
+const IS_LINUX = !IS_MAC && /linux/i.test(navigator.platform) && !window.Capacitor;
 // a touch screen (Pocket): nothing to hover, no right button
 const NO_HOVER = !!(window.matchMedia && window.matchMedia('(hover: none)').matches) || !!window.Capacitor;
 // NEO Pocket (the Android and iOS shell)
@@ -4026,9 +4027,17 @@ function smartKeys(e, body) {
   };
 
   if (markdownEmphasis(e, body, range)) return;
+  // German sets its dash as an en dash – like this –, so there -- makes
+  // one, and a third hyphen the em dash (#286)
+  const german = writingLanguage().toLowerCase().startsWith('de');
   if (e.key === '-' && prevChars(1) === '-') {
     e.preventDefault();
-    replaceBefore(1, '—'); // —
+    replaceBefore(1, german ? '–' : '—');
+    return;
+  }
+  if (german && e.key === '-' && prevChars(1) === '–') {
+    e.preventDefault();
+    replaceBefore(1, '—');
     return;
   }
   if (e.key === '.' && prevChars(2) === '..') {
@@ -4052,15 +4061,21 @@ function smartKeys(e, body) {
     e.preventDefault();
     const before = prevChars(1);
     const q = e.key === '"' ? bookQuotes(body) : quoteStyle();
-    let opening = before === '' || /[\s\(\[\{‘“«„>]/.test(before);
+    let opening = before === '' || /[\s\(\[\{‘“«„‚»›‹>]/.test(before);
     // after a dash, a quote usually closes speech that was cut off ("I was
     // just—"); it opens one only when no quotation is open in the paragraph
     if (before === '—' || before === '–') opening = !quoteIsOpen(range, e.key === '"' ? q : { open: '‘', close: '’' }, e.key === '"' ? '"' : '');
     let ch;
     if (e.key === "'") {
-      // most languages type ' as an apostrophe only; English and Dutch also
-      // open single quotes with it
-      ch = q.singles && opening ? '‘' : '’';
+      // most languages type ' as an apostrophe only; English, Dutch and
+      // German also open (and German closes) single quotes with it
+      const sq = singleQuotes(body);
+      if (!sq) ch = '’';
+      else if (opening) ch = sq.open;
+      // German's closing mark isn't its apostrophe: it closes only a single
+      // quotation that is open in the paragraph
+      else if (sq.close !== '’' && quoteIsOpen(range, sq, '')) ch = sq.close;
+      else ch = '’';
     } else {
       ch = opening ? q.open : q.close;
     }
@@ -4115,6 +4130,18 @@ const QUOTE_STYLES = {
   ru: { open: '«', close: '»' },
   el: { open: '«', close: '»' }
 };
+// The single quotation marks, where ' types them: English and Dutch ‘…’;
+// German ‚…‘, or ›…‹ in a book set in »…«, or ‹…› in Swiss «…» (#286).
+// Elsewhere ' is an apostrophe only.
+function singleQuotes(el) {
+  const q = quoteStyle();
+  if (q.singles) return { open: '‘', close: '’' };
+  if (!writingLanguage().toLowerCase().startsWith('de')) return null;
+  const d = bookQuotes(el).open.trim();
+  if (d === '»') return { open: '›', close: '‹' };
+  if (d === '«') return { open: '‹', close: '›' };
+  return { open: '‚', close: '‘' };
+}
 function writingLanguage() {
   return (library && library.spellLanguage) || NeoI18n.getLocale();
 }
@@ -4250,8 +4277,10 @@ $('#tp-author').addEventListener('input', () => {
 // skips the character the menu already handles, so one press fires one action.
 function isSpellcheckShortcut(e) {
   if (!(e.metaKey || e.ctrlKey) || e.altKey) return false;
-  if (e.shiftKey && e.key === ';') return true;
-  return e.code === 'Semicolon' && e.key !== ';';
+  // the menu shows ⌘; but leaves the key to the window (main.js), so the
+  // character itself, Shift or not, is the shortcut
+  if (e.key === ';') return true;
+  return e.code === 'Semicolon' && ![';', ':', '/', '?'].includes(e.key);
 }
 function isLargerTextShortcut(e) {
   if (!(e.metaKey || e.ctrlKey) || e.altKey) return false;
@@ -10071,7 +10100,9 @@ function stopReadAloud(leaveCaret) {
 }
 document.addEventListener('keydown', (e) => {
   const cmd = e.metaKey || e.ctrlKey;
-  if (cmd && e.shiftKey && !e.altKey && e.code === 'KeyU') {
+  // on Linux, Ctrl+Shift+U belongs to the input method (it types a Unicode
+  // character by its code), so Read Aloud there is Ctrl+Shift+K (#287)
+  if (cmd && e.shiftKey && !e.altKey && (e.code === 'KeyU' || (IS_LINUX && e.code === 'KeyK'))) {
     if (!book || $('#editor-view').hidden) return;
     e.preventDefault();
     e.stopPropagation();
@@ -11442,7 +11473,7 @@ function bookShortcutSections() {
       [K('⌘⇧Enter', 'Ctrl+Shift+Enter'), tk('Start or continue a poetry paragraph'), tk('Also works from a chapter heading.')],
       [KPH, tk('Insert a placeholder note')],
       [KDA, tk('Move selected text to Darlings')],
-      [K('⌘⇧U', 'Ctrl+Shift+U'), tk('Read aloud from the cursor'), tk('Again, Esc or any key stops it. Uses your computer’s own voice.')]
+      [K('⌘⇧U', IS_LINUX ? 'Ctrl+Shift+K' : 'Ctrl+Shift+U'), tk('Read aloud from the cursor'), tk('Again, Esc or any key stops it. Uses your computer’s own voice.')]
     ] },
     { title: tk('Formatting'), rows: [
       [['*…*', '**…**', '***…***'], tk('Italic, bold, the Markdown way'), tk('Typed around a word (or pasted). Undo right after keeps the asterisks. Format → Markdown Emphasis turns it off.')],
@@ -12218,9 +12249,11 @@ ${ch.subtitle ? `<p class="sub">${escXml(ch.subtitle)}</p>` : ''}${ch.byline ? `
 ${paras}
 </section>`;
   }
+  // the language on the page too, so a reader hyphenates in the right one
+  const lang = escXml(d.language || NeoI18n.getLocale());
   return `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${lang}" lang="${lang}">
 <head><title>${escXml(ch.heading || ch.label || d.title)}</title><link rel="stylesheet" type="text/css" href="style.css"/></head>
 <body>${inner}</body></html>`;
 }
@@ -12319,7 +12352,9 @@ ${navList(toc)}
 </navMap></ncx>` },
     { path: 'OEBPS/style.css', content: `body { font-family: serif; line-height: 1.5; margin: 1em; }
 h1 { text-align: center; font-weight: normal; letter-spacing: 0.2em; text-transform: uppercase; font-size: 1.2em; margin: 3em 0 2em; }
-p { text-indent: 1.2em; margin: 0; }
+p { text-indent: 1.2em; margin: 0; text-align: justify; -webkit-hyphens: auto; -epub-hyphens: auto; hyphens: auto; widows: 2; orphans: 2; }
+h1, p.brk { -webkit-hyphens: none; -epub-hyphens: none; hyphens: none; }
+p.poetry, .dedication p, .epigraph p, .part p, .copyright p { text-align: left; -webkit-hyphens: manual; -epub-hyphens: manual; hyphens: manual; }
 p.first, p.brk + p, p.byline + p { text-indent: 0; }
 p.first.dialogue:not(.center):not(.right) { text-indent: 1.2em; }
 p.center { text-align: center; text-indent: 0; }

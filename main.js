@@ -24,6 +24,10 @@ const os = require('os');
 // macOS Chromium's "smart delete" also removes whitespace around a deleted
 // selection, and that pass can duplicate characters. Deletes stay literal.
 app.commandLine.appendSwitch('blink-settings', 'smartInsertDeleteEnabled=false');
+// Linux: Chromium hears the system's voices (espeak, Piper, RHVoice…) only
+// through speech-dispatcher, and only when asked to. Without it Read Aloud
+// finds no voice at all (#287).
+if (process.platform === 'linux') app.commandLine.appendSwitch('enable-speech-dispatcher');
 
 // ---------------------------------------------------------------------------
 // Library location: a folder of plain files the user can inspect, sync, back up.
@@ -1778,6 +1782,11 @@ function buildMenu() {
         {
           label: t('Spellcheck Pass'),
           accelerator: 'CmdOrCtrl+;',
+          // shown, not registered: the window answers the ; character itself
+          // (isSpellcheckShortcut). Windows matches an accelerator by key
+          // position, so on some layouts this one and ⌘/ landed on the same
+          // key and one press did both (#282).
+          registerAccelerator: false,
           click: () => sendToWindow({ type: 'spellcheck' })
         },
         {
@@ -1886,6 +1895,7 @@ function buildMenu() {
         {
           label: t('Keyboard Shortcuts…'),
           accelerator: 'CmdOrCtrl+/',
+          registerAccelerator: false, // the window answers / and ? itself (isHelpShortcut)
           click: () => sendToWindow({ type: 'help' })
         },
         { type: 'separator' },
