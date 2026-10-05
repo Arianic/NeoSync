@@ -2397,12 +2397,9 @@ function renderChapters() {
         p.removeAttribute('style');
       }
     });
-    // heal no-break spaces planted in prose by the old engine repair pass
-    const tw = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
-    let tn;
-    while ((tn = tw.nextNode())) {
-      if (tn.data.includes('\u00a0')) tn.data = tn.data.replace(/\u00a0/g, ' ');
-    }
+    // heal the no-break spaces the old engine repair pass planted (the
+    // writer's own, Dr. Müller and 5 km, stay)
+    healStrayNbsp(body);
     wireChapterBody(body, chId);
   });
   if (isScript()) {
@@ -3112,6 +3109,11 @@ function stripJunkSpans(el) {
     while (s.firstChild) s.before(s.firstChild);
     s.remove();
   }
+  // …and the size, face or colour the engine writes onto bold and italic
+  // words when it merges lines: a word kept at an old size ignores ⌘+ and ⌘−
+  for (const f of el.querySelectorAll('b[style], i[style], em[style], strong[style], u[style], s[style], strike[style], sub[style], sup[style]')) {
+    f.removeAttribute('style');
+  }
 }
 
 // Enter once: new paragraph. Enter twice: *** section break — wherever the
@@ -3553,7 +3555,7 @@ function captureBody(body) {
   // (a page marks the lines that say who said it, and a chapter the speech
   // after a scene break, for the screen only)
   // (and a script's page breaks, (CONT'D) and suggestions)
-  return body.innerHTML.replace(/<p\b[^>]*>/g, (tag) => tag.replace(/ data-(?:attr|speech|first|walk)=""/g, '')
+  return body.innerHTML.replace(/<(b|i|em|strong|u|s|strike|sub|sup)\s+style="[^"]*"/g, '<$1').replace(/<p\b[^>]*>/g, (tag) => tag.replace(/ data-(?:attr|speech|first|walk)=""/g, '')
     .replace(/ data-(?:pg|fill|contd|ghost|ghost-empty|sp-paste)(?:="[^"]*")?/g, ''));
 }
 
@@ -4245,6 +4247,9 @@ document.addEventListener('keydown', (e) => {
 // Title page: Enter drops you into Chapter One.
 $('#tp-title').addEventListener('keydown', titleEnter);
 $('#tp-subtitle').addEventListener('keydown', titleEnter);
+// the author's line too: a new book's first page used to wait for a trip
+// to the Outline when Enter came from here
+$('#tp-author').addEventListener('keydown', titleEnter);
 function titleEnter(e) {
   if (e.key !== 'Enter') return;
   e.preventDefault();
@@ -11608,8 +11613,9 @@ function safeName(s) {
 
 // Every paragraph is rebuilt from its text runs, so exports carry only
 // author-meaningful markup: text, bold, italic, alignment, scene breaks.
-// Stray spans, inline styles, trailing <br>s, and no-break spaces all
-// stop at this door.
+// Stray spans, inline styles, trailing <br>s, and the no-break spaces the
+// old engine planted all stop at this door (healStrayNbsp); the writer's
+// own no-break spaces go through.
 function parasFromHtml(html) {
   const holder = document.createElement('div');
   holder.innerHTML = html || '';
@@ -11631,7 +11637,7 @@ function parasFromHtml(html) {
       sceneBreak,
       poetry,
       flush,
-      text: p.innerText.replace(/\u00a0/g, ' ').trim(),
+      text: (healStrayNbsp(p), p.innerText).trim(),
       runs,
       align,
       html: `<p${poetry ? ' class="poetry"' : flush ? ' class="flush"' : ''}${align ? ` style="text-align:${align}"` : ''}>${inner}</p>`
@@ -12022,14 +12028,46 @@ function runHtml(r, esc = escHtml) {
   if (r.b) t = '<b>' + t + '</b>';
   return t;
 }
+// A no-break space the writer put between two words (Dr. Müller, 5 km, a
+// space that keeps a dash off the start of a line) stays wherever the text
+// goes. The old editing engine planted others, beside a plain space or at
+// a line's start or end, to hold doubled spaces open; those turn back into
+// plain spaces. Paragraph by paragraph, so a space at the edge of italics
+// still sees its neighbours.
+function healStrayNbsp(root) {
+  let blocks = root.querySelectorAll ? [...root.querySelectorAll('p')] : [];
+  if (!blocks.length) blocks = [root];
+  let changed = false;
+  for (const block of blocks) {
+    const nodes = [];
+    const w = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = w.nextNode())) nodes.push(n);
+    const all = nodes.map((x) => x.data).join('');
+    if (!all.includes('\u00a0')) continue;
+    const open = (c) => c === undefined || /\s/.test(c); // \s takes in no-break spaces too
+    let at = 0;
+    for (const x of nodes) {
+      const d = x.data;
+      let out = '';
+      for (let i = 0; i < d.length; i++) {
+        out += d[i] === '\u00a0' && (open(all[at + i - 1]) || open(all[at + i + 1])) ? ' ' : d[i];
+      }
+      at += d.length;
+      if (out !== d) { x.data = out; changed = true; }
+    }
+  }
+  return changed;
+}
 function paraRuns(pHtml, flip) {
   const holder = document.createElement('template'); // inert: nothing loads or runs
   holder.innerHTML = pHtml;
+  healStrayNbsp(holder.content);
   const runs = [];
   const walk = (node, b, i, u, x) => {
     for (const child of node.childNodes) {
       if (child.nodeType === Node.TEXT_NODE) {
-        if (child.textContent) runs.push({ text: child.textContent.replace(/\u00a0/g, ' '), b, i, u, s: x });
+        if (child.textContent) runs.push({ text: child.textContent, b, i, u, s: x });
       } else if (child.nodeType === Node.ELEMENT_NODE) {
         if (child.classList && child.classList.contains('ph-mark')) {
           runs.push({ mark: child.dataset.sid || '' });
