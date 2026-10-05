@@ -81,11 +81,15 @@ app.whenReady().then(async () => {
     assert.equal(installs, 0);
     assert.equal(await js('document.body.inert'), false);
     assert.match(await js('document.querySelector(".up-text").textContent'), /still open/);
-    let finishWrite;
+    let finishWrite, startedWrite;
+    const waitingForWrite = new Promise(resolve => { startedWrite = resolve; });
     electron.ipcMain.removeHandler('chapter:write');
-    register('chapter:write', (...args) => new Promise(resolve => { finishWrite = async () => resolve(await realWrite(...args)); }));
+    register('chapter:write', (...args) => new Promise(resolve => {
+      finishWrite = async () => resolve(await realWrite(...args));
+      startedWrite();
+    }));
     await js('window.restartTest = document.querySelector(".modal-backdrop .m-ok").onclick(); void 0');
-    while (!finishWrite) await tick();
+    await waitingForWrite;
     assert.equal(installs, 0);
     assert.equal(await js('document.body.inert'), true);
     await finishWrite(); await js('window.restartTest');
