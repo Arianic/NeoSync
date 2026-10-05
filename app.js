@@ -2226,6 +2226,7 @@ async function openBook(bookId) {
 
   $('#bookshelf-view').hidden = true;
   $('#editor-view').hidden = false;
+  applyBright();
   document.execCommand('defaultParagraphSeparator', false, 'p');
 
   $('#tp-title').textContent = isUntitled(book.title) ? '' : book.title;
@@ -6909,6 +6910,7 @@ function switchTab(name) {
       : { scroll: scroller.scrollTop };
   }
   currentTab = name;
+  applyBright();
   $$('.tab').forEach((t) => {
     t.classList.toggle('active', t.dataset.tab === name);
     t.setAttribute('aria-selected', t.dataset.tab === name ? 'true' : 'false');
@@ -7025,7 +7027,7 @@ function renderOutline(focusTarget) {
 
   const hint = document.createElement('div');
   hint.className = 'ol-hint';
-  hint.textContent = t('Enter — new chapter (or section, from a section line) · Tab — turn a fresh chapter line into a section · Shift+Tab — turn a section into a chapter · Backspace on an empty line removes it');
+  hint.textContent = t('Enter — new chapter · Tab — make it a section, or a new section below one · ⇧Tab — make it a chapter again · Backspace on an empty line removes it');
   wrap.appendChild(hint);
 
   if (focusTarget) {
@@ -7140,23 +7142,19 @@ function outlineLine(kind, chId, secId, index, label, text) {
       e.stopPropagation();
       return;
     }
-    if (e.key === 'Enter') {
+    // Enter: always a new chapter. From a chapter's line it goes right after
+    // that chapter (or before it, from the very start of a line with words);
+    // from a section's line, after the whole chapter the section is in.
+    if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
       e.preventDefault();
-      const above = caretAtStart();
+      if (e.isComposing || e.keyCode === 229) return;
+      const above = kind === 'chapter' && caretAtStart();
       save();
-      snapshotStructure(kind === 'chapter' ? 'outline new chapter' : 'outline new section', { outlineFocus: here() });
-      if (kind === 'chapter') {
-        const at = book.chapterOrder.indexOf(chId) + (above ? 0 : 1);
-        const newId = createChapterAt(at);
-        renderOutline({ chId: newId });
-      } else {
-        const list = book.sectionNotes[chId];
-        const newSec = { id: 'sec-' + Date.now().toString(36), text: '' };
-        list.splice(index + (above ? 0 : 1), 0, newSec);
-        scheduleMetaSave();
-        syncGhosts(chId);
-        renderOutline({ secId: newSec.id });
-      }
+      snapshotStructure('outline new chapter', { outlineFocus: here() });
+      const at = book.chapterOrder.indexOf(chId) + (above ? 0 : 1);
+      const newId = createChapterAt(at);
+      updateCounters();
+      renderOutline({ chId: newId });
     }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
@@ -7164,32 +7162,28 @@ function outlineLine(kind, chId, secId, index, label, text) {
       const next = lines[lines.indexOf(txt) + (e.key === 'ArrowDown' ? 1 : -1)];
       if (next) focusOutlineTextEnd(next);
     }
+    // Tab: always a section. A section's line makes a new one below it; a
+    // chapter's line becomes a section of the chapter above, writing and all
     if (e.key === 'Tab' && !e.shiftKey) {
       e.preventDefault();
-      if (kind !== 'chapter') {
-        // A section line is already as indented as an outline line can get, so Tab
-        // moves on to the end of the next line (chapter included) instead of doing
-        // nothing. Tab on a chapter keeps its convert-to-section meaning below.
-        const lines = [...document.querySelectorAll('.ol-line .ol-text')];
-        const next = lines[lines.indexOf(txt) + 1];
-        if (next) focusOutlineTextEnd(next);
+      e.stopPropagation();
+      save();
+      if (kind === 'section') {
+        snapshotStructure('outline new section', { outlineFocus: here() });
+        const list = book.sectionNotes[chId];
+        const newSec = { id: newSectionId(), text: '' };
+        list.splice(index + 1, 0, newSec);
+        scheduleMetaSave();
+        syncGhosts(chId);
+        renderOutline({ secId: newSec.id });
         return;
       }
       const prevCh = storyBefore(chId);
       if (!prevCh) { toast(t('The first line has to be a chapter')); return; }
-      if (countWords(chapterText(chId)) > 0) {
-        toast(t('This chapter already has words in it — only empty chapter lines can become sections'));
-        return;
-      }
-      save();
-      snapshotStructure('outline chapter to section', { outlineFocus: here() });
-      book.sectionNotes[prevCh] = book.sectionNotes[prevCh] || [];
-      const newSec = { id: 'sec-' + Date.now().toString(36), text: txt.textContent.trim() };
-      book.sectionNotes[prevCh].push(newSec);
-      deleteChapterQuiet(chId).then(() => {
-        syncGhosts(prevCh);
-        renderOutline({ secId: newSec.id });
+      joinChapter(chId, prevCh).then((secId) => {
+        if (currentTab === 'outline') renderOutline(secId ? { secId } : { chId: prevCh });
       });
+      return;
     }
     if (e.key === 'Tab' && e.shiftKey) {
       e.preventDefault();
@@ -8305,6 +8299,55 @@ function looseToSection(looseId, to) {
   renderLooseCards();
 }
 
+// ---- one chapter becomes a section of another ----
+// Tab on a chapter's line in the List, or a chapter card dropped on the
+// middle of another: the chapter's writing goes to the end of the other
+// one, after a ***, its note (or its title) becomes that section's note,
+// and its own sections come along. Nothing is lost; ⌘Z puts it back.
+// Resolves to the new section's id, or null when it can't be done.
+async function joinChapter(chId, intoCh) {
+  if (!book || !intoCh || chId === intoCh) return null;
+  if (!isStory(chId) || !isStory(intoCh)) { toast(t('Only chapters can become sections')); return null; }
+  const from = chapterBodyEl(chId);
+  const into = chapterBodyEl(intoCh);
+  if (!from || !into) return null;
+  closeCardEditor();
+  snapshotStructure('chapter joined', { outlineFocus: { chId } });
+  book.sectionNotes = book.sectionNotes || {};
+  const notes = book.sectionNotes[intoCh] = book.sectionNotes[intoCh] || [];
+  const sec = { id: newSectionId(), text: ((book.chapterNotes || {})[chId] || '').trim() || ((book.chapterTitles || {})[chId] || '').trim() };
+  // what the chapter holds (a chapter of one empty line holds nothing)
+  const kids = [...from.children];
+  const hasLines = kids.some((el) => el.textContent.trim() || el.querySelector('.ph-mark'));
+  const moving = hasLines ? kids : [];
+  const intoBlank = !into.innerText.trim() && !into.querySelector('.scene-break, .ghost, .ph-mark');
+  if (hasLines) {
+    if (intoBlank) into.innerHTML = '';
+    else if (!(into.lastElementChild && into.lastElementChild.classList.contains('scene-break'))) into.appendChild(newSceneBreak(sec.id));
+    // a chapter that opened with a *** keeps just the one
+    if (moving[0].classList.contains('scene-break') && into.lastElementChild && into.lastElementChild.classList.contains('scene-break')) moving.shift().remove();
+    for (const el of moving) into.appendChild(el);
+    // the chapter's opening carries the new section's note; an opening
+    // that's only outline gets the note as a ghost of its own
+    const opening = moving[0] && !moving[0].classList.contains('scene-break') && !moving[0].classList.contains('ghost') ? moving[0] : null;
+    if (opening) opening.dataset.secId = sec.id;
+    else if (sec.text && moving[0]) placeGhost(into, sec, moving[0]);
+    repointStickies(moving, intoCh);
+  }
+  notes.push(sec);
+  for (const n of book.sectionNotes[chId] || []) notes.push(n);
+  delete book.sectionNotes[chId];
+  if (!hasLines && sec.text) placeGhost(into, sec, null);
+  orderSectionNotes(intoCh);
+  syncChapter(into, intoCh);
+  // the words are safe in the other chapter before this one's file goes
+  try { await persistChapter(intoCh); } catch (err) { window.neo.logError('join: ' + (err && err.message || err)); return null; }
+  if (book.chapterTitles) delete book.chapterTitles[chId];
+  await deleteChapterQuiet(chId);
+  updateCounters();
+  return sec.id;
+}
+
 // ---- dragging (pointer events, so a finger works the same as a mouse) ----
 
 let cardDrag = null;
@@ -8378,6 +8421,8 @@ function endCardDrag(st) {
   document.body.classList.remove('ob-dragging');
   $('#side-pane').classList.remove('drop-ready', 'drop-over');
   $('#ob-caret')?.remove();
+  $('#ob-join-tip')?.remove();
+  for (const c of $$('.ob-cell.ob-join')) c.classList.remove('ob-join');
   clearInterval(st.scroller);
 }
 
@@ -8418,6 +8463,12 @@ function dragTarget(st) {
     if (d < bestD) { bestD = d; best = c; }
   }
   const r = best.getBoundingClientRect();
+  // over the middle of a chapter card: into that chapter (a chapter joins
+  // it as a section; a section or loose card goes to its end)
+  const middle = st.x > r.left + r.width * 0.25 && st.x < r.right - r.width * 0.25 && st.y >= r.top && st.y <= r.bottom;
+  if (middle && best.dataset.kind === 'chapter' && (kind === 'section' || kind === 'loose' || (kind === 'chapter' && best.dataset.ch !== st.src.cell.dataset.ch))) {
+    return { cell: best, side: 'into' };
+  }
   let side = st.x < r.left + r.width / 2 ? 'before' : 'after';
   // a chapter goes in only between chapters
   if (kind === 'chapter') {
@@ -8433,6 +8484,26 @@ function dragTarget(st) {
 
 function showDropCaret(target) {
   let caret = $('#ob-caret');
+  for (const c of $$('.ob-cell.ob-join')) if (!target || c !== target.cell || target.side !== 'into') c.classList.remove('ob-join');
+  let tip = $('#ob-join-tip');
+  if (target && target.side === 'into') {
+    if (caret) caret.remove();
+    target.cell.classList.add('ob-join');
+    if (!tip) {
+      tip = document.createElement('div');
+      tip.id = 'ob-join-tip';
+      document.body.appendChild(tip);
+    }
+    const name = chapterName(target.cell.dataset.ch);
+    tip.textContent = cardDrag && cardDrag.src.kind === 'chapter'
+      ? t('becomes a section of {chapter}', { chapter: name })
+      : t('goes to the end of {chapter}', { chapter: name });
+    const r = target.cell.getBoundingClientRect();
+    tip.style.left = (r.left + 8) + 'px';
+    tip.style.top = (r.bottom + 4) + 'px';
+    return;
+  }
+  if (tip) tip.remove();
   if (!target || !target.cell) { if (caret) caret.remove(); return; }
   if (!caret) {
     caret = document.createElement('div');
@@ -8453,6 +8524,15 @@ function dropCard(src, target) {
     return;
   }
   const tc = target.cell;
+  if (target.side === 'into') {
+    const into = tc.dataset.ch;
+    if (src.kind === 'chapter') { joinChapter(cell.dataset.ch, into).then(() => { if (currentTab === 'outline') renderBoard(); }); return; }
+    if (src.kind === 'loose') looseToSection(cell.dataset.loose, { ch: into, before: null });
+    else if (cell.dataset.virtual) moveVirtualNote(cell.dataset.ch, cell.dataset.sec, into);
+    else moveSection(cell.dataset.ch, Number(cell.dataset.seg), { ch: into, before: null });
+    renderBoard();
+    return;
+  }
   if (tc.dataset.kind === 'scene') {
     const idx = Number(tc.dataset.scene);
     const to = target.side === 'before' ? idx : idx + 1;
@@ -9536,6 +9616,7 @@ async function backToShelf() {
   undoStack = [];
   $('#editor-view').hidden = true;
   $('#bookshelf-view').hidden = false;
+  applyBright();
   spEditorMode(); // a script's pane, page and title page go
   spReportState();
   renderShelves();
@@ -10667,6 +10748,21 @@ function currentAlign() {
 // alignment) follow the page. Selection changes call this often, so an unchanged payload is
 // not sent again.
 let viewStateSent = '';
+
+// Brighter Interface, remembered two ways: while writing (where a faint
+// interface keeps out of the way) and everywhere else in a book, the
+// Outline, Notes and Darlings, where the tips need reading (bright unless
+// the writer turns it down). The shelf goes with writing.
+const brightAside = () => !!book && !$('#editor-view').hidden && currentTab !== 'manuscript';
+function brightNow() {
+  if (brightAside()) return library.uiBrightAside === undefined ? true : !!library.uiBrightAside;
+  return library.uiBright === undefined ? SYSTEM_CONTRAST.matches : !!library.uiBright;
+}
+function applyBright() {
+  if (!library) return;
+  document.body.classList.toggle('bright', brightNow());
+  reportViewState();
+}
 function reportViewState() {
   if (!window.neo.viewState || !library) return;
   const payload = {
@@ -11084,8 +11180,7 @@ function applyFonts() {
   document.body.classList.toggle('light', library.pageTheme === 'light');
   // the system's "Increase contrast" turns it on too, until the writer
   // chooses in the View menu
-  document.body.classList.toggle('bright', library.uiBright === undefined ? SYSTEM_CONTRAST.matches : !!library.uiBright);
-  reportViewState();
+  applyBright();
   // View → Interface Size: everything but the page
   const uiZoom = [1, 1.25, 1.5, 2, 2.5, 3].includes(library.uiZoom) ? library.uiZoom : 1;
   document.documentElement.style.setProperty('--ui-zoom', uiZoom);
@@ -12819,7 +12914,9 @@ window.neo.onMenu(async (msg) => {
     applyFonts();
   }
   if (msg.type === 'uiBright') {
-    library.uiBright = !document.body.classList.contains('bright');
+    // the tab you're on decides which of the two settings this is
+    if (brightAside()) library.uiBrightAside = !document.body.classList.contains('bright');
+    else library.uiBright = !document.body.classList.contains('bright');
     await writeLibrary(library);
     applyFonts();
   }
