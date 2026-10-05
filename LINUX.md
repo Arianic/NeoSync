@@ -13,7 +13,7 @@ chmod +x NeoSync-1.3.3-beta.1-x86_64.AppImage
 ./NeoSync-1.3.3-beta.1-x86_64.AppImage
 ```
 
-Use your distribution's AppImage/FUSE support. If FUSE is unavailable, AppImage also supports `--appimage-extract-and-run`. For Debian/Ubuntu, install the matching `.deb` with your package manager so desktop library dependencies are resolved:
+Starting with beta.5, NeoSync uses upstream's newer AppImage runtime, avoiding the older libfuse2 requirement. Older builds may need your distribution's AppImage/FUSE support. AppImage also supports `--appimage-extract-and-run` when mounting is unavailable. For Debian/Ubuntu, install the matching `.deb` with your package manager so desktop library dependencies are resolved:
 
 ```sh
 sudo apt install ./NeoSync-1.3.3-beta.1-amd64.deb
