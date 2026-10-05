@@ -10,7 +10,7 @@ NeoSync keeps Neo's plain-file library, distraction-free editor, shelves, notes 
 
 - **Windows:** download `NeoSync-Setup-<version>.exe` and run it, or use the portable `.exe`. Builds are currently unsigned, so Windows may show an unknown-publisher warning.
 - **Linux:** download the x86-64 `.AppImage`, make it executable, and run it. Debian/Ubuntu users can use the `.deb` instead. See [LINUX.md](LINUX.md) for FUSE and GNOME Keyring/KDE Wallet setup.
-- Install updates manually from this repository's Releases page. NeoSync never installs upstream Neo updates automatically.
+- Starting with 1.3.3-beta.3, installed Windows builds and Linux AppImages quietly download updates from this repository's published releases. Choose **Help → Check for Update… → Restart to update** when ready. Earlier versions need one manual update. Portable Windows builds and Debian packages are updated manually. NeoSync never installs upstream Neo releases.
 
 ## Connect your devices
 
@@ -50,6 +50,8 @@ npm run package:linux:x64    # Linux
 ```
 
 Desktop tests use temporary profiles and dummy accounts. Linux GUI/keyring tests require a graphical session and a working keyring; CI creates a disposable session. Artifacts go to `dist/`, which is excluded from Git. Node modules and personal libraries must not be committed.
+
+Update downloads are tested with `npm run test:updates`, using inert files served locally; no installer is executed. Beta builds follow beta and stable releases, while stable builds follow stable releases only. Draft releases never reach installed apps.
 
 ## Maintaining this fork
 

@@ -131,7 +131,18 @@ app.whenReady().then(async () => {
     assert.equal(await js('document.querySelector(".sync-protection").hidden'), true);
     assert.equal(await js(`document.querySelector('${primary}').disabled`), true);
     await js('document.querySelector(".sync-dialog").close()');
-    console.log('Sync UI passed: guided login, validation, status transitions, keyring retry, manual fallback, compact viewport and themes.');
+    await js('document.querySelectorAll(".sync-dialog").forEach(dialog => dialog.close())');
+    const dialogsBeforeUpdate = await js('document.querySelectorAll(".modal-backdrop").length');
+    await js('updateMessage({state:"ready",ready:true,latestVersion:"99.0.0"})');
+    assert.equal(await js('document.querySelectorAll(".modal-backdrop").length'), dialogsBeforeUpdate, 'Background updates do not open a dialog');
+    assert.equal(await js('document.querySelector("#update-chip").textContent'), 'Update ready');
+    electron.ipcMain.removeHandler('update:check');
+    electron.ipcMain.handle('update:check', () => ({state:'ready',ready:true,canInstall:true,hasUpdate:true,latestVersion:'99.0.0',currentVersion:'1.3.3-beta.3'}));
+    await js('document.querySelector("#update-chip").onclick()');
+    assert.equal(await js('updateDialog.querySelector(".m-ok").textContent'), 'Restart to update');
+    await tick();
+    await js('updateDialog.close()');
+    console.log('Sync and update UI passed: guided login, validation, status, keyring retry, manual fallback, viewport/themes, quiet update indicator and explicit restart.');
     clearTimeout(timeout); app.exit(0);
   } catch (err) { console.error(err); clearTimeout(timeout); app.exit(1); }
 });

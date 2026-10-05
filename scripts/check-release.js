@@ -9,7 +9,8 @@ assert.equal(pkg.version, lock.version, 'Lockfile version must match');
 assert.equal(pkg.version, lock.packages[''].version, 'Root lockfile version must match');
 assert.match(pkg.version, /^\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$/);
 assert.equal(pkg.name, 'neosync');
-assert.equal(pkg.build.publish, null, 'App updates remain manual');
+assert.deepEqual(pkg.build.publish, require('../update-feed.json'), 'Updates must use the NeoSync release feed');
+assert.equal(pkg.build.detectUpdateChannel, false, 'Each release uses the same metadata filenames');
 assert.equal(pkg.homepage, 'https://github.com/Arianic/NeoSync');
 assert.ok(fs.existsSync(path.join(root, 'docs/releases', pkg.version + '.md')), 'Add release notes first');
 if (process.env.GITHUB_REF?.startsWith('refs/tags/')) {

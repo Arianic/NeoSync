@@ -6203,11 +6203,14 @@ function scheduleStickiesSave() {
   }, 600);
 }
 
+let stickiesSaveFailed = false;
 function flushStickiesSave() {
-  if (!saveTimers.stickies || !book) return;
+  if ((!saveTimers.stickies && !stickiesSaveFailed) || !book) return;
   clearTimeout(saveTimers.stickies);
   delete saveTimers.stickies;
-  window.neo.writeJSON(book.id, 'stickies', stickies);
+  const pending = window.neo.writeJSON(book.id, 'stickies', stickies);
+  pending.then(() => { stickiesSaveFailed = false; }, () => { stickiesSaveFailed = true; });
+  return pending;
 }
 
 // Pair every mark in the manuscript with a note: pasted duplicates get their
@@ -9009,8 +9012,10 @@ function scheduleAuxSave() {
 function flushAux() {
   if (!auxDirty || !book) return;
   const kind = $('#aux-editor').dataset.kind;
-  if (kind) window.neo.writeAux(book.id, kind, $('#aux-editor').innerHTML);
+  const pending = kind ? window.neo.writeAux(book.id, kind, $('#aux-editor').innerHTML) : undefined;
   auxDirty = false;
+  if (pending) pending.catch(() => { auxDirty = true; });
+  return pending;
 }
 
 function renderDarlings() {
@@ -9349,6 +9354,7 @@ async function saveMeta() {
 
 function flushAllSaves(e) {
   if (!book) return;
+  const pending = [];
   // An open outline card holds its draft in the editor, outside book metadata.
   // Commit it before leaving/closing or explicitly syncing. The background tick
   // must not take focus away from a card the writer is still editing.
@@ -9372,12 +9378,15 @@ function flushAllSaves(e) {
   if (moved) book.lastPosition = { ...spot, scroll, at: newLetter ? Date.now() : (prev.at || Date.now()) };
   for (const chId of book.chapterOrder) {
     if (chapterHTML[chId] !== undefined && chapterHTML[chId] !== savedHTML[chId]) {
-      persistChapter(chId);
+      pending.push(persistChapter(chId));
     }
   }
-  flushAux();
-  flushStickiesSave();
-  if (moved || metaSig(book) !== savedMetaSig) saveMeta();
+  pending.push(flushAux(), flushStickiesSave());
+  if (moved || metaSig(book) !== savedMetaSig) pending.push(saveMeta());
+  const done = Promise.all(pending);
+  // Existing background callers need no await; explicit restart must await it.
+  done.catch(err => window.neo.logError('save: ' + (err.message || err)));
+  return done;
 }
 
 /* ================================================================== */
@@ -12717,13 +12726,14 @@ async function doEmailDraft() {
 
 // Help → Check for Update…: on-demand release lookup, only ever runs on a click
 let updateDialog = null; // the Check for Update… window, while it's open
+let updateRestarting = false;
 
 function updateDialogBox(res) {
   const bd = document.createElement('div');
   bd.className = 'modal-backdrop';
   bd.innerHTML = `
     <div class="modal" style="width:400px">
-      <h2 style="font-size:16px">${t('NEO {version} is available', { version: res.latestVersion })}</h2>
+      <h2 style="font-size:16px">${t('NeoSync {version} is available', { version: res.latestVersion })}</h2>
       <p class="up-text">${t('You have {version}.', { version: res.currentVersion })}</p>
       <div class="up-bar" hidden><div class="up-fill"></div></div>
       <div style="text-align:right;margin-top:14px">
@@ -12754,6 +12764,7 @@ function updateDialogShow(state, info = {}) {
   const mb = (n) => (n / 1048576).toFixed(0);
   later.hidden = false;
   ok.hidden = false;
+  ok.disabled = false;
   bar.hidden = true;
   if (state === 'downloading') {
     const pct = Math.max(0, Math.min(100, info.percent || 0));
@@ -12764,9 +12775,21 @@ function updateDialogShow(state, info = {}) {
     fill.style.width = pct.toFixed(1) + '%';
     ok.hidden = true;
   } else if (state === 'ready') {
-    text.textContent = t('Downloaded. NEO will save your work and restart.');
+    text.textContent = t('Downloaded. Restart when you are ready; NeoSync will save your work first.');
     ok.textContent = t('Restart to update');
-    ok.onclick = () => { flushAllSaves(); setTimeout(() => window.neo.installUpdate(), 300); };
+    ok.onclick = async () => {
+      ok.disabled = true;
+      document.body.inert = true;
+      updateRestarting = true;
+      try {
+        await flushAllSaves();
+        await window.neo.syncDrain();
+        if (!(await window.neo.installUpdate())) throw new Error(t('The update is not ready. Check for updates again.'));
+      } catch (err) {
+        updateRestarting = false;
+        text.textContent = t('Could not restart safely: {message}. Your app is still open.', { message: err.message || String(err) });
+      } finally { if (!updateRestarting) { ok.disabled = false; document.body.inert = false; } }
+    };
     ok.focus();
   } else if (state === 'error') {
     text.textContent = t('The update couldn’t be installed from here: {message}', { message: info.message || t('unknown error') })
@@ -12774,7 +12797,7 @@ function updateDialogShow(state, info = {}) {
     ok.textContent = t('View Release');
     ok.onclick = () => { window.neo.openRelease(); bd.close(); };
   } else if (state === 'release') {
-    text.textContent = t('You have {version}.', { version: info.currentVersion });
+    text.textContent = t('You have {version}. Download the newer version from the release page for this build.', { version: info.currentVersion });
     ok.textContent = t('View Release');
     ok.onclick = () => { window.neo.openRelease(); bd.close(); };
   }
@@ -12783,11 +12806,11 @@ function updateDialogShow(state, info = {}) {
 async function checkForUpdate() {
   if (updateDialog) { updateDialog.focus(); return; }
   const res = await window.neo.checkForUpdate();
-  if (res.disabled) { updateNotice(t('NeoSync updates are installed manually'), t('Upstream automatic updates are disabled for this fork.')); return; }
+  if (res.disabled) { updateNotice(t('Updates are available in installed NeoSync builds'), t('Source checkouts are updated with Git.')); return; }
   // the answer comes in a window, like an update does: a line at the foot
   // of the screen was too easy to miss
   if (res.error) { updateNotice(t('Couldn’t check for updates — try again later')); return; }
-  if (!res.hasUpdate) { updateNotice(t('NEO is up to date'), t('You have {version}.', { version: res.currentVersion })); return; }
+  if (!res.hasUpdate) { updateNotice(t('NeoSync is up to date'), t('You have {version}.', { version: res.currentVersion })); return; }
   // NEO has been fetching it in the background since it was found: show
   // where that download is — usually done, with "Restart to update"
   updateDialog = updateDialogBox(res);
@@ -12822,6 +12845,17 @@ function updateNotice(title, line) {
 // messages from the updater in the main process
 // (the download itself is silent: they only matter while the window is open)
 function updateMessage(msg) {
+  if (msg.state === 'error' && updateRestarting) { updateRestarting = false; document.body.inert = false; }
+  let chip = $('#update-chip');
+  if (!chip && msg.ready) {
+    chip = document.createElement('button');
+    chip.id = 'update-chip';
+    chip.className = 'btn-quiet';
+    chip.textContent = t('Update ready');
+    chip.onclick = checkForUpdate;
+    $('.shelf-header-right').prepend(chip);
+  }
+  if (chip) chip.hidden = !msg.ready;
   if (!updateDialog || !updateDialog.querySelector('.up-bar')) return; // nothing open to report to
   updateDialogShow(msg.state, msg);
 }

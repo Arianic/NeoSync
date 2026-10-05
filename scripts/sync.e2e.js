@@ -3,6 +3,9 @@
 // All app data, settings and manuscripts are confined to this temporary root.
 const electron = require('electron');
 const { app } = electron;
+const registered = new Map();
+const register = electron.ipcMain.handle.bind(electron.ipcMain);
+electron.ipcMain.handle = (channel, handler) => { registered.set(channel, handler); register(channel, handler); };
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -63,6 +66,39 @@ app.whenReady().then(async () => {
     assert.equal(fs.readFileSync(path.join(root, ids.book, 'chapters', ids.chapter + '.html'), 'utf8'), '<p>Offline autosave survives.</p>');
     win.webContents.send('menu', { type: 'syncPrepare', token: 'editor-test' });
     await tick(); assert.equal(await js('document.body.inert'), false);
+    // A failed or slow save must never be overtaken by an update restart.
+    await js(`openBook(${JSON.stringify(ids.book)})`);
+    let installs = 0;
+    electron.ipcMain.removeHandler('update:install');
+    register('update:install', () => { installs++; return false; });
+    const realWrite = registered.get('chapter:write');
+    electron.ipcMain.removeHandler('chapter:write');
+    register('chapter:write', async () => { throw new Error('Test disk failure'); });
+    await js(`chapterHTML[book.chapterOrder[0]] = '<p>Words waiting for disk.</p>';
+      updateDialog = updateDialogBox({latestVersion:'99.0.0',currentVersion:'1.3.3-beta.3'});
+      updateDialogShow('ready');
+      document.querySelector('.modal-backdrop .m-ok').onclick();`);
+    assert.equal(installs, 0);
+    assert.equal(await js('document.body.inert'), false);
+    assert.match(await js('document.querySelector(".up-text").textContent'), /still open/);
+    let finishWrite, startedWrite;
+    const waitingForWrite = new Promise(resolve => { startedWrite = resolve; });
+    electron.ipcMain.removeHandler('chapter:write');
+    register('chapter:write', (...args) => new Promise(resolve => {
+      finishWrite = async () => resolve(await realWrite(...args));
+      startedWrite();
+    }));
+    await js('window.restartTest = document.querySelector(".modal-backdrop .m-ok").onclick(); void 0');
+    await waitingForWrite;
+    assert.equal(installs, 0);
+    assert.equal(await js('document.body.inert'), true);
+    await finishWrite(); await js('window.restartTest');
+    electron.ipcMain.removeHandler('chapter:write');
+    register('chapter:write', realWrite);
+    assert.equal(installs, 1);
+    assert.equal(fs.readFileSync(path.join(root, ids.book, 'chapters', ids.chapter + '.html'), 'utf8'), '<p>Words waiting for disk.</p>');
+    assert.equal(await js('document.body.inert'), false);
+    await js('updateDialog.close()');
     // Upstream outline cards must reach disk before the bookshelf permits sync.
     await js(`
       switchTab('outline');
