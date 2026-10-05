@@ -6941,6 +6941,8 @@ function switchTab(name) {
   auxEditor.hidden = true;
   dList.hidden = true;
   oList.hidden = true;
+  // the outline's cards, their List/Cards switch and their hint belong to the Outline alone
+  for (const id of ['#outline-board', '#outline-views', '#outline-board-hint']) { const el = $(id); if (el) el.hidden = true; }
 
   if (name === 'darlings') {
     $('#aux-title').textContent = t('Darlings');
