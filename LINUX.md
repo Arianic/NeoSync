@@ -9,17 +9,17 @@ Linux packaging supports x86-64 and ARM64, with **AppImage** and **Debian `.deb`
 For an AppImage, make the downloaded file executable and open it from your file manager, or run:
 
 ```sh
-chmod +x NeoSync-1.3.2-x86_64.AppImage
-./NeoSync-1.3.2-x86_64.AppImage
+chmod +x NeoSync-1.3.3-beta.1-x86_64.AppImage
+./NeoSync-1.3.3-beta.1-x86_64.AppImage
 ```
 
 Use your distribution's AppImage/FUSE support. If FUSE is unavailable, AppImage also supports `--appimage-extract-and-run`. For Debian/Ubuntu, install the matching `.deb` with your package manager so desktop library dependencies are resolved:
 
 ```sh
-sudo apt install ./NeoSync-1.3.2-amd64.deb
+sudo apt install ./NeoSync-1.3.3-beta.1-amd64.deb
 ```
 
-Version numbers in these examples follow the current `package.json`. ARM64 builds have `arm64` in their filename. Do not run the app as root. Keep Electron's normal sandbox enabled.
+Replace the example version with the version you downloaded. Published beta builds target x86-64; ARM64 builds can be made locally but have not been runtime-tested. Do not run the app as root. Keep Electron's normal sandbox enabled.
 
 To run from source, use Node.js **24 or later** (the pinned Hunspell dependency requires it):
 
@@ -40,21 +40,18 @@ npm run package:linux:arm64
 
 ## Credentials and Linux sessions
 
-### CachyOS quick start
+### AppImage quick start
 
-Use the x86-64 AppImage on an Intel/AMD CachyOS laptop. Copy `NeoSync-1.3.2-x86_64.AppImage` to `~/Applications` (create that folder if needed). No Node.js or source checkout is needed. CachyOS documents FUSE 2 as the AppImage prerequisite:
+Use the x86-64 AppImage on an Intel/AMD Linux computer. Copy the downloaded AppImage to `~/Applications` (create that folder if needed). No Node.js or source checkout is needed. Install your distribution's AppImage/FUSE support if required, then run:
 
 ```sh
-sudo pacman -S --needed fuse2
-chmod +x ~/Applications/NeoSync-1.3.2-x86_64.AppImage
-~/Applications/NeoSync-1.3.2-x86_64.AppImage
+chmod +x ~/Applications/NeoSync-1.3.3-beta.1-x86_64.AppImage
+~/Applications/NeoSync-1.3.3-beta.1-x86_64.AppImage
 ```
 
 After marking it executable, you can also launch it by double-clicking it in the file manager. On KDE Plasma, leave KDE Wallet enabled and unlock it if asked. On GNOME, use GNOME Keyring. Connect through **Log in with Nextcloud**, approve access in the browser, then click **Connect** with the same remote folder used on Windows. Leave the manual username/password fields empty when using browser login. Wait on the bookshelf for incoming books. The local library should remain outside a Nextcloud Desktop managed folder.
 
 The AppImage runs as a portable app; it does not automatically install a launcher-menu entry. On KDE, add one with the application menu editor, pointing at the AppImage's permanent location. Updates are manual: close NeoSync and replace the AppImage with a newer build. Your library and account settings are stored separately.
-
-Reference: [CachyOS AppImage setup](https://wiki.cachyos.org/configuration/post_install_setup/#managing-appimages).
 
 ### Protected account storage
 
@@ -67,9 +64,9 @@ If your keyring was locked when NeoSync started, unlock it and select **Check ag
 Electron normally chooses the backend from the desktop session. If necessary, explicitly select the matching provider at launch:
 
 ```sh
-./NeoSync-1.3.2-x86_64.AppImage --password-store=gnome-libsecret
+./NeoSync-1.3.3-beta.1-x86_64.AppImage --password-store=gnome-libsecret
 # KDE Plasma 6:
-./NeoSync-1.3.2-x86_64.AppImage --password-store=kwallet6
+./NeoSync-1.3.3-beta.1-x86_64.AppImage --password-store=kwallet6
 ```
 
 Do not use `--password-store=basic`; NeoSync deliberately refuses to persist credentials with it. Changing desktop/keyring providers can make an old credential unreadable; reconnect with a newly granted app password instead of moving credential files between providers or machines. See [Electron's documented Linux secret-store behavior](https://www.electronjs.org/docs/latest/api/safe-storage).
@@ -85,9 +82,9 @@ npm run test:sync:desktop
 
 The Linux-specific unit tests cover GNOME/KDE providers, refusal of unsafe/unknown providers, preservation of encrypted files when locked, retry after unlocking, private file permissions, and durable POSIX replacement. The shared two-device sync suite runs unchanged on Linux.
 
-Local verification on Linux x86-64 (Kali under WSL2/WSLg, Node 24): **85/85 tests passed**, targeted sync lint passed, the real Electron desktop smoke passed, and native GNOME libsecret encryption plus `basic_text` refusal passed in an isolated D-Bus/keyring session. Windows regression tests passed 84 tests with the POSIX-only test skipped. KDE Wallet is covered by provider test doubles, not a live KDE session; ARM64 is configured but has not been runtime-tested. A live read-only download check passed; full live two-device reconciliation remains unverified.
+The 1.3.3-beta.1 release passed GitHub Actions verification on Linux x86-64 and Windows with Node 24: all 89 Linux tests passed; Windows passed 88 with the POSIX-only test skipped. Targeted sync lint, real Electron desktop, restart and UI checks passed on both platforms. Native GNOME libsecret encryption and `basic_text` refusal passed in an isolated Linux D-Bus/keyring session. KDE Wallet is covered by provider test doubles, not a live KDE session; ARM64 is configured but has not been runtime-tested. A live read-only download check passed; full live two-device reconciliation remains unverified.
 
-`.github/workflows/linux-sync.yml` supplies an Ubuntu verification job with Node 24. It runs the unit tests, targeted lint, real Electron desktop smoke, real libsecret storage in a disposable GNOME keyring, and plaintext-fallback rejection, then builds x64 AppImage and Debian packages. It uploads CI artifacts only; it does not create or publish a release. The workflow runs on relevant pull requests or manual dispatch after you choose to push it.
+`.github/workflows/linux-sync.yml` supplies an Ubuntu verification job with Node 24. It runs the unit tests, targeted lint, real Electron desktop, restart and UI checks, real libsecret storage in a disposable GNOME keyring, and plaintext-fallback rejection, then builds x64 AppImage and Debian packages. The desktop workflow calls it on pushes to `main`, release tags and pull requests; it can also be run manually. Tagged desktop builds attach the installers and checksums to a draft release after both platforms pass. Publishing the release remains a manual step.
 
 For a manual native-keyring test, install Xvfb, D-Bus and GNOME Keyring in a disposable Linux test environment, then use the same isolated session as CI:
 

@@ -29,7 +29,7 @@ Review changes, update `UPSTREAM.md`, run tests, and make a pull request to **Ar
 - Run `npm test`, desktop smoke, restart and UI tests on Windows and Linux. CI includes native GNOME keyring and unprotected-backend rejection tests on Linux.
 - Keep targeted sync lint clean. Full-project lint has inherited findings; do not describe it as passing until those are resolved.
 - Test a disposable Windows/Linux library against a real Nextcloud folder: first connection, author names/covers, offline edits, same-file conflicts, deletions/recovery, and close/reopen on both devices.
-- Confirm that an installed build keeps the previous profile/library and can decrypt its saved credential. Test the actual CachyOS/Niri session when claiming it is supported; GNOME CI alone does not validate Niri or KDE.
+- Confirm that an installed build keeps the previous profile/library and can decrypt its saved credential. Test each desktop environment before claiming support; GNOME CI alone does not validate other desktop sessions or KDE Wallet.
 - Keep MIT and dependency notices. Review the committed source for secrets, personal paths and manuscripts. Only installers and checksum files are release assets.
 
 ## Versioning and draft releases

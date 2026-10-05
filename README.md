@@ -9,7 +9,7 @@ NeoSync keeps Neo's plain-file library, distraction-free editor, shelves, notes 
 ## Download
 
 - **Windows:** download `NeoSync-Setup-<version>.exe` and run it, or use the portable `.exe`. Builds are currently unsigned, so Windows may show an unknown-publisher warning.
-- **Linux / CachyOS:** download the x86-64 `.AppImage`, make it executable, and run it. Debian/Ubuntu users can use the `.deb` instead. See [LINUX.md](LINUX.md) for FUSE, GNOME Keyring/KDE Wallet, and Niri setup.
+- **Linux:** download the x86-64 `.AppImage`, make it executable, and run it. Debian/Ubuntu users can use the `.deb` instead. See [LINUX.md](LINUX.md) for FUSE and GNOME Keyring/KDE Wallet setup.
 - Install updates manually from this repository's Releases page. NeoSync never installs upstream Neo updates automatically.
 
 ## Connect your devices
