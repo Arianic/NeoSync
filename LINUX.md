@@ -51,7 +51,7 @@ chmod +x ~/Applications/NeoSync-1.3.3-beta.1-x86_64.AppImage
 
 After marking it executable, you can also launch it by double-clicking it in the file manager. On KDE Plasma, leave KDE Wallet enabled and unlock it if asked. On GNOME, use GNOME Keyring. Connect through **Log in with Nextcloud**, approve access in the browser, then click **Connect** with the same remote folder used on Windows. Leave the manual username/password fields empty when using browser login. Wait on the bookshelf for incoming books. The local library should remain outside a Nextcloud Desktop managed folder.
 
-The AppImage runs as a portable app; it does not automatically install a launcher-menu entry. On KDE, add one with the application menu editor, pointing at the AppImage's permanent location. Updates are manual: close NeoSync and replace the AppImage with a newer build. Your library and account settings are stored separately.
+The AppImage runs as a portable app; it does not automatically install a launcher-menu entry. On KDE, add one with the application menu editor, pointing at the AppImage's permanent location. Starting with beta.3, x86-64 AppImages download updates from published NeoSync releases and offer **Restart to update** under **Help → Check for Update…**. Keep the AppImage and its directory writable by your user. Earlier versions need one manual replacement; Debian packages and extracted AppImages remain manual updates. Your library and account settings are stored separately.
 
 ### Protected account storage
 

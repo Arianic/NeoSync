@@ -55,6 +55,8 @@ button { font: inherit; cursor: pointer; }
   font-size: 22px; letter-spacing: 10px; font-weight: 300; color: var(--accent);
 }
 .shelf-header-right { display: flex; gap: 16px; align-items: center; -webkit-app-region: no-drag; }
+#update-chip { opacity: 0; }
+#shelf-header:hover #update-chip, #update-chip:focus-visible { opacity: 1; }
 #author-chip { color: var(--muted); font-size: 13px; cursor: pointer; }
 #author-chip:hover { color: #ddd; }
 /* the rack of pen-name shelves that unfolds when a book is dragged to the name */

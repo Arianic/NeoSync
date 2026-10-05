@@ -29,7 +29,7 @@ jobs:
           sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
       - run: npm test
       - name: Lint sync integration
-        run: npx --no-install oxlint sync scripts/sync*.js preload.js
+        run: npx --no-install oxlint sync scripts/sync*.js preload.js updates.js scripts/updates*.js scripts/check-update-artifacts.js
       - name: Reject the unprotected fallback
         run: xvfb-run -a env NEOSYNC_EXPECT_KEYRING=basic_text npm run test:sync:keyring -- --password-store=basic
       - name: Real keyring and desktop smoke, isolated from user data
@@ -44,9 +44,12 @@ jobs:
             npm run test:sync:desktop -- --password-store=gnome-libsecret
             npm run test:sync:restart -- --password-store=gnome-libsecret
             npm run test:sync:ui -- --password-store=gnome-libsecret
+            npm run test:updates
           '
       - name: Package AppImage and Debian installer (no publishing)
         run: npm run package:linux:x64
+      - name: Verify update feed and installer checksums
+        run: node scripts/check-update-artifacts.js linux
       - name: Hash Linux installers
         run: cd dist && sha256sum *.AppImage *.deb > SHA256SUMS-linux.txt
       - uses: actions/upload-artifact@v4
@@ -55,5 +58,6 @@ jobs:
           path: |
             dist/*.AppImage
             dist/*.deb
+            dist/latest-linux.yml
             dist/SHA256SUMS-linux.txt
           if-no-files-found: error

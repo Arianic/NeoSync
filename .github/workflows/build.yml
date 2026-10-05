@@ -29,11 +29,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      - run: npx --no-install oxlint sync scripts/sync*.js preload.js
+      - run: npx --no-install oxlint sync scripts/sync*.js preload.js updates.js scripts/updates*.js scripts/check-update-artifacts.js
       - run: npm run test:sync:desktop
       - run: npm run test:sync:restart
       - run: npm run test:sync:ui
+      - run: npm run test:updates
       - run: npm run package:win
+      - run: node scripts/check-update-artifacts.js windows
       - name: Hash Windows installers
         shell: pwsh
         run: |
@@ -47,6 +49,8 @@ jobs:
           name: NeoSync-Windows-x64
           path: |
             dist/*.exe
+            dist/*.blockmap
+            dist/latest.yml
             dist/SHA256SUMS-windows.txt
           if-no-files-found: error
   linux:

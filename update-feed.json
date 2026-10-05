@@ -1,0 +1,6 @@
+{
+  "provider": "generic",
+  "url": "https://github.com/Arianic/NeoSync/releases/latest/download",
+  "channel": "latest",
+  "useMultipleRangeRequest": false
+}

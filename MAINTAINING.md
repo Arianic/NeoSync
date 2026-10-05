@@ -22,7 +22,7 @@ git merge v1.3.5
 
 Replace `1.3.5` with the upstream release being integrated. A release tag keeps the review focused on that release; `upstream/main` may contain newer, unreleased work. Fetching upstream alone never changes NeoSync or anyone's installed app.
 
-Resolve conflicts deliberately. Keep NeoSync's application identity, user-data directory, credential protection, save/apply handoff and disabled upstream updater. In particular, do not accept upstream `package.json`, README or release-workflow replacements wholesale. Never change the library format without considering compatibility with another device running the previous NeoSync version.
+Resolve conflicts deliberately. Keep NeoSync's application identity, user-data directory, credential protection, save/apply handoff and update source pinned to Arianic/NeoSync. In particular, do not accept upstream `package.json`, README or release-workflow replacements wholesale. Never change the library format without considering compatibility with another device running the previous NeoSync version.
 
 Review changes, update `UPSTREAM.md`, run tests, and make a pull request to **Arianic/NeoSync main**. Merge after checks pass. Opening an upstream pull request is a separate decision.
 
@@ -47,7 +47,10 @@ The first public candidate is `1.3.3-beta.1`, above the local 1.3.2 builds alrea
 2. Add `docs/releases/<version>.md` covering changes, validation, known limitations and any migration steps. Commit the files on the tested `main` branch.
 3. Run `npm run release`. It checks the branch, clean worktree (including new files), destination repository, matching metadata and tag availability, then pushes `main` and an annotated `neosync-v<version>` tag.
 4. Wait for **NeoSync desktop** in GitHub Actions. It tests and builds Windows and Linux and creates a **draft** release with installers and per-platform SHA-256 manifests. Prerelease versions get the prerelease flag.
-5. Check the installers, checksum files and release notes. Publish the draft manually only when ready. The app currently updates manually; a GitHub release does not update installations by itself.
+5. Check the installers, checksum files and release notes. Starting with beta.3, also verify `latest.yml`, `latest-linux.yml` and the Windows blockmap are attached. CI verifies the metadata's file names, sizes and SHA-512 hashes against the actual installers. Test a complete installed-version upgrade on both platforms before claiming end-to-end validation.
+6. Publish the draft manually only when ready. Publishing makes it eligible for automatic download by installed NeoSync versions from beta.3 onward. Drafts are invisible to the updater. Beta installations follow the same prerelease channel or a newer stable release; stable installations exclude prereleases. Installation requires **Restart to update**, after local saves finish. Older versions, Windows portable builds and Debian packages require manual updates.
+
+Keep `neosync-v<version>` tags. `updates.js` validates published releases from Arianic/NeoSync and pins the updater to that release's download directory, because the standard GitHub provider does not recognize these beta tags. Builder metadata uses the same `latest*.yml` filenames inside each versioned release; it is not a separate rolling feed. `--publish never` still prevents the packaging step from publishing anything. Do not add repository tokens to the app.
 
 The workflow refuses to overwrite an already-published release. If a build fails, fix it and use a new version/tag if source changes are needed. A failed infrastructure run can be rerun for the same commit while its release remains a draft. Never silently replace a public artifact with different contents.
 
