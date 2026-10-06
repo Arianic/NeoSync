@@ -22,6 +22,18 @@ test('Hunspell reads the pinned Romanian dictionary as published', async () => {
   for (const [word, ok] of Object.entries(res.result)) assert.equal(ok, true, word);
 });
 
+test('Hunspell reads the pinned Hungarian dictionary and suggests accents', async () => {
+  const dir = path.join(root, 'node_modules/dictionary-hu');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'))).version, '3.0.0');
+  const send = spellWorker();
+  assert.equal((await send({ type: 'load', language: 'hu', dir })).ok, true);
+  const good = await send({ type: 'check', words: ['ház', 'házaimban', 'gyönyörű', 'Budapesten', 'íróasztal', 'szerkesztőknek'] });
+  for (const [word, ok] of Object.entries(good.result)) assert.equal(ok, true, word);
+  const bad = await send({ type: 'check', words: ['gyonyoru', 'haz'] });
+  for (const [word, ok] of Object.entries(bad.result)) assert.equal(ok, false, word);
+  assert.ok((await send({ type: 'suggest', word: 'gyonyoru' })).result.includes('gyönyörű'));
+});
+
 function spellWorker() {
   let handle, reply;
   const context = vm.createContext({
