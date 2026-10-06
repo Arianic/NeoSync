@@ -6,6 +6,7 @@ const { app, BrowserWindow, ipcMain, dialog, Menu, MenuItem, utilityProcess, scr
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { Buffer } = require('buffer');
 
 // Every disk request from the page passes through here: a write the system
 // refuses (see reportBlockedWrite) is explained to the writer, then the error
@@ -46,7 +47,9 @@ function readSettings() {
 }
 function writeSettings(obj) {
   fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });
-  fs.writeFileSync(settingsPath(), JSON.stringify(obj, null, 2));
+  // the same whole-or-nothing write as the library: a settings file cut
+  // short would forget a chosen library folder
+  writeFileDurable(settingsPath(), JSON.stringify(obj, null, 2));
 }
 
 // ---------------------------------------------------------------------------
@@ -237,6 +240,35 @@ function useLibraryDir(dir) {
   settings.libraryDir = LIBRARY_DIR;
   try { writeSettings(settings); } catch (err) { logError('settings', err); }
 }
+// The writer's own library folder, missing at launch: a drive not plugged
+// in, a NAS or cloud folder not mounted yet. Never swapped quietly for the
+// default (new books would land there and seem lost when the drive came
+// back). Asked once: Try Again once it's there, Choose Folder…, or Continue
+// with the default folder for this session only; the choice stays saved.
+function isDir(dir) { try { return fs.statSync(dir).isDirectory(); } catch { return false; } }
+function awaitChosenLibrary(chosen) {
+  const fallback = path.join(app.getPath('documents'), 'NEO Library');
+  while (!isDir(chosen)) {
+    const r = dialog.showMessageBoxSync({
+      type: 'warning',
+      message: t('NEO can\'t save in your library folder'),
+      detail: blockedDetail(chosen, { code: 'ENOENT' }),
+      buttons: [t('Try Again'), t('Choose Folder…'), t('Continue')],
+      defaultId: 0,
+      cancelId: 2
+    });
+    if (r === 2) return fallback;
+    if (r === 1) {
+      const picked = dialog.showOpenDialogSync({
+        title: t('Choose a folder for your NEO library'),
+        defaultPath: os.homedir(),
+        properties: ['openDirectory', 'createDirectory']
+      });
+      if (picked && picked[0]) { useLibraryDir(picked[0]); return picked[0]; }
+    }
+  }
+  return chosen;
+}
 // said once, after the window is up, only when it happened
 let libraryFallback = null;
 function announceLibraryFallback() {
@@ -310,9 +342,17 @@ function reportBlockedWrite(err) {
   (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts)).catch(() => {});
 }
 
+// A brand-new library starts with one empty shelf. A library.json that has
+// gone missing beside its spare copies or its books is not a new library:
+// library:read recovers it (from .tmp/.bak, else from the book folders)
+// instead of an empty seed hiding every book.
+function libraryHasHistory() {
+  if (fs.existsSync(LIBRARY_FILE + '.bak') || fs.existsSync(LIBRARY_FILE + '.tmp')) return true;
+  try { return fs.readdirSync(LIBRARY_DIR).some((d) => d.startsWith('book-')); } catch { return false; }
+}
 function ensureLibrary() {
   if (!fs.existsSync(LIBRARY_DIR)) fs.mkdirSync(LIBRARY_DIR, { recursive: true });
-  if (!fs.existsSync(LIBRARY_FILE)) {
+  if (!fs.existsSync(LIBRARY_FILE) && !libraryHasHistory()) {
     const seed = {
       authorName: '',
       penNames: [],
@@ -390,9 +430,16 @@ function renameIntoPlace(from, to) {
 
 function writeFileDurable(file, data) {
   const tmp = file + '.tmp';
+  const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
   const fd = fs.openSync(tmp, 'w');
   try {
-    fs.writeSync(fd, typeof data === 'string' ? data : Buffer.from(data));
+    // a write can take less than it was given; keep going until every byte
+    // is down, and never swap in a file that's only partly written
+    for (let off = 0; off < buf.length;) {
+      const n = fs.writeSync(fd, buf, off, buf.length - off);
+      if (!(n > 0)) throw Object.assign(new Error('Short write: ' + tmp), { code: 'EIO', path: tmp });
+      off += n;
+    }
     fs.fsyncSync(fd);
   } finally {
     fs.closeSync(fd);
@@ -413,7 +460,7 @@ function parseJSONFile(file) {
 function readJSON(file, fallback) {
   const main = parseJSONFile(file);
   if (main !== undefined) return main;
-  if (!fs.existsSync(file) && !fs.existsSync(file + '.bak')) return fallback;
+  if (!fs.existsSync(file) && !fs.existsSync(file + '.bak') && !fs.existsSync(file + '.tmp')) return fallback;
   for (const spare of [file + '.tmp', file + '.bak']) {
     const v = parseJSONFile(spare);
     if (v === undefined) continue;
@@ -1328,7 +1375,8 @@ async function dailyBackup() {
     if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir, { recursive: true });
     const today = new Date().toISOString().slice(0, 10);
     const target = path.join(backupsDir, `neo-backup-${today}.zip`);
-    if (fs.existsSync(target)) return;
+    if (fs.existsSync(target) || backupRunning) return;
+    backupRunning = true;
 
     const JSZip = require('jszip');
     const zip = new JSZip();
@@ -1342,6 +1390,9 @@ async function dailyBackup() {
       try { names = fs.readdirSync(dir); } catch (err) { missed.push(`${rel || '.'} (${err.code || err.message})`); return; }
       for (const name of names) {
         if (rel === '' && skip.has(name)) continue;
+        // only NEO's own things: a library kept in a busy folder (Dropbox,
+        // Documents) doesn't zip everything else in there every day
+        if (rel === '' && !(name.startsWith('book-') || name.startsWith('library.json') || name === '_catalog.txt')) continue;
         if (name === '.DS_Store' || /^\..+\.icloud$/.test(name)) continue; // Finder litter; iCloud's stand-in for a file not downloaded
         const full = path.join(dir, name);
         const relPath = rel ? rel + '/' + name : name;
@@ -1359,15 +1410,23 @@ async function dailyBackup() {
       zip.file('_left-out-of-this-backup.txt', missed.join('\n') + '\n');
       logError('backup', new Error('left out of today\'s backup: ' + missed.join(', ')));
     }
-    fs.writeFileSync(target, await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
+    // written beside its real name and swapped in whole, so a backup cut
+    // short never stands in for the day's backup
+    const data = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+    await JSZip.loadAsync(data); // reads back whole, or it doesn't count
+    writeFileDurable(target, data);
 
     // prune old backups
-    const backups = fs.readdirSync(backupsDir).filter((f) => f.startsWith('neo-backup-')).sort();
+    const backups = fs.readdirSync(backupsDir).filter((f) => /^neo-backup-.*\.zip$/.test(f)).sort();
     while (backups.length > 14) fs.unlinkSync(path.join(backupsDir, backups.shift()));
   } catch (err) {
     logError('backup', err);
+    try { fs.unlinkSync(path.join(LIBRARY_DIR, 'Backups', `neo-backup-${new Date().toISOString().slice(0, 10)}.zip.tmp`)); } catch { /* none */ }
+  } finally {
+    backupRunning = false;
   }
 }
+let backupRunning = false;
 
 // ---------------------------------------------------------------------------
 // Window
@@ -1435,11 +1494,15 @@ function createWindow() {
   win.on('leave-full-screen', () => fullScreenChanged(false));
   win.webContents.on('did-finish-load', () => { if (win.isFullScreen()) fullScreenChanged(true); });
   const remember = () => {
+    clearTimeout(rememberTimer);
     if (win.isDestroyed() || win.isFullScreen() || win.isMinimized()) return;
-    writeSettings({ ...readSettings(), window: win.getNormalBounds() });
+    try { writeSettings({ ...readSettings(), window: win.getNormalBounds() }); } catch (err) { logError('settings', err); }
   };
-  win.on('resize', remember);
-  win.on('move', remember);
+  // a drag sends dozens of these a second: the place is written once it settles
+  let rememberTimer = null;
+  const rememberSoon = () => { clearTimeout(rememberTimer); rememberTimer = setTimeout(remember, 500); };
+  win.on('resize', rememberSoon);
+  win.on('move', rememberSoon);
   win.on('close', remember);
 
   // Right-click on text: Cut, Copy, Paste, Select All — and nothing else.
@@ -2336,7 +2399,7 @@ app.whenReady().then(() => {
       LIBRARY_DIR = path.join(app.getPath('documents'), 'NEO Library');
       // …unless the writer chose their own folder (File → Library Folder…)
       const chosen = readSettings().libraryDir;
-      if (chosen && fs.existsSync(chosen) && fs.statSync(chosen).isDirectory()) LIBRARY_DIR = chosen;
+      if (chosen) LIBRARY_DIR = awaitChosenLibrary(chosen);
       LIBRARY_FILE = path.join(LIBRARY_DIR, 'library.json');
     } catch (err) {
       logError('paths', err);
@@ -2371,6 +2434,9 @@ app.whenReady().then(() => {
     try { initSpell(); } catch (err) { logError('spell', err); }
     try { buildMenu(); } catch (err) { logError('menu', err); }
     try { dailyBackup(); } catch (err) { logError('backup', err); }
+    // NEO left open for days still makes each day's backup (and retries one
+    // that failed); an existing day's zip makes this a no-op
+    setInterval(() => { dailyBackup().catch(() => {}); }, 60 * 60 * 1000).unref?.();
     try { checkForUpdates(); } catch (err) { logError('updater', err); }
   } catch (err) {
     // catastrophic: tell the human instead of dying in silence

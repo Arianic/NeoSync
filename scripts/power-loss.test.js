@@ -133,6 +133,44 @@ describe('power loss', { concurrency: 1 }, () => {
     const { book } = libraryWithBook();
     assert.deepEqual([...main.call('json:read', book.id, 'nothing-here', ['x'])], ['x']);
   });
+
+  test('library.json deleted outright: its .bak brings the shelves back, not an empty seed', () => {
+    const { dir, book } = libraryWithBook();
+    fs.rmSync(path.join(dir, 'library.json'));
+    const lib = main.call('library:read');
+    assert.ok(lib.shelves[0].bookIds.includes(book.id));
+  });
+
+  test('library.json and its .bak both gone: the book folders still fill a shelf', () => {
+    const { dir, book } = libraryWithBook();
+    fs.rmSync(path.join(dir, 'library.json'));
+    fs.rmSync(path.join(dir, 'library.json.bak'));
+    const lib = main.call('library:read');
+    assert.ok(lib.shelves[0].bookIds.includes(book.id));
+  });
+
+  test('a sidecar left only as its .tmp is recovered, not read as empty', () => {
+    const { book, bookDir } = libraryWithBook();
+    fs.writeFileSync(path.join(bookDir, 'keepers.json.tmp'), JSON.stringify([{ id: 'd1', text: 'recover me' }]));
+    const got = main.call('json:read', book.id, 'keepers', []);
+    assert.equal(got[0].text, 'recover me');
+  });
+
+  test('a write the disk takes in pieces still lands whole; one that stalls never replaces the chapter', () => {
+    const { book } = libraryWithBook();
+    const real = fs.writeSync;
+    const text = '<p>Ünïcode words, ' + 'many '.repeat(400) + 'and the end.</p>';
+    try {
+      fs.writeSync = (fd, buf, off, len) => real(fd, buf, off, Math.min(len, 7));
+      main.call('chapter:write', book.id, 'ch-aaa', text);
+      assert.equal(main.call('chapter:read', book.id, 'ch-aaa'), text);
+      fs.writeSync = (fd, buf, off, len) => (off > 0 ? 0 : real(fd, buf, off, Math.min(len, 7)));
+      assert.throws(() => main.call('chapter:write', book.id, 'ch-aaa', '<p>cut short</p>'));
+    } finally {
+      fs.writeSync = real;
+    }
+    assert.equal(main.call('chapter:read', book.id, 'ch-aaa'), text);
+  });
 });
 
 // Another program holding a file open for a moment, as antivirus, the search
