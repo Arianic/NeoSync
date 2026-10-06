@@ -620,13 +620,38 @@ ipcMain.handle('chapter:read', (_e, bookId, chapterId) => {
   }
 });
 
-ipcMain.handle('chapter:write', (_e, bookId, chapterId, html) => {
+// `expected` is the text the window last read or wrote for this chapter.
+// When the file holds something else (another device wrote it since, and
+// it isn't just an older copy of these words), nothing is written: the
+// window is handed that text to keep as its own chapter first, so neither
+// version is lost to a save that happened before the next look at the disk.
+ipcMain.handle('chapter:write', (_e, bookId, chapterId, html, expected) => {
   const dir = path.join(bookDir(bookId), 'chapters');
   const file = path.join(dir, libName(chapterId) + '.html');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  if (typeof expected === 'string') {
+    let cur = null;
+    try { cur = fs.readFileSync(file, 'utf8'); } catch { /* not there: nothing to keep */ }
+    if (cur !== null && chapterDiverged(cur, expected, html)) return { conflict: cur };
+  }
   writeFileDurable(file, html);
   return true;
 });
+// shared with Pocket's bridge (same rule): the disk copy differs from what
+// this device last knew, holds words, and has a word the new text lacks
+function chapterDiverged(cur, expected, html) {
+  if (cur === expected || cur === html) return false;
+  const bag = (h) => {
+    const m = new Map();
+    for (const w of String(h || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').split(/\s+/)) if (w) m.set(w, (m.get(w) || 0) + 1);
+    return m;
+  };
+  const there = bag(cur);
+  if (!there.size) return false;
+  const here = bag(html);
+  for (const [w, n] of there) if (n > (here.get(w) || 0)) return true;
+  return false;
+}
 
 ipcMain.handle('chapter:delete', (_e, bookId, chapterId) => {
   const file = path.join(bookDir(bookId), 'chapters', libName(chapterId) + '.html');
@@ -1038,9 +1063,16 @@ ipcMain.handle('email:draft', async (_e, { to, subject, body, html, defaultName,
 // Import: .docx / .txt / .md → chapters
 // ---------------------------------------------------------------------------
 
+// numeric references too, and &amp; last, so a literal "&lt;" in the text
+// stays "&lt;" instead of turning into "<"
 const decodeEntities = (s) => s
-  .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-  .replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+  .replace(/&#x([0-9a-f]+);/gi, (m, h) => { try { return String.fromCodePoint(parseInt(h, 16)); } catch { return m; } })
+  .replace(/&#(\d+);/g, (m, d) => { try { return String.fromCodePoint(parseInt(d, 10)); } catch { return m; } })
+  .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+  .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+// a document's own * _ and \ are text, not emphasis: they travel escaped,
+// the way Markdown writes them, and the window turns them back into letters
+const escapeMarks = (s) => s.replace(/[\\*_]/g, '\\$&');
 
 // Is a formatting tag (<w:b>, <w:i>) present, and is it on? Returns true,
 // false (present but switched off — Word writes <w:i w:val="0"/> to cancel
@@ -1065,7 +1097,10 @@ function docxStyleFormats(stylesXml) {
     const basedOn = (body.match(/<w:basedOn\s+w:val="([^"]+)"/) || [])[1];
     // only the style's own run properties, not the paragraph-mark ones
     const rpr = (body.match(/<w:rPr>[\s\S]*?<\/w:rPr>/) || [''])[0];
-    raw[m[1]] = { basedOn, bold: docxFormatOn(rpr, 'w:b'), italic: docxFormatOn(rpr, 'w:i') };
+    // the style's name: always English in the file ("heading 1", "Title"),
+    // while its id follows Word's language ("berschrift1", "Titre1")
+    const name = (body.match(/<w:name\s+w:val="([^"]*)"/) || [])[1] || '';
+    raw[m[1]] = { basedOn, name, bold: docxFormatOn(rpr, 'w:b'), italic: docxFormatOn(rpr, 'w:i') };
   }
   const resolve = (id, depth) => {
     if (out[id]) return out[id];
@@ -1073,6 +1108,7 @@ function docxStyleFormats(stylesXml) {
     if (!st || depth > 8) return { bold: false, italic: false };
     const base = st.basedOn ? resolve(st.basedOn, depth + 1) : { bold: false, italic: false };
     out[id] = {
+      name: st.name,
       bold: st.bold === undefined ? base.bold : st.bold,
       italic: st.italic === undefined ? base.italic : st.italic
     };
@@ -1090,18 +1126,28 @@ function docxParagraphToMarkdown(p, styles = {}) {
   // gives it its title — regardless of locale, the underlying style id is
   // always "Heading*".
   const pStyle = (p.match(/<w:pStyle\s+w:val="([^"]*)"/) || [])[1] || '';
-  const heading = /^heading\s*\d*$/i.test(pStyle);
+  const sName = (styles[pStyle] && styles[pStyle].name) || '';
+  const heading = /^heading\s*\d*$/i.test(pStyle) || /^heading\s*\d*$/i.test(sName);
   // Google Docs exports each of a document's tabs under a "Title"-styled
   // line, and the book's own title page uses the same style: the first one
   // names the book, later ones start chapters (see chapterize)
-  const title = /^title$/i.test(pStyle);
+  const title = /^title$/i.test(pStyle) || /^title$/i.test(sName);
   // what the paragraph's style says, before any run has its say
   const pBase = styles[pStyle] || { bold: false, italic: false };
   const runs = [...p.matchAll(/<w:r[ >][\s\S]*?<\/w:r>/g)].map((rm) => {
     const r = rm[0];
     const rpr = (r.match(/<w:rPr>[\s\S]*?<\/w:rPr>/) || [''])[0];
-    const text = [...r.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)]
-      .map((t) => decodeEntities(t[1])).join('');
+    // the run's text in order: its words, and the tabs, line breaks and
+    // no-break hyphens between them (only <w:t> used to count, which ran
+    // "red,⏎violets" together into "red,violets")
+    const text = [...r.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>|<w:tab\/>|<w:br(\s[^>]*)?\/>|<w:cr\/>|<w:noBreakHyphen\/>/g)]
+      .map((t) => {
+        if (t[1] !== undefined) return escapeMarks(decodeEntities(t[1]));
+        if (t[0].startsWith('<w:tab')) return ' ';
+        if (t[0].startsWith('<w:noBreakHyphen')) return '\u2011';
+        if (/w:type="(page|column)"/.test(t[0])) return '';
+        return '\n';
+      }).join('');
     const rStyle = (rpr.match(/<w:rStyle\s+w:val="([^"]*)"/) || [])[1];
     const rBase = rStyle && styles[rStyle] ? styles[rStyle] : pBase;
     const b = docxFormatOn(rpr, 'w:b');
@@ -1115,12 +1161,16 @@ function docxParagraphToMarkdown(p, styles = {}) {
     if (last && last.bold === run.bold && last.italic === run.italic) last.text += run.text;
     else merged.push({ ...run });
   }
+  // markers hug the words: "** bold **" isn't emphasis to a reader of
+  // Markdown, and a run with no words (a tab, a break) gets none at all
   const text = merged.map((run) => {
-    let t = run.text;
+    const m = run.text.match(/^(\s*)([\s\S]*?)(\s*)$/);
+    let t = m[2];
+    if (!t) return run.text;
     if (run.bold) t = '**' + t + '**';
     if (run.italic) t = '*' + t + '*';
-    return t;
-  }).join('').trim();
+    return m[1] + t + m[3];
+  }).join('').replace(/[ \t]*\n[ \t]*/g, '\n').trim();
   return { text, pageBreak, heading, title };
 }
 
@@ -1146,6 +1196,24 @@ const CHAPTER_WORDS = new RegExp('^(' + [
 const PROLOGUE_WORDS = /^(prologue|prólogo|prologo|prolog|proloog)(?![\p{L}\d])/iu;
 const EPILOGUE_WORDS = /^(epilogue|épilogue|epílogo|epilogo|epilog|epiloog)(?![\p{L}\d])/iu;
 
+// A text file in whatever it was saved as: UTF-8 (with or without its
+// mark), UTF-16 (Notepad's "Unicode"), or, when it isn't valid UTF-8, the
+// Windows code page Word's plain-text export uses
+function readTextFile(fp) {
+  const buf = fs.readFileSync(fp);
+  const { TextDecoder } = require('util');
+  if (buf[0] === 0xFF && buf[1] === 0xFE) return new TextDecoder('utf-16le').decode(buf.subarray(2));
+  if (buf[0] === 0xFE && buf[1] === 0xFF) return new TextDecoder('utf-16be').decode(buf.subarray(2));
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buf).replace(/^\uFEFF/, '');
+  } catch {
+    // Latin-1 plus the code page's own 0x80–0x9F (curly quotes, dashes, €)
+    const cp = '\u20AC\uFFFD\u201A\u0192\u201E\u2026\u2020\u2021\u02C6\u2030\u0160\u2039\u0152\uFFFD\u017D\uFFFD' +
+      '\uFFFD\u2018\u2019\u201C\u201D\u2022\u2013\u2014\u02DC\u2122\u0161\u203A\u0153\uFFFD\u017E\u0178';
+    return buf.toString('latin1').replace(/[\u0080-\u009F]/g, (c) => cp[c.charCodeAt(0) - 0x80]);
+  }
+}
+
 async function importFile(fp) {
   const name = path.basename(fp).replace(/\.[^.]+$/, '');
   const ext = path.extname(fp).toLowerCase();
@@ -1165,11 +1233,22 @@ async function importFile(fp) {
     const stylesFile = zip.file('word/styles.xml');
     const styles = docxStyleFormats(stylesFile ? await stylesFile.async('string') : '');
     paras = [...xml.matchAll(/<w:p[ >][\s\S]*?<\/w:p>/g)]
-      .map((m) => docxParagraphToMarkdown(m[0], styles));
+      .map((m) => docxParagraphToMarkdown(m[0], styles))
+      // a line break inside a Word paragraph (a poem, an address) becomes
+      // a paragraph of its own: NEO's lines are paragraphs
+      .flatMap((p) => !p.text.includes('\n') ? [p]
+        : p.text.split('\n').map((text, i) => ({ ...p, text: text.trim(), pageBreak: p.pageBreak && i === 0, heading: p.heading && i === 0, title: p.title && i === 0 })));
   } else {
-    const raw = fs.readFileSync(fp, 'utf8');
-    paras = raw.split(/\r?\n\s*\r?\n/)
-      .map((b) => ({ text: b.replace(/\s*\r?\n\s*/g, ' ').trim(), pageBreak: false }))
+    const raw = readTextFile(fp);
+    // Paragraphs are split on blank lines, unless the file barely has any
+    // and puts each paragraph on a line of its own (Word's "Plain Text",
+    // Notepad, Scrivener): then every line is a paragraph
+    const lines = raw.split(/\r\n|\r|\n/);
+    const blanks = lines.filter((l) => !l.trim()).length;
+    const filled = lines.length - blanks;
+    const perLine = ext === '.txt' && filled > 3 && blanks < filled / 4;
+    paras = (perLine ? lines : raw.split(/(?:\r\n|\r|\n)\s*(?:\r\n|\r|\n)/))
+      .map((b) => ({ text: (perLine ? b : b.replace(/\s*(?:\r\n|\r|\n)\s*/g, ' ')).trim(), pageBreak: false }))
       .filter((p) => p.text);
   }
 
@@ -1180,7 +1259,9 @@ async function importFile(fp) {
   const isNumeralish = (t) => /^\d{1,3}\.?$/.test(t) || /^[IVXLC]{1,7}\.?$/.test(t) || SPELLED.test(t);
   // Bare numbers only count as chapter markers when there's a ladder of them —
   // a story that merely OPENS with "Seven." keeps its seven.
-  const numeralMode = paras.filter((p) => p.text && isNumeralish(p.text.trim())).length >= 2;
+  // a heading set in bold ("**Chapter 1**") is still a heading
+  const bare = (t) => String(t || '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1').replace(/\\([\\*_])/g, '$1').trim();
+  const numeralMode = paras.filter((p) => p.text && isNumeralish(bare(p.text))).length >= 2;
   // A markdown heading: one or more "#" then text — any "size" (depth) counts.
   const isMdHeading = (t) => /^#{1,6}\s+\S/.test(t);
   const mdTitleOf = (t) => t.replace(/^#{1,6}\s*/, '').trim();
@@ -1193,12 +1274,12 @@ async function importFile(fp) {
     (CHAPTER_WORDS.test(t) && t.length < 60 && !readsAsSentence(t)) ||
     (numeralMode && isNumeralish(t))
   );
-  const isHeading = (t) => t && (isMdHeading(t) || isNumberedHeading(t));
+  const isHeading = (t) => t && (isMdHeading(t) || isNumberedHeading(bare(t)));
   // The chapter title that a heading contributes. Markdown hashes and any
   // emphasis markers are stripped, and pure numbering yields no title.
   const titleOf = (t) => {
     if (isMdHeading(t)) t = mdTitleOf(t);
-    t = t.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1').replace(/_([^_]+)_/g, '$1');
+    t = bare(t).replace(/(^|[^\p{L}\p{N}_])_([^_]+)_(?![\p{L}\p{N}_])/gu, '$1$2');
     return isNumberedHeading(t) ? '' : t;
   };
   const isBreak = (t) => /^\s*([*#•~⁂—–-]\s*){1,7}$/.test(t || '');
@@ -1292,12 +1373,12 @@ async function importFile(fp) {
       (t0 === t0.toUpperCase() && /\p{Lu}.*\p{Lu}/u.test(t0) && t0.length < 60)
     );
     if (titleish) {
-      title = t0;
+      title = bare(t0);
       first.paras.shift();
     }
     const bl = first.paras.length ? bylineOf((first.paras[0].text || '').trim()) : null;
     if (bl) {
-      author = bl.trim();
+      author = bare(bl);
       first.paras.shift();
     }
     if (!first.paras.length) chapters.shift();
@@ -1308,6 +1389,7 @@ async function importFile(fp) {
   chapters.forEach((ch, i) => {
     if ((ch.role === 'prologue' && i !== 0) || (ch.role === 'epilogue' && i !== chapters.length - 1) || chapters.length < 2) ch.role = null;
   });
+  if (styledTitle && title === styledTitle) title = bare(title);
   return { name, title, author, chapters };
 }
 
