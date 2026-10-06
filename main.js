@@ -1092,12 +1092,15 @@ const CHAPTER_WORDS = new RegExp('^(' + [
   'глава', 'пролог', 'эпилог', 'часть',                            // ru
   'κεφάλαιο', 'κεφαλαιο', 'πρόλογος', 'προλογος',
   'επίλογος', 'επιλογος', 'μέρος', 'μερος',
-  'ραψωδία', 'ραψωδια'                                              // el
+  'ραψωδία', 'ραψωδια',                                             // el
+  // hu: the number comes first ("3. fejezet", "II. rész")
+  'prológus', 'prologus', 'epilógus', 'epilogus',
+  '(?:\\d{1,3}|[ivxlc]{1,7})\\.\\s*(?:fejezet|rész|resz)'
 ].join('|') + ')(?![\\p{L}\\d])', 'iu');
 
 // A manuscript's own Prologue / Epilogue headings give those chapters their role
-const PROLOGUE_WORDS = /^(prologue|prólogo|prologo|prolog|proloog)(?![\p{L}\d])/iu;
-const EPILOGUE_WORDS = /^(epilogue|épilogue|epílogo|epilogo|epilog|epiloog)(?![\p{L}\d])/iu;
+const PROLOGUE_WORDS = /^(prologue|prólogo|prologo|prolog|proloog|prológus|prologus)(?![\p{L}\d])/iu;
+const EPILOGUE_WORDS = /^(epilogue|épilogue|epílogo|epilogo|epilog|epiloog|epilógus|epilogus)(?![\p{L}\d])/iu;
 
 async function importFile(fp) {
   const name = path.basename(fp).replace(/\.[^.]+$/, '');

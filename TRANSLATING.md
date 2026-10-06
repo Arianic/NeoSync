@@ -16,6 +16,7 @@ NEO currently speaks:
 | `pl` | Polski | complete, machine-assisted: native review welcome |
 | `ro` | Română | complete, machine-assisted: native review welcome |
 | `ru` | Русский | complete, reviewed by a native speaker |
+| `hu` | Magyar | complete, machine-assisted: native review welcome |
 
 Spellchecking (Edit → Spellcheck Language) covers English, French, Spanish, German, Dutch, Polish, Brazilian Portuguese, Romanian and Russian. The engine is Hunspell itself, compiled to WebAssembly, so every dictionary loads in well under a second. Italian is left out because the only Hunspell dictionary on npm is GPL-3.0-only, which does not sit well in an MIT app. The Brazilian Portuguese interface starts with the Brazilian dictionary; the European Portuguese interface leaves the choice to the writer, since spellings differ.
 
@@ -66,7 +67,7 @@ So `fr-CA.json` is short: in Quebec, "courriel" instead of "e-mail", and no spac
 
 ## Typing in each language
 
-While writing, NEO sets the quotation marks of the language being written: the spellcheck language when one is chosen, otherwise NEO's own language. « » for French (with narrow no-break spaces), Spanish, Italian, European Portuguese and Russian; „ “ for German; „ ” for Polish and Romanian; “ ” for English, Dutch and Brazilian Portuguese. The apostrophe is always ’. French also gets a narrow no-break space before ; : ! ? (before : only in Canadian French). The table is `QUOTE_STYLES` in `app.js`.
+While writing, NEO sets the quotation marks of the language being written: the spellcheck language when one is chosen, otherwise NEO's own language. « » for French (with narrow no-break spaces), Spanish, Italian, European Portuguese and Russian; „ “ for German; „ ” for Polish, Romanian and Hungarian; “ ” for English, Dutch and Brazilian Portuguese. The apostrophe is always ’. French also gets a narrow no-break space before ; : ! ? (before : only in Canadian French). The table is `QUOTE_STYLES` in `app.js`.
 
 A book that has settled on other guillemets keeps them: in a German novel set in »…«, or Swiss writing in «…», type the first mark by hand and NEO carries on in that style (`bookQuotes` in `app.js`).
 

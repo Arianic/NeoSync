@@ -4130,7 +4130,8 @@ const QUOTE_STYLES = {
   pl: { open: '„', close: '”' },
   ro: { open: '„', close: '”' },
   ru: { open: '«', close: '»' },
-  el: { open: '«', close: '»' }
+  el: { open: '«', close: '»' },
+  hu: { open: '„', close: '”' }
 };
 // The single quotation marks, where ' types them: English and Dutch ‘…’;
 // German ‚…‘, or ›…‹ in a book set in »…«, or ‹…› in Swiss «…» (#286).
@@ -4181,6 +4182,7 @@ function bookQuotes(el) {
 const DIALOGUE_DASHES = {
   pt: { open: '—', space: ' ', mid: '—' },   // — Olá — diz ela.
   ru: { open: '—', space: ' ', mid: '—' },
+  hu: { open: '–', space: ' ', mid: '–' },   // – Szia – mondta.
   es: { open: '—', space: '', mid: '—' },    // —Hola —dijo él—.
   en: { open: '—', mid: '–' }                // and every other language: word – word
 };
