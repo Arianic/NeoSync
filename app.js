@@ -10573,8 +10573,58 @@ async function spellScanEl(el, key) {
   const caps = capitalSlips(el);
   for (const r of caps) ranges.push(r);
   capsRanges.set(key, caps);
+  grammarRanges.set(key, grammarHints(el));
   spellRanges.set(key, ranges);
   rebuildSpellHighlight();
+}
+
+// Grammar hints (grammar-hu.js): slips a dictionary can't see, for writing in
+// Hungarian. Underlined in blue, apart from misspellings; right-click shows
+// the fix and why. Nothing changes unless the writer picks the fix.
+const grammarRanges = new Map(); // key → [{ range, fix, rule }]
+const GRAMMAR_RULES = {
+  article: { why: tk('Before a vowel the article is “az”.') },
+  comma: { why: tk('A comma goes before this conjunction.') },
+  particle: { why: tk('The question particle -e is joined with a hyphen.') },
+  repeat: { why: tk('The same word twice in a row.'), label: tk('Remove the repeated word') },
+  spaces: { why: tk('Two spaces in a row.'), label: tk('One space') },
+  punct: { why: tk('No space goes before punctuation.'), label: tk('Remove the space') }
+};
+function grammarHints(el) {
+  const out = [];
+  if (typeof NeoGrammarHu === 'undefined' || !/^hu\b/.test(writingLanguage())) return out;
+  if (typeof el.querySelectorAll !== 'function') return out;
+  for (const p of el.querySelectorAll('p:not(.poetry):not(.scene-break):not(.ghost)')) {
+    const segs = [];
+    let text = '';
+    const w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = w.nextNode())) {
+      if (n.parentElement && n.parentElement.closest('.ghost, .ph-mark')) continue;
+      segs.push({ node: n, at: text.length });
+      text += n.data;
+    }
+    const point = (i, end) => {
+      let s = segs[0];
+      for (const g of segs) if (g.at < i || (!end && g.at === i)) s = g; else break;
+      return [s.node, Math.min(i - s.at, s.node.length)];
+    };
+    for (const h of NeoGrammarHu.check(text)) {
+      try {
+        const r = new Range();
+        r.setStart(...point(h.at, false));
+        r.setEnd(...point(h.at + h.len, true));
+        let insertAt = null;
+        if (h.insert) {
+          insertAt = new Range();
+          insertAt.setStart(...point(h.insert.at, true));
+          insertAt.collapse(true);
+        }
+        out.push({ range: r, fix: h.fix, rule: h.rule, insertAt, insertText: h.insert ? h.insert.text : '' });
+      } catch { /* changed underneath us */ }
+    }
+  }
+  return out;
 }
 
 // Capitals the dictionary can't see, since it takes any word in lowercase:
@@ -10640,6 +10690,9 @@ function rebuildSpellHighlight() {
   const hl = new Highlight();
   for (const list of spellRanges.values()) for (const r of list) hl.add(r);
   CSS.highlights.set('neo-spell', hl);
+  const gh = new Highlight();
+  for (const list of grammarRanges.values()) for (const h of list) gh.add(h.range);
+  CSS.highlights.set('neo-grammar', gh);
 }
 
 function scanSpellingIn(el, key) {
@@ -10668,11 +10721,14 @@ function toggleSpellcheck() {
     spellScanned = new Set();
     spellRanges = new Map();
     capsRanges.clear();
+    grammarRanges.clear();
     scanSpellingHere();
   } else {
     CSS.highlights.delete('neo-spell');
+    CSS.highlights.delete('neo-grammar');
     spellRanges = new Map();
     capsRanges.clear();
+    grammarRanges.clear();
     document.querySelector('.spell-menu')?.remove();
   }
   toast(spellOn ? t('Spellcheck on') : t('Spellcheck off'));
@@ -10695,7 +10751,9 @@ async function changeSpellLanguage(code) {
     spellScanned = new Set();
     spellRanges = new Map();
     capsRanges.clear();
+    grammarRanges.clear();
     CSS.highlights.delete('neo-spell');
+    CSS.highlights.delete('neo-grammar');
     scanSpellingHere();
   }
   toast(t('Spellcheck: {lang}', { lang: SPELL_LANGUAGE_NAMES[code] || code }));
@@ -10710,6 +10768,32 @@ document.addEventListener('contextmenu', async (e) => {
   if (!pos || pos.startContainer.nodeType !== Node.TEXT_NODE) return;
   const node = pos.startContainer;
   const text = node.data;
+  // a grammar hint: its fix, why, and a way to leave it be
+  for (const [key, list] of grammarRanges) {
+    const hit = list.find((h) => h.range.startContainer.isConnected && h.range.isPointInRange(node, pos.startOffset));
+    if (!hit) continue;
+    e.preventDefault();
+    const rule = GRAMMAR_RULES[hit.rule] || {};
+    const shown = hit.range.toString();
+    const label = rule.label ? t(rule.label) : hit.fix.trim();
+    showSpellMenu(e.clientX, e.clientY, shown, [label], {
+      note: rule.why ? t(rule.why) : '',
+      replace: () => {
+        const sel = window.getSelection();
+        editor.focus({ preventScroll: true });
+        sel.removeAllRanges(); sel.addRange(hit.insertAt || hit.range);
+        if (hit.insertAt) document.execCommand('insertText', false, hit.insertText);
+        else if (hit.fix) document.execCommand('insertText', false, hit.fix);
+        else document.execCommand('delete');
+        spellScanEl(spellElFor(key), key);
+      },
+      ignore: () => {
+        grammarRanges.set(key, list.filter((h) => h !== hit));
+        rebuildSpellHighlight();
+      }
+    });
+    return;
+  }
   // a capital slip (see capitalSlips): the letter's capital, and nothing to learn
   let ws = pos.startOffset;
   while (ws > 0 && /[\p{L}\p{M}]/u.test(text[ws - 1])) ws--;
@@ -10782,6 +10866,12 @@ function showSpellMenu(x, y, word, suggestions, actions) {
   document.querySelector('.spell-menu')?.remove();
   const menu = document.createElement('div');
   menu.className = 'spell-menu';
+  if (actions.note) {
+    const note = document.createElement('div');
+    note.className = 'sm-note';
+    note.textContent = actions.note;
+    menu.appendChild(note);
+  }
   if (suggestions.length) {
     for (const s of suggestions) {
       const btn = document.createElement('button');
@@ -10803,6 +10893,15 @@ function showSpellMenu(x, y, word, suggestions, actions) {
     learn.textContent = t('Add “{word}” to dictionary', { word });
     learn.onclick = () => { menu.remove(); actions.learn(); };
     menu.appendChild(learn);
+  }
+  if (actions.ignore) {
+    const sep = document.createElement('div');
+    sep.className = 'sm-sep';
+    menu.appendChild(sep);
+    const ignore = document.createElement('button');
+    ignore.textContent = t('Ignore');
+    ignore.onclick = () => { menu.remove(); actions.ignore(); };
+    menu.appendChild(ignore);
   }
   document.body.appendChild(menu);
   const r = menu.getBoundingClientRect();

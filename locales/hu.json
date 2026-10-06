@@ -616,5 +616,15 @@
   "Zoom": "Nagyítás",
   "Zoom in": "Nagyítás",
   "Zoom out": "Kicsinyítés",
-  "Hungarian": "magyar"
+  "Hungarian": "magyar",
+  "Before a vowel the article is “az”.": "Magánhangzó előtt a névelő „az”.",
+  "A comma goes before this conjunction.": "Ez a kötőszó elé vessző kell.",
+  "The question particle -e is joined with a hyphen.": "A kérdő -e kötőjellel kapcsolódik.",
+  "The same word twice in a row.": "Ugyanaz a szó kétszer egymás után.",
+  "Remove the repeated word": "Az ismétlődő szó törlése",
+  "Two spaces in a row.": "Két szóköz egymás után.",
+  "One space": "Egy szóköz",
+  "No space goes before punctuation.": "Írásjel elé nem kell szóköz.",
+  "Remove the space": "A szóköz törlése",
+  "Ignore": "Figyelmen kívül hagyás"
 }

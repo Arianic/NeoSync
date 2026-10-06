@@ -24,6 +24,8 @@ Spellcheck starts off on every launch. Choosing a dictionary does not turn it on
 
 Romanian lookup accepts standard diacritics, legacy `ş/ţ`, and decomposed Unicode accents without changing manuscript text. Suggestions use standard Romanian spelling. This checks spelling, not grammar: both `sa` and `să` are words. See [the Romanian evaluation](scripts/romanian-spellcheck.md) and [the Portuguese evaluation](scripts/portuguese-spellcheck.md) for performance and licensing details.
 
+Hungarian also gets grammar hints during the spellcheck pass (`grammar-hu.js`): a missing comma before a conjunction (*hogy, mert, ami, aki…*), *a* before a vowel instead of *az*, the question particle without its hyphen (*tudod-e*), a word typed twice, and stray spaces. They are underlined in blue; right-click shows the fix and why. Each rule is a plain pattern run on the writer's computer, and fires only where a mistake is very likely.
+
 If you speak one of these and something reads oddly, a pull request that fixes a line is the most welcome contribution there is.
 
 NEO's interface can be shown in any language. Each language is a single file in `locales/`, and adding one needs no programming.

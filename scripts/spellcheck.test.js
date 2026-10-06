@@ -133,7 +133,7 @@ test('learning a Romanian word removes cached Unicode-variant underlines across 
     },
     Node: { TEXT_NODE: 3 }, NodeFilter: { SHOW_TEXT: 4 }, Range: TextRange,
     Highlight: Set, CSS: { highlights },
-    $: () => editors['aux-editor'], t: (text) => text, toast() {},
+    $: () => editors['aux-editor'], t: (text) => text, tk: (text) => text, toast() {},
     currentTab: 'manuscript', currentChapterId: 'ch-test', library: {},
     captureMenu: (_x, _y, _word, _suggestions, callbacks) => { actions = callbacks; },
     window: { neo: {
@@ -286,7 +286,7 @@ test('hyphenated words: the whole word first, then only the wrong pieces', async
       createTreeWalker: () => { let n = node; return { nextNode: () => { const x = n; n = null; return x; } }; }
     },
     NodeFilter: { SHOW_TEXT: 4 }, Range: TextRange, Highlight: Set, CSS: { highlights },
-    $: () => null, t: (text) => text, toast() {},
+    $: () => null, t: (text) => text, tk: (text) => text, toast() {},
     window: { neo: { spellCheckWords: async (words) => (await send({ type: 'check', words })).result } }
   });
   const app = source('app.js');
@@ -319,7 +319,7 @@ test('a hyphenated word underlined whole opens the menu; a stammer is no misspel
       execCommand: (_cmd, _ui, text) => { node.data = node.data.slice(0, selected.start) + text + node.data.slice(selected.end); }
     },
     Node: { TEXT_NODE: 3 }, NodeFilter: { SHOW_TEXT: 4 }, Range: TextRange, Highlight: Set, CSS: { highlights },
-    $: () => null, t: (text) => text, toast() {},
+    $: () => null, t: (text) => text, tk: (text) => text, toast() {},
     captureMenu: (_x, _y, word, suggestions, actions) => { menu = { word, suggestions, actions }; },
     window: {
       getSelection: () => ({ removeAllRanges() {}, addRange: (r) => { selected = r; } }),
