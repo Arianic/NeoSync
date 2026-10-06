@@ -522,6 +522,15 @@ function coverUrl(meta) {
 async function loadLibrary() {
   libraryDirPath = await window.neo.libraryPath();
   library = await window.neo.readLibrary();
+  // The first shelf is named in the language NEO had when the library was
+  // made. If the writer never renamed it, it follows a change of language.
+  const DEFAULT_SHELF = 'Works in Progress';
+  const own = t(DEFAULT_SHELF);
+  const first = (library.shelves || []).find((s) => s.id === 'shelf-1');
+  if (first && first.name !== own && first.name === DEFAULT_SHELF) {
+    first.name = own;
+    await writeLibrary(library);
+  }
   if (window.neo.writingStyleState) window.neo.writingStyleState(library.writingStyle);
   if (!library.firstRunDone) {
     showFirstRun();
