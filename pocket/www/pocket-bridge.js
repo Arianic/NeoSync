@@ -291,7 +291,9 @@
     },
     readChapter: async (bookId, chId) => {
       await fetchCloud(p(bookId, 'chapters', chId + '.html'));
-      try { return await readText(p(bookId, 'chapters', chId + '.html')); } catch { return ''; }
+      // (a swap the system cut short leaves only the .tmp: the words are there)
+      try { return await readText(p(bookId, 'chapters', chId + '.html')); } catch { /* the spare, below */ }
+      try { return await readText(p(bookId, 'chapters', chId + '.html.tmp')); } catch { return ''; }
     },
     writeChapter: async (bookId, chId, html, expected) => {
       await ensureDir(bookDir(bookId) + '/chapters');
@@ -311,7 +313,8 @@
 
     /* ---------- notes / outline / json sidecars ---------- */
     readAux: async (bookId, name) => {
-      try { return await readText(p(bookId, name + '.html')); } catch { return ''; }
+      try { return await readText(p(bookId, name + '.html')); } catch { /* the spare, below */ }
+      try { return await readText(p(bookId, name + '.html.tmp')); } catch { return ''; }
     },
     writeAux: async (bookId, name, html) => { await writeText(p(bookId, name + '.html'), html); return true; },
     readJSON: (bookId, name, fallback) => readJSONFile(p(bookId, name + '.json'), fallback),

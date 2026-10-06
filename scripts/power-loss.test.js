@@ -156,6 +156,18 @@ describe('power loss', { concurrency: 1 }, () => {
     assert.equal(got[0].text, 'recover me');
   });
 
+  test('a save never goes over words another device wrote since; an older copy is simply replaced', () => {
+    const { book, bookDir } = libraryWithBook();
+    const file = path.join(bookDir, 'chapters', 'ch-aaa.html');
+    fs.writeFileSync(file, '<p>Written on the iPad.</p>');
+    const r = main.call('chapter:write', book.id, 'ch-aaa', '<p>First chapter, edited here.</p>', '<p>First chapter.</p>');
+    assert.equal(r.conflict, '<p>Written on the iPad.</p>');
+    assert.equal(fs.readFileSync(file, 'utf8'), '<p>Written on the iPad.</p>');
+    fs.writeFileSync(file, '<p>First</p>');
+    assert.equal(main.call('chapter:write', book.id, 'ch-aaa', '<p>First chapter, edited here.</p>', '<p>First chapter.</p>'), true);
+    assert.equal(fs.readFileSync(file, 'utf8'), '<p>First chapter, edited here.</p>');
+  });
+
   test('a write the disk takes in pieces still lands whole; one that stalls never replaces the chapter', () => {
     const { book } = libraryWithBook();
     const real = fs.writeSync;

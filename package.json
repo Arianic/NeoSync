@@ -124,6 +124,7 @@
       "!.github/**",
       "!scripts/**",
       "!licenses/**",
+      "!Claude outputs/**",
       "!locales/_template.json",
       "!node_modules/koffi/build/koffi/{freebsd,linux,musl,openbsd,win32}_*/**",
       "!node_modules/koffi/{src,vendor,doc}/**"

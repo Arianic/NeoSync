@@ -1737,11 +1737,14 @@ function bookTile(meta, opts = {}) {
       options.push({ label: t('Remove cover art'), desc: t('Deletes the image from the book folder. (To just hide it, use the ↻ on the book.)'), danger: true, value: 'uncover' });
     }
     if (!window.Capacitor && !script) options.push({ label: t('Save cover as image…'), desc: t('Full size, with your title and author.'), value: 'saveCover' });
-    // Pocket has no File menu: export lives here and in the ⋯ sheet
+    // Pocket has no File menu: export lives here and in the ⋯ sheet. On
+    // the desktop it's here too, so a book leaves without being opened
     if (window.Capacitor) {
       options.push(script
         ? { label: t('Export…'), desc: t('Fountain or Final Draft, through the share sheet.'), value: 'export' }
         : { label: t('Export…'), desc: t('Text, Markdown, HTML, Word or EPUB, through the share sheet.'), value: 'export' });
+    } else {
+      options.push({ label: t('Export…'), value: 'export' });
     }
     // the ↻ on the cover, for the keyboard and screen readers
     if (!script) options.push({ label: t('New cover'), value: 'refresh' });
@@ -1763,6 +1766,7 @@ function bookTile(meta, opts = {}) {
       await refreshCover(meta, el);
     } else if (choice === 'export' && script) {
       const fmt = await optionModal(t('Export “{title}”', { title: escHtml(meta.title) }), null, [
+        ...(window.Capacitor ? [] : [{ label: 'PDF (.pdf)', value: 'pdf' }]),
         { label: 'Fountain (.fountain)', value: 'fountain' }, { label: 'Final Draft (.fdx)', value: 'fdx' }
       ]);
       if (!fmt) return;
@@ -1771,11 +1775,16 @@ function bookTile(meta, opts = {}) {
     } else if (choice === 'export') {
       const fmt = await optionModal(t('Export “{title}”', { title: escHtml(meta.title) }), null, [
         { label: t('Text (.txt)'), value: 'txt' }, { label: t('Markdown (.md)'), value: 'md' }, { label: t('HTML (.html)'), value: 'html' },
+        ...(window.Capacitor ? [] : [{ label: 'PDF (.pdf)', value: 'pdf' }]),
         { label: t('Word (.docx)'), value: 'docx' }, { label: t('EPUB (.epub)'), value: 'epub' }
       ]);
       if (!fmt) return;
-      await openBook(meta.id);
-      await doExport(fmt);
+      if (window.Capacitor) {
+        await openBook(meta.id);
+        await doExport(fmt);
+      } else {
+        await exportFromShelf(meta.id, fmt);
+      }
     } else if (choice === 'cover') {
       const src = await window.neo.pickCover();
       if (!src) return;
@@ -2601,6 +2610,7 @@ function wireChapterBody(body, chId) {
         const caret = captureCaret();
         stripJunkSpans(body);
         restoreCaret(caret);
+        syncChapter(body, chId); // what's saved is the cleaned paragraph
       }
       reconcileMarks();
     } else if (text) {
@@ -9691,6 +9701,7 @@ $('#paper-scroll').addEventListener('scroll', () => {
 // knowledge is what lets it write only what changed (a library shared over
 // iCloud or Syncthing must not be re-written every twenty seconds) and, in
 // refreshFromDisk, tell another device's edits from its own.
+let shelfExport = false; // see exportFromShelf
 function persistChapter(chId, html) {
   if (!book) return Promise.resolve(false);
   if (html === undefined) html = chapterHTML[chId] || '';
@@ -9788,7 +9799,7 @@ function scheduleMetaSave() {
   saveTimers.meta = setTimeout(saveMeta, 800);
 }
 async function saveMeta() {
-  if (!book) return;
+  if (!book || shelfExport) return;
   const bookId = book.id;
   const sig = metaSig(book);
   const stamp = await writeBookMeta(bookId, book);
@@ -9799,7 +9810,7 @@ async function saveMeta() {
 }
 
 function flushAllSaves(e) {
-  if (!book) return;
+  if (!book || shelfExport) return;
   // remember where you were, for next session and for the other device:
   // the chapter, the paragraph and the letter (the same place on any
   // screen) plus the scroll (this screen's). `at` changes only when the
@@ -9878,7 +9889,7 @@ function wordsBeyond(a, b) {
 
 let refreshing = false;
 async function refreshFromDisk() {
-  if (refreshing) return;
+  if (refreshing || shelfExport) return;
   refreshing = true;
   bookMetaCache.clear(); // whatever another device wrote, the next redraw reads
   try {
@@ -13209,6 +13220,35 @@ function plainError(err) {
 }
 
 // the whole book, or with chId just that chapter
+// A book exported straight from the shelf: read into the export's view of
+// "the open book" for the moment it takes, then put away again. Nothing on
+// screen changes, and nothing is saved on its behalf meanwhile (saves and
+// looks at the disk stand aside while shelfExport is set).
+async function exportFromShelf(bookId, format) {
+  if (book || shelfExport) return;
+  const meta = await window.neo.readBookMeta(bookId);
+  if (!meta || !Array.isArray(meta.chapterOrder)) return;
+  const html = {};
+  for (const chId of meta.chapterOrder) html[chId] = await window.neo.readChapter(bookId, chId);
+  if (book) return; // a book was opened meanwhile
+  const hadUuid = !!meta.uuid;
+  const keep = { chapterHTML, savedHTML };
+  shelfExport = true;
+  book = meta;
+  chapterHTML = html;
+  savedHTML = { ...html };
+  try {
+    await doExport(format);
+  } finally {
+    book = null;
+    chapterHTML = keep.chapterHTML;
+    savedHTML = keep.savedHTML;
+    shelfExport = false;
+  }
+  // an EPUB's identity is made once and kept, as when exported from inside
+  if (!hadUuid && meta.uuid) await writeBookMeta(bookId, meta).catch(() => {});
+}
+
 async function doExport(format, chId = null) {
   if (!book) { toast(t('Open a book first')); return; }
   // a script leaves as a PDF set the way scripts print, or as Fountain
