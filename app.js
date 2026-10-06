@@ -10573,7 +10573,9 @@ async function spellScanEl(el, key) {
   const caps = capitalSlips(el);
   for (const r of caps) ranges.push(r);
   capsRanges.set(key, caps);
-  grammarRanges.set(key, grammarHints(el));
+  const morph = await grammarMorph(el);
+  if (!spellOn) return;
+  grammarRanges.set(key, grammarHints(el, morph));
   spellRanges.set(key, ranges);
   rebuildSpellHighlight();
 }
@@ -10597,9 +10599,31 @@ const GRAMMAR_RULES = {
   ordinal: { why: tk('Ordinal numbers are written with a period.') },
   abbrev: { why: tk('This abbreviation takes a period.') },
   joined: { why: tk('This is written as one word.') },
-  confused: { why: tk('Often confused with a similar word: check which one you mean.') }
+  confused: { why: tk('Often confused with a similar word: check which one you mean.') },
+  agree: { why: tk('The verb doesn’t agree with its subject (én, te, ő, mi, ti, ők).') },
+  numeral: { why: tk('After a number or a quantity word the noun stays singular: három alma.') },
+  subject: { why: tk('The subject is plural, so the verb should be too: a gyerekek játszanak.') },
+  definite: { why: tk('A definite object (a/az …-t, azt, ezt) takes the definite conjugation: olvasom a könyvet.') },
+  indefinite: { why: tk('An indefinite object (egy …-t) takes the indefinite conjugation: olvasok egy könyvet.') }
 };
-function grammarHints(el) {
+// What the dictionary says of each word (its lemmas, and which are verbs),
+// for the hints that need to know a verb from a noun. Asked once per word.
+const morphCache = new Map();
+async function grammarMorph(el) {
+  if (typeof NeoGrammarHu === 'undefined' || !/^hu\b/.test(writingLanguage()) || !window.neo.spellMorph) return null;
+  const words = new Set();
+  for (const w of (el.textContent || '').match(/[\p{L}\p{M}]+(?:-[\p{L}\p{M}]+)*/gu) || []) {
+    if (!morphCache.has(w)) words.add(w);
+  }
+  if (words.size) {
+    try {
+      const res = await window.neo.spellMorph([...words]);
+      for (const w of words) morphCache.set(w, (res && res[w]) || null);
+    } catch { return null; }
+  }
+  return (w) => morphCache.get(w) || null;
+}
+function grammarHints(el, morph) {
   const out = [];
   if (typeof NeoGrammarHu === 'undefined' || !/^hu\b/.test(writingLanguage())) return out;
   if (typeof el.querySelectorAll !== 'function') return out;
@@ -10618,7 +10642,7 @@ function grammarHints(el) {
       for (const g of segs) if (g.at < i || (!end && g.at === i)) s = g; else break;
       return [s.node, Math.min(i - s.at, s.node.length)];
     };
-    for (const h of NeoGrammarHu.check(text)) {
+    for (const h of NeoGrammarHu.check(text, morph || undefined)) {
       try {
         const r = new Range();
         r.setStart(...point(h.at, false));
@@ -10756,6 +10780,7 @@ async function changeSpellLanguage(code) {
   library.spellLanguage = code;
   await writeLibrary(library);
   spellCache.clear();
+  morphCache.clear();
   if (spellOn) {
     spellScanned = new Set();
     spellRanges = new Map();
@@ -10784,8 +10809,8 @@ document.addEventListener('contextmenu', async (e) => {
     e.preventDefault();
     const rule = GRAMMAR_RULES[hit.rule] || {};
     const shown = hit.range.toString();
-    const label = rule.label ? t(rule.label) : hit.fix.trim();
-    showSpellMenu(e.clientX, e.clientY, shown, [label], {
+    const label = hit.fix == null ? null : rule.label ? t(rule.label) : hit.fix.trim();
+    showSpellMenu(e.clientX, e.clientY, shown, label == null ? [] : [label], {
       note: rule.why ? t(rule.why) : '',
       replace: () => {
         const sel = window.getSelection();

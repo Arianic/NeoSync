@@ -635,5 +635,10 @@
   "Ordinal numbers are written with a period.": "A sorszámnevet ponttal írjuk.",
   "This abbreviation takes a period.": "Ez a rövidítés pontot kap.",
   "This is written as one word.": "Ezt egybeírjuk.",
-  "Often confused with a similar word: check which one you mean.": "Gyakran összekeverik egy hasonló szóval: nézd meg, melyikre gondolsz."
+  "Often confused with a similar word: check which one you mean.": "Gyakran összekeverik egy hasonló szóval: nézd meg, melyikre gondolsz.",
+  "The verb doesn’t agree with its subject (én, te, ő, mi, ti, ők).": "Az ige nem egyezik az alannyal (én, te, ő, mi, ti, ők).",
+  "After a number or a quantity word the noun stays singular: három alma.": "Számnév vagy mennyiségszó után a főnév egyes számban áll: három alma.",
+  "The subject is plural, so the verb should be too: a gyerekek játszanak.": "Az alany többes számú, ezért az ige is: a gyerekek játszanak.",
+  "A definite object (a/az …-t, azt, ezt) takes the definite conjugation: olvasom a könyvet.": "Határozott tárgy (a/az …-t, azt, ezt) mellett tárgyas ragozás kell: olvasom a könyvet.",
+  "An indefinite object (egy …-t) takes the indefinite conjugation: olvasok egy könyvet.": "Határozatlan tárgy (egy …-t) mellett alanyi ragozás kell: olvasok egy könyvet."
 }

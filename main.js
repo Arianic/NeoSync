@@ -1588,6 +1588,12 @@ ipcMain.handle('spell:suggest', async (_e, word) => {
   return res.ok ? res.result : [];
 });
 
+// the grammar hints' view of a word: its dictionary forms, and which are verbs
+ipcMain.handle('spell:morph', async (_e, words) => {
+  const res = await spellRequest({ type: 'morph', words: Array.isArray(words) ? words.slice(0, 2000) : [] });
+  return res.ok ? res.result : {};
+});
+
 ipcMain.handle('spell:learn', async (_e, word) => {
   if (typeof word === 'string') await spellRequest({ type: 'add', word });
   return true;
