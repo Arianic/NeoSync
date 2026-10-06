@@ -1807,6 +1807,17 @@ function buildMenu() {
           visible: !scriptState.on, // a script is set in Courier Prime
           label: t('Body Font'),
           submenu: [
+            // A font the writer picked from their own computer is not in the list, and a radio
+            // group with nothing checked shows the first built-in as chosen. Show the font in use
+            // (#295).
+            ...(viewState.bodyFont && !bodyFonts.includes(viewState.bodyFont)
+              ? [{
+                  label: viewState.bodyFont,
+                  type: 'radio',
+                  checked: true,
+                  click: () => sendToWindow({ type: 'bodyFont', value: viewState.bodyFont })
+                }]
+              : []),
             ...bodyFonts.map((f) => ({
               label: f,
               type: 'radio',
