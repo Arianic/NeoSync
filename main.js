@@ -1186,14 +1186,18 @@ function docxParagraphToMarkdown(p, styles = {}) {
   }
   // markers hug the words: "** bold **" isn't emphasis to a reader of
   // Markdown, and a run with no words (a tab, a break) gets none at all
-  const text = merged.map((run) => {
-    const m = run.text.match(/^(\s*)([\s\S]*?)(\s*)$/);
+  // (each line of a run on its own: the paragraph is cut at its line
+  // breaks later, and an italic poem keeps its italics on every line)
+  const wrap = (run, piece) => {
+    const m = piece.match(/^(\s*)([\s\S]*?)(\s*)$/);
     let t = m[2];
-    if (!t) return run.text;
+    if (!t) return piece;
     if (run.bold) t = '**' + t + '**';
     if (run.italic) t = '*' + t + '*';
     return m[1] + t + m[3];
-  }).join('').replace(/[ \t]*\n[ \t]*/g, '\n').trim();
+  };
+  const text = merged.map((run) => run.text.split('\n').map((piece) => wrap(run, piece)).join('\n'))
+    .join('').replace(/[ \t]*\n[ \t]*/g, '\n').trim();
   return { text, pageBreak, heading, title };
 }
 
@@ -1269,7 +1273,9 @@ async function importFile(fp) {
     const lines = raw.split(/\r\n|\r|\n/);
     const blanks = lines.filter((l) => !l.trim()).length;
     const filled = lines.length - blanks;
-    const perLine = ext === '.txt' && filled > 3 && blanks < filled / 4;
+    // (a file hard-wrapped at ~70 columns, Project Gutenberg style, has a
+    // blank line between paragraphs: it keeps the blank-line rule)
+    const perLine = ext === '.txt' && filled > 3 && blanks <= Math.max(1, filled / 20);
     paras = (perLine ? lines : raw.split(/(?:\r\n|\r|\n)\s*(?:\r\n|\r|\n)/))
       .map((b) => ({ text: (perLine ? b : b.replace(/\s*(?:\r\n|\r|\n)\s*/g, ' ')).trim(), pageBreak: false }))
       .filter((p) => p.text);
@@ -1474,13 +1480,14 @@ ipcMain.handle('log:error', (_e, msg) => logError('renderer', msg));
 
 // One zip of the whole library per day, keeping the last 14. Cheap insurance.
 async function dailyBackup() {
+  if (backupRunning) return; // one at a time (the hourly look can meet a slow one)
   try {
     ensureLibrary();
     const backupsDir = path.join(LIBRARY_DIR, 'Backups');
     if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir, { recursive: true });
     const today = new Date().toISOString().slice(0, 10);
     const target = path.join(backupsDir, `neo-backup-${today}.zip`);
-    if (fs.existsSync(target) || backupRunning) return;
+    if (fs.existsSync(target)) return;
     backupRunning = true;
 
     const JSZip = require('jszip');

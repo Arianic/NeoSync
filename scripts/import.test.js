@@ -71,6 +71,19 @@ describe('import', () => {
     assert.deepEqual(texts(r)[0], ['Roses are red,', 'violets blue.', 'well‑known end']);
   });
 
+  test('a hard-wrapped .txt (blank line between paragraphs) keeps whole paragraphs', async () => {
+    const para = (n) => Array.from({ length: n }, (_, i) => 'This is wrapped line number ' + i + ' of a long paragraph and').join('\n') + ' it ends.';
+    const r = await importOne('wrapped.txt', ['Chapter 1', '', para(5), '', para(6), '', para(5), '', para(7), ''].join('\n'));
+    assert.equal(r.chapters[0].paras.length, 4);
+  });
+
+  test('Word: an italic poem with line breaks stays italic on every line', async () => {
+    const r = await importOne('poem.docx', await docx([
+      '<w:p><w:r><w:rPr><w:i/></w:rPr><w:t>Roses are red,</w:t><w:br/><w:t>violets are blue</w:t></w:r></w:p>'
+    ]));
+    assert.deepEqual(texts(r)[0], ['*Roses are red,*', '*violets are blue*']);
+  });
+
   test('Word: literal asterisks and underscores travel escaped; numeric entities decode; &amp;lt; stays text', async () => {
     const r = await importOne('lit.docx', await docx([
       '<w:p><w:r><w:t xml:space="preserve">5 * 3 and file_name and &#8220;q&#8221; and &amp;lt;</w:t></w:r></w:p>'

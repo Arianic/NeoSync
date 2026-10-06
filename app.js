@@ -2220,6 +2220,9 @@ $('#author-chip').onclick = async () => {
 
 let openGeneration = 0;
 async function openBook(bookId) {
+  // a book being exported from the shelf finishes first (it borrows the
+  // open book's place for the moment it takes)
+  while (shelfExport) await new Promise((r) => setTimeout(r, 50));
   // Everything is read first and only then becomes the open book, so a
   // second book opened while this one loads (a double click, a slow cloud
   // read) never ends up with a mix of the two.
@@ -2240,6 +2243,7 @@ async function openBook(bookId) {
   undoStack = [];
   chapterHTML = html;
   savedHTML = { ...html };
+  for (const chId of Object.keys(html)) knowDisk(bookId, chId, html[chId]);
   diskStamps = {};
   savedMetaSig = metaSig(book); // what disk holds; NEO's own defaults don't count as edits
   stickies = sideStickies;
@@ -9702,29 +9706,47 @@ $('#paper-scroll').addEventListener('scroll', () => {
 // iCloud or Syncthing must not be re-written every twenty seconds) and, in
 // refreshFromDisk, tell another device's edits from its own.
 let shelfExport = false; // see exportFromShelf
+// What this device last knew to be in each chapter file (read, written, or
+// found there), by book: the `expected` a save hands the disk. Only a write
+// that landed changes it, so a save that failed, or one still on its way,
+// is never taken for another device's.
+const diskKnown = {};
+const knowDisk = (bookId, chId, html) => { diskKnown[bookId + '/' + chId] = html; };
+// One write at a time per chapter, in the order they were asked for
+const chapterChain = {};
 function persistChapter(chId, html) {
   if (!book) return Promise.resolve(false);
   if (html === undefined) html = chapterHTML[chId] || '';
   const bookId = book.id;
-  const before = savedHTML[chId];
+  const key = bookId + '/' + chId;
   savedHTML[chId] = html;
   writing[chId] = (writing[chId] || 0) + 1;
-  // `before` tells the disk what this device last knew of the chapter: if
-  // another device wrote it since, the write stops and hands that text back
-  return new Promise((resolve) => resolve(window.neo.writeChapter(bookId, chId, html, before))).then(async (r) => {
-    if (!(r && typeof r.conflict === 'string')) return r;
-    if (book && book.id === bookId && savedHTML[chId] === html) savedHTML[chId] = r.conflict;
-    await keepOtherDeviceVersion(bookId, chId, r.conflict);
-    // the other version is safe in its own chapter; ours goes over it now
-    if (book && book.id === bookId) return persistChapter(chId, html);
-    return window.neo.writeChapter(bookId, chId, html);
-  }).catch((err) => {
-    // It never reached the disk. Book it as unsaved again, so the next flush
-    // tries once more, and so a look at the disk can't take the old file
-    // for news and put it back on the page.
-    if (book && book.id === bookId && savedHTML[chId] === html) savedHTML[chId] = before;
+  // the disk is told what this device last knew of the chapter: if another
+  // device wrote it since, the write stops and hands that text back, which
+  // is kept as its own chapter before this device's words go on
+  const run = async () => {
+    let r = await window.neo.writeChapter(bookId, chId, html, diskKnown[key]);
+    for (let tries = 0; r && typeof r.conflict === 'string' && tries < 3; tries++) {
+      knowDisk(bookId, chId, r.conflict);
+      await keepOtherDeviceVersion(bookId, chId, r.conflict);
+      r = await window.neo.writeChapter(bookId, chId, html, r.conflict);
+    }
+    if (r && typeof r.conflict === 'string') throw new Error('chapter keeps changing on disk');
+    knowDisk(bookId, chId, html);
+    return r;
+  };
+  const p = (chapterChain[key] || Promise.resolve()).catch(() => {}).then(run);
+  chapterChain[key] = p;
+  return p.catch((err) => {
+    // It never reached the disk. Book it as unsaved again (what the disk
+    // holds), so the next flush tries once more, and so a look at the disk
+    // can't take the old file for news and put it back on the page.
+    if (book && book.id === bookId && savedHTML[chId] === html) savedHTML[chId] = diskKnown[key];
     throw err;
-  }).finally(() => { writing[chId]--; });
+  }).finally(() => {
+    writing[chId]--;
+    if (chapterChain[key] === p) delete chapterChain[key];
+  });
 }
 
 // Another device's version of a chapter, found on disk when this device
@@ -9979,6 +10001,7 @@ async function refreshFromDisk() {
           if (!(chId in incoming)) continue;
           chapterHTML[chId] = incoming[chId];
           savedHTML[chId] = incoming[chId];
+          knowDisk(bookId, chId, incoming[chId]);
         }
         if (mine) {
           book.chapterOrder = order;
@@ -10044,10 +10067,12 @@ async function refreshFromDisk() {
         }
         chapterHTML[chId] = disk;
         savedHTML[chId] = disk;
+        knowDisk(bookId, chId, disk);
         wordCache[chId] = null;
         adopted++;
       } else {
         savedHTML[chId] = disk; // what's on disk now; our text goes over it on the next save
+        knowDisk(bookId, chId, disk);
         const idx = book.chapterOrder.indexOf(chId);
         const twinId = 'ch-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
         book.chapterOrder.splice(idx + 1, 0, twinId);
@@ -13240,9 +13265,11 @@ async function exportFromShelf(bookId, format) {
   try {
     await doExport(format);
   } finally {
-    book = null;
-    chapterHTML = keep.chapterHTML;
-    savedHTML = keep.savedHTML;
+    if (book === meta) {
+      book = null;
+      chapterHTML = keep.chapterHTML;
+      savedHTML = keep.savedHTML;
+    }
     shelfExport = false;
   }
   // an EPUB's identity is made once and kept, as when exported from inside
