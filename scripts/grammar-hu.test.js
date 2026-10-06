@@ -36,3 +36,42 @@ test('an empty paragraph has nothing to say', () => {
   assert.deepEqual(check(''), []);
   assert.deepEqual(check('   '), []);
 });
+
+test('a comma before mint in a comparison, but not in "több mint száz"', () => {
+  assert.deepEqual(hints('Nagyobb mint a ház.'), [[' mint', ', mint', 'mint']]);
+  assert.deepEqual(hints('Több mint száz ember jött.'), []);
+});
+
+test('"én" with the conditional of "they"', () => {
+  assert.deepEqual(hints('Én megcsinálnák.'), [['ák', 'ám', 'mood']]);
+  assert.deepEqual(hints('Én szeretnék egy kávét.'), []);
+});
+
+test('being somewhere takes -ban/-ben', () => {
+  assert.deepEqual(hints('A könyv a táskába van.'), [['ba', 'ban', 'illative']]);
+  assert.deepEqual(hints('A kép a dobozba van téve. A szoba van ott.'), []);
+});
+
+test('months and days are lowercase mid-sentence', () => {
+  assert.deepEqual(hints('Találkozunk Hétfőn.'), [['H', 'h', 'calendar']]);
+  assert.deepEqual(hints('Hétfőn jön. Szombat Ferenc jött.'), []);
+});
+
+test('dates, ordinals and abbreviations', () => {
+  assert.deepEqual(hints('2026.10.06 és 1.3.9'), [['2026.10.06', '2026. 10. 06.', 'date']]);
+  assert.deepEqual(hints('A 2-ik helyen.'), [['2-ik', '2.', 'ordinal']]);
+  assert.deepEqual(hints('Alma, körte stb, a stb. jó.'), [['stb', 'stb.', 'abbrev']]);
+});
+
+test('words written as one, and easily swapped words', () => {
+  assert.deepEqual(hints('Ugyan is nem rég jött.'), [['Ugyan is', 'Ugyanis', 'joined'], ['nem rég', 'nemrég', 'joined']]);
+  assert.deepEqual(hints('Egyenlőre a ház mellet maradok, a mellet nem.'),
+    [['Egyenlőre', 'Egyelőre', 'confused'], ['mellet', 'mellett', 'confused']]);
+});
+
+test('ordinary correct Hungarian prose gets no hints', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const lines = fs.readFileSync(path.join(__dirname, 'grammar-hu.correct.txt'), 'utf8').trim().split('\n');
+  for (const line of lines) assert.deepEqual(hints(line), [], line);
+});

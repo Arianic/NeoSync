@@ -10588,7 +10588,16 @@ const GRAMMAR_RULES = {
   particle: { why: tk('The question particle -e is joined with a hyphen.') },
   repeat: { why: tk('The same word twice in a row.'), label: tk('Remove the repeated word') },
   spaces: { why: tk('Two spaces in a row.'), label: tk('One space') },
-  punct: { why: tk('No space goes before punctuation.'), label: tk('Remove the space') }
+  punct: { why: tk('No space goes before punctuation.'), label: tk('Remove the space') },
+  mint: { why: tk('In a comparison, a comma goes before “mint”.') },
+  mood: { why: tk('With “én”, the conditional ends in -nám or -nék; -nák is “they”.') },
+  illative: { why: tk('This says where something is (hol?), so -ban/-ben; -ba/-be says where it goes (hová?).') },
+  calendar: { why: tk('Months and days are lowercase in Hungarian.') },
+  date: { why: tk('Hungarian dates take a space after each period.') },
+  ordinal: { why: tk('Ordinal numbers are written with a period.') },
+  abbrev: { why: tk('This abbreviation takes a period.') },
+  joined: { why: tk('This is written as one word.') },
+  confused: { why: tk('Often confused with a similar word: check which one you mean.') }
 };
 function grammarHints(el) {
   const out = [];

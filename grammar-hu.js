@@ -48,6 +48,35 @@
   // words that can stand twice on purpose
   const MAY_REPEAT = new Set(['az', 'egy', 'hogy', 'is', 'el', 'meg', 'ki', 'be', 'fel', 'le', 'át', 'ide', 'oda']);
 
+  // being somewhere, not going there
+  const STATE = [
+    'van', 'vagyok', 'vagy', 'vagyunk', 'vagytok', 'vannak', 'volt', 'voltam', 'voltál',
+    'voltunk', 'voltatok', 'voltak', 'lesz', 'leszek', 'leszünk', 'lesznek', 'marad',
+    'maradt', 'maradok', 'maradtam', 'maradunk', 'lakik', 'lakom', 'lakunk', 'laknak',
+    'lakott', 'ül', 'ült', 'ülök', 'ültem', 'áll', 'állt', 'állok', 'fekszik', 'feküdt',
+    'dolgozik', 'dolgozom', 'dolgozott', 'található', 'találhatók'
+  ];
+  // words that end in -ba/-be on their own: a room, a mushroom, a foot…
+  const NOT_ILLATIVE = new Set([
+    'szoba', 'gomba', 'bomba', 'goromba', 'tromba', 'rumba', 'szamba', 'mamba',
+    'kuba', 'aruba', 'kába', 'csibe', 'lába', 'sebe', 'zsebe', 'dobja', 'kebe', 'bébe'
+  ]);
+  const CALENDAR = [
+    'január', 'február', 'március', 'április', 'május', 'június', 'július',
+    'augusztus', 'szeptember', 'október', 'november', 'december',
+    'hétfő', 'kedd', 'szerda', 'csütörtök', 'péntek', 'szombat', 'vasárnap'
+  ];
+  const ABBREV = ['stb', 'pl', 'kb', 'ill', 'ún', 'vö', 'ld', 'ui'];
+  const JOINED = [
+    ['ugyan is', 'ugyanis'], ['egy általán', 'egyáltalán'], ['minden esetre', 'mindenesetre'],
+    ['egy szer', 'egyszer'], ['nem rég', 'nemrég'], ['vala mi', 'valami'], ['vala ki', 'valaki']
+  ];
+  // [what was typed, what was likely meant, leave it be right after "a"/"az"]
+  const CONFUSED = [
+    ['egyenlőre', 'egyelőre', false],
+    ['mellet', 'mellett', true]
+  ];
+
   const lower = (s) => s.toLocaleLowerCase('hu');
 
   function check(text) {
@@ -90,6 +119,75 @@
     while ((m = spaces.exec(text))) out.push({ at: m.index, len: m[1].length, fix: ' ', rule: 'spaces' });
     const punct = /(?<=[\p{L}\p{N}])( +)(?=[,.;:!?…](?![.\d]))/gu;
     while ((m = punct.exec(text))) out.push({ at: m.index, len: m[1].length, fix: '', rule: 'punct' });
+
+    // a comma before "mint" in a comparison: nagyobb mint → nagyobb, mint
+    // (but "több mint száz", where it means "over", takes none)
+    const mint = new RegExp(`(?<![${L}])([${L}]+bb(?:an|en)?)( )(mint)(?![${L}])`, 'giu');
+    while ((m = mint.exec(text))) {
+      if (['több', 'kevesebb'].includes(lower(m[1]))) continue;
+      const at = m.index + m[1].length;
+      out.push({ at, len: 1 + m[3].length, fix: ', ' + m[3], rule: 'mint', insert: { at, text: ',' } });
+    }
+
+    // "én" with the conditional of "they": én megcsinálnák → megcsinálnám
+    const mood = new RegExp(`(?<![${L}])[éÉ]n ([${L}]+?n)(ák)(?![${L}])`, 'gu');
+    while ((m = mood.exec(text))) {
+      out.push({ at: m.index + 3 + m[1].length, len: 2, fix: 'ám', rule: 'mood' });
+    }
+
+    // where something is takes -ban/-ben, not -ba/-be: a házba van → házban
+    // (but "a dobozba van téve" is a state that came of a movement)
+    const illative = new RegExp(`(?<![${L}])([${L}]{2,}?)(ba|be) (${STATE.join('|')})(?![${L}])(?! [${L}]+v[ae](?![${L}]))`, 'gu');
+    while ((m = illative.exec(text))) {
+      const word = lower(m[1] + m[2]);
+      if (NOT_ILLATIVE.has(word)) continue;
+      out.push({ at: m.index + m[1].length, len: 2, fix: m[2] + 'n', rule: 'illative' });
+    }
+
+    // months and days are lowercase: hétfőn, Januárban → januárban
+    // (only mid-sentence, and not before another capital: a name or a title)
+    const calendar = new RegExp(`(?<=[\\p{Ll},;] )(${CALENDAR.map((w) => w[0].toUpperCase() + w.slice(1)).join('|')})([${L}]*)(?![${L}])(?! \\p{Lu})`, 'gu');
+    while ((m = calendar.exec(text))) {
+      out.push({ at: m.index, len: 1, fix: lower(m[1][0]), rule: 'calendar' });
+    }
+
+    // dates take a space after each period: 2026.10.06 → 2026. 10. 06.
+    const date = /(?<![\d.])((?:1[89]|20)\d\d)\.(\d{1,2})\.(\d{1,2})(\.?)(?![\d.])/g;
+    while ((m = date.exec(text))) {
+      out.push({ at: m.index, len: m[0].length, fix: `${m[1]}. ${m[2]}. ${m[3]}.`, rule: 'date' });
+    }
+
+    // ordinals take a period: 2-ik, 1-ső → 2., 1.
+    const ordinal = new RegExp(`(?<![${L}\\d])(\\d+)-(?:ik|ső|odik|edik|adik|ödik)(?![${L}])`, 'gu');
+    while ((m = ordinal.exec(text))) {
+      out.push({ at: m.index, len: m[0].length, fix: m[1] + '.', rule: 'ordinal' });
+    }
+
+    // abbreviations that take a period: stb, pl, kb → stb., pl., kb.
+    const abbrev = new RegExp(`(?<![${L}.])(${ABBREV.join('|')})(?![${L}.])`, 'gu');
+    while ((m = abbrev.exec(text))) {
+      out.push({ at: m.index, len: m[1].length, fix: m[1] + '.', rule: 'abbrev', insert: { at: m.index + m[1].length, text: '.' } });
+    }
+
+    // words written as one: ugyan is → ugyanis
+    for (const [apart, joined] of JOINED) {
+      const re = new RegExp(`(?<![${L}])(${apart})(?![${L}])`, 'giu');
+      while ((m = re.exec(text))) {
+        const fix = m[1][0] === m[1][0].toUpperCase() ? joined[0].toUpperCase() + joined.slice(1) : joined;
+        out.push({ at: m.index, len: m[1].length, fix, rule: 'joined' });
+      }
+    }
+
+    // two real words, easily swapped: egyenlőre (into equal parts) for
+    // egyelőre (for now); a ház mellet (the breast) for mellett (beside)
+    for (const [wrong, right, skipAfterArticle] of CONFUSED) {
+      const re = new RegExp(`(?<![${L}])(${wrong})(?![${L}])`, 'giu');
+      while ((m = re.exec(text))) {
+        if (skipAfterArticle && /(?:^|[^\p{L}])az? $/iu.test(text.slice(0, m.index))) continue;
+        const fix = m[1][0] === m[1][0].toUpperCase() ? right[0].toUpperCase() + right.slice(1) : right;
+        out.push({ at: m.index, len: m[1].length, fix, rule: 'confused' });
+      }
+    }
 
     // one hint per place: the first rule to claim a span keeps it
     out.sort((a, b) => a.at - b.at);

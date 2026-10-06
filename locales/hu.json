@@ -626,5 +626,14 @@
   "One space": "Egy szóköz",
   "No space goes before punctuation.": "Írásjel elé nem kell szóköz.",
   "Remove the space": "A szóköz törlése",
-  "Ignore": "Figyelmen kívül hagyás"
+  "Ignore": "Figyelmen kívül hagyás",
+  "In a comparison, a comma goes before “mint”.": "Összehasonlításban a „mint” elé vessző kell.",
+  "With “én”, the conditional ends in -nám or -nék; -nák is “they”.": "Az „én” mellett a feltételes mód -nám vagy -nék; a -nák az „ők” alakja.",
+  "This says where something is (hol?), so -ban/-ben; -ba/-be says where it goes (hová?).": "Ez azt mondja meg, hol van valami (hol?), ezért -ban/-ben; a -ba/-be azt, hová kerül (hová?).",
+  "Months and days are lowercase in Hungarian.": "A hónapok és a napok nevét kisbetűvel írjuk.",
+  "Hungarian dates take a space after each period.": "A dátumban minden pont után szóköz áll.",
+  "Ordinal numbers are written with a period.": "A sorszámnevet ponttal írjuk.",
+  "This abbreviation takes a period.": "Ez a rövidítés pontot kap.",
+  "This is written as one word.": "Ezt egybeírjuk.",
+  "Often confused with a similar word: check which one you mean.": "Gyakran összekeverik egy hasonló szóval: nézd meg, melyikre gondolsz."
 }
