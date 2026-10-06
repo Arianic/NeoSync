@@ -3969,23 +3969,25 @@ function frenchTypography() {
   return /^fr-CA$/i.test(NeoI18n.getLocale()) ? 'ca' : 'fr';
 }
 
-// ⌘1–4 (Ctrl+1–4): Manuscript, Notes, Outline, Darlings. Matches the physical
-// key, so it also works where the digit row needs Shift (AZERTY). The menu
-// item does the same job and is the way in when a layout still gets past this.
+// ⌥⌘→ / ⌥⌘← (Ctrl+Alt on Windows and Linux): the next or previous tab,
+// Manuscript → Notes → Outline → Darlings, round again. Caught here, like the
+// chapter keys, so no menu accelerator flashes the menu or takes AltGr input.
 function goToTab(name) {
   if (!book || $('#editor-view').hidden || name === currentTab) return;
   if (document.querySelector('.modal-backdrop:not([hidden])')) return;
   switchTab(name);
 }
-const TAB_KEYS = { Digit1: 'manuscript', Digit2: 'notes', Digit3: 'outline', Digit4: 'darlings' };
-document.addEventListener('keydown', (e) => {
-  const name = TAB_KEYS[e.code];
-  if (!name || !(IS_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) || e.shiftKey || e.altKey || e.isComposing) return;
-  // swallowed even where it does nothing (the shelf): left to the menu
-  // accelerator, it flashes the View menu for a key that has no work to do
+const TAB_ORDER = ['manuscript', 'notes', 'outline', 'darlings'];
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+  const cmd = IS_POCKET ? (e.metaKey !== e.ctrlKey) : (IS_MAC ? e.metaKey : e.ctrlKey);
+  if (!cmd || !e.altKey || e.shiftKey || e.isComposing) return;
+  if ($('#editor-view').hidden || document.querySelector('.modal-backdrop:not([hidden])')) return;
   e.preventDefault();
-  goToTab(name);
-});
+  e.stopPropagation();
+  const step = e.key === 'ArrowRight' ? 1 : TAB_ORDER.length - 1;
+  goToTab(TAB_ORDER[(TAB_ORDER.indexOf(currentTab) + step) % TAB_ORDER.length]);
+}, true);
 
 // Titles, outline lines, notes and shelf names get the same typography as
 // the manuscript (which calls smartKeys itself). Capture phase, because
@@ -7766,7 +7768,8 @@ function shortcutSections() {
       [K('⌘⇧O', 'Ctrl+Shift+O'), tk('Cycle focus mode'), tk('Off → paragraph → sentence → off.')],
       [K('⌥⌘↓', 'Ctrl+Alt+↓'), tk('Go to the next chapter')],
       [K('⌥⌘↑', 'Ctrl+Alt+↑'), tk('Go to the previous chapter')],
-      [K('⌘1 – ⌘4', 'Ctrl+1 – Ctrl+4'), tk('Go to Manuscript, Notes, Outline or Darlings')],
+      [K('⌥⌘→', 'Ctrl+Alt+→'), tk('Go to the next tab'), tk('Manuscript, Notes, Outline, Darlings, then round again.')],
+      [K('⌥⌘←', 'Ctrl+Alt+←'), tk('Go to the previous tab')],
       [['F6', K('⌃Tab', 'Ctrl+Tab')], tk('Move between the page, the chapters, the notes and the bottom bar'), tk('Add Shift to go back. Esc returns to the page. On the shelf: the books, then the header.')],
       ...(IS_MAC ? [
         ['⌘H', tk('Hide NEO')],

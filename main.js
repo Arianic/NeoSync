@@ -1773,10 +1773,10 @@ function buildMenu() {
         {
           label: t('Go to'),
           submenu: [
-            { label: t('Manuscript'), accelerator: 'CmdOrCtrl+1', click: () => sendToWindow({ type: 'tab', value: 'manuscript' }) },
-            { label: t('Notes'), accelerator: 'CmdOrCtrl+2', click: () => sendToWindow({ type: 'tab', value: 'notes' }) },
-            { label: t('Outline'), accelerator: 'CmdOrCtrl+3', click: () => sendToWindow({ type: 'tab', value: 'outline' }) },
-            { label: t('Darlings'), accelerator: 'CmdOrCtrl+4', click: () => sendToWindow({ type: 'tab', value: 'darlings' }) }
+            { label: t('Manuscript'), click: () => sendToWindow({ type: 'tab', value: 'manuscript' }) },
+            { label: t('Notes'), click: () => sendToWindow({ type: 'tab', value: 'notes' }) },
+            { label: t('Outline'), click: () => sendToWindow({ type: 'tab', value: 'outline' }) },
+            { label: t('Darlings'), click: () => sendToWindow({ type: 'tab', value: 'darlings' }) }
           ]
         },
         { type: 'separator' },

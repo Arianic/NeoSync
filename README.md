@@ -94,7 +94,7 @@ npm install
 npm start
 ```
 
-`Cmd+1` to `Cmd+4` (`Ctrl+1` to `Ctrl+4` on Windows and Linux) jump between Manuscript, Notes, Outline and Darlings. **View → Go to** has the same four.
+`Cmd+Option+→` and `Cmd+Option+←` (`Ctrl+Alt+→` and `Ctrl+Alt+←` on Windows and Linux) move to the next or previous tab: Manuscript, Notes, Outline, Darlings. **View → Go to** lists the four.
 
 **View → Keyboard Shortcuts…** opens the shortcut reference. You can also press `Cmd+/` on macOS or `Ctrl+/` on Windows and Linux, or use **Help → NEO Shortcuts**.
 

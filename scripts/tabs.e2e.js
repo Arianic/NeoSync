@@ -1,4 +1,4 @@
-// End-to-end tests for the ⌘1–4 tab shortcuts, on a throwaway library.
+// End-to-end tests for the ⌥⌘←/→ tab keys, on a throwaway library.
 // Run with `npm run test:tabs`.
 
 'use strict';
@@ -37,13 +37,15 @@ let wc;
 const js = (code) => wc.executeJavaScript(code, true);
 const tick = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms));
 const tab = () => js('currentTab');
-// Ctrl+digit goes to the page; Electron's menu accelerators are not involved
 const MOD = process.platform === 'darwin' ? 'meta' : 'control';
 const OTHER = MOD === 'meta' ? 'control' : 'meta';
-const press = async (n, modifiers = [MOD]) => {
-  for (const type of ['keyDown', 'keyUp']) wc.sendInputEvent({ type, keyCode: String(n), modifiers });
+// Ctrl/Cmd+Alt+arrow goes to the page; Electron's menu is not involved
+const press = async (key, modifiers = [MOD, 'alt']) => {
+  for (const type of ['keyDown', 'keyUp']) wc.sendInputEvent({ type, keyCode: key, modifiers });
   await tick(300);
 };
+const RIGHT = 'Right';
+const LEFT = 'Left';
 const caretInChapter = () => js(`(() => {
   const ps = document.querySelectorAll('.chapter-body > p');
   const r = document.createRange();
@@ -56,37 +58,42 @@ const caretInChapter = () => js(`(() => {
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
 
-test('Cmd/Ctrl+2, 3, 4, 1 visit Notes, Outline, Darlings, Manuscript', async () => {
-  for (const [n, name] of [[2, 'notes'], [3, 'outline'], [4, 'darlings'], [1, 'manuscript']]) {
-    await press(n);
+test('→ walks Manuscript, Notes, Outline, Darlings, then round to Manuscript', async () => {
+  for (const name of ['notes', 'outline', 'darlings', 'manuscript']) {
+    await press(RIGHT);
     assert.equal(await tab(), name);
   }
 });
 
-test('the other platform\'s modifier does nothing', async () => {
-  await press(3, [OTHER]);
+test('← walks back, round from Manuscript to Darlings', async () => {
+  for (const name of ['darlings', 'outline', 'notes', 'manuscript']) {
+    await press(LEFT);
+    assert.equal(await tab(), name);
+  }
+});
+
+test('the other platform\'s modifier, or a missing Alt or an extra Shift, does nothing', async () => {
+  await press(RIGHT, [OTHER, 'alt']);
+  await press(RIGHT, [MOD]);
+  await press(RIGHT, [MOD, 'alt', 'shift']);
   assert.equal(await tab(), 'manuscript');
 });
 
-test('Shift or Alt with the digit does nothing', async () => {
-  await press(2, [MOD, 'shift']);
-  await press(2, [MOD, 'alt']);
-  assert.equal(await tab(), 'manuscript');
-});
-
-test('the key for the tab you are on does not redraw it', async () => {
-  await press(4);
+test('a tab swap does not redraw the tab you stay on', async () => {
+  await press(LEFT); // Darlings
   await js(`window.__renders = 0; const f = renderDarlings; renderDarlings = () => { window.__renders++; return f(); }; 0`);
-  await press(4);
-  assert.equal(await js('window.__renders'), 0);
-  await press(1);
+  await press(LEFT); // Outline
+  await press(RIGHT); // Darlings again: one draw
+  assert.equal(await js('window.__renders'), 1);
+  await press(RIGHT); // Manuscript
+  assert.equal(await tab(), 'manuscript');
 });
 
 test('the cursor comes back to where it was in the manuscript', async () => {
   await caretInChapter();
   await tick(100);
-  await press(2);
-  await press(1);
+  await press(RIGHT);
+  await press(LEFT);
   assert.equal(await js(`(() => {
     const s = getSelection();
     const p = s.anchorNode && (s.anchorNode.parentElement || s.anchorNode).closest('p');
@@ -96,23 +103,23 @@ test('the cursor comes back to where it was in the manuscript', async () => {
 
 test('an open dialog blocks the shortcut', async () => {
   await js(`(() => { const d = document.createElement('div'); d.className = 'modal-backdrop'; d.id = 'tab-test-modal'; document.body.appendChild(d); })()`);
-  await press(2);
+  await press(RIGHT);
   await js(`document.getElementById('tab-test-modal').remove()`);
   assert.equal(await tab(), 'manuscript');
 });
 
 test('the shelf ignores the shortcut', async () => {
   await js(`document.getElementById('editor-view').hidden = true`);
-  await press(3);
+  await press(RIGHT);
   await js(`document.getElementById('editor-view').hidden = false`);
   assert.equal(await tab(), 'manuscript');
 });
 
-test('View → Go to has the four tabs, each with its key', async () => {
+test('View → Go to has the four tabs and no key of its own', async () => {
   const view = Menu.getApplicationMenu().items.find((i) => i.label === 'View');
   const goTo = view.submenu.items.find((i) => i.label === 'Go to');
   assert.deepEqual(goTo.submenu.items.map((i) => i.label), ['Manuscript', 'Notes', 'Outline', 'Darlings']);
-  assert.deepEqual(goTo.submenu.items.map((i) => i.accelerator), ['CmdOrCtrl+1', 'CmdOrCtrl+2', 'CmdOrCtrl+3', 'CmdOrCtrl+4']);
+  assert.ok(goTo.submenu.items.every((i) => !i.accelerator));
 });
 
 test('the menu items switch tabs', async () => {
