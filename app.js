@@ -311,6 +311,7 @@ function askInput(title, placeholder, value = '') {
     bd.querySelector('.m-ok').onclick = () => done(input.value.trim());
     bd.querySelector('.m-cancel').onclick = () => done(null);
     input.onkeydown = (e) => {
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === 'Enter') done(input.value.trim());
       // the prompt is gone by the time Esc bubbles up, so without this the
       // editor's own Esc would close the book too
@@ -1761,14 +1762,14 @@ function bookTile(meta, opts = {}) {
     } else if (choice === 'refresh') {
       await refreshCover(meta, el);
     } else if (choice === 'export' && script) {
-      const fmt = await optionModal(t('Export “{title}”', { title: meta.title }), null, [
+      const fmt = await optionModal(t('Export “{title}”', { title: escHtml(meta.title) }), null, [
         { label: 'Fountain (.fountain)', value: 'fountain' }, { label: 'Final Draft (.fdx)', value: 'fdx' }
       ]);
       if (!fmt) return;
       await openBook(meta.id);
       await doExport(fmt);
     } else if (choice === 'export') {
-      const fmt = await optionModal(t('Export “{title}”', { title: meta.title }), null, [
+      const fmt = await optionModal(t('Export “{title}”', { title: escHtml(meta.title) }), null, [
         { label: t('Text (.txt)'), value: 'txt' }, { label: t('Markdown (.md)'), value: 'md' }, { label: t('HTML (.html)'), value: 'html' },
         { label: t('Word (.docx)'), value: 'docx' }, { label: t('EPUB (.epub)'), value: 'epub' }
       ]);
@@ -1795,7 +1796,7 @@ function bookTile(meta, opts = {}) {
       await writeBookMeta(meta.id, meta);
       renderShelves();
     } else if (choice === 'goal') {
-      const goal = await askInput(t('Word count goal for “{title}”', { title: meta.title }), t('e.g. 80000 — blank removes the goal'),
+      const goal = await askInput(t('Word count goal for “{title}”', { title: escHtml(meta.title) }), t('e.g. 80000 — blank removes the goal'),
         meta.wordGoal ? String(meta.wordGoal) : '');
       if (goal === null) return;
       meta.wordGoal = parseInt(goal, 10) || 0;
@@ -2144,7 +2145,7 @@ async function reshelveBook() {
   const loose = all.filter((b) => !shelved.has(b.id) && !b.kind).sort((a, b) => (b.modified || '').localeCompare(a.modified || ''));
   if (!loose.length) { toast(t('Every book in your library is already on a shelf')); return; }
   const pick = await optionModal(t('Books in your library that aren’t on a shelf'), null,
-    loose.map((b) => ({ label: b.title, desc: b.author ? t('by {author}', { author: b.author }) : '', value: b.id })));
+    loose.map((b) => ({ label: escHtml(b.title), desc: b.author ? escHtml(t('by {author}', { author: b.author })) : '', value: b.id })));
   if (!pick) return;
   const shelf = shelvesFor(currentAuthor().id)[0] || library.shelves[0];
   await placeTitle(shelf, pick);
@@ -2158,19 +2159,19 @@ $('#author-chip').onclick = async () => {
   const opts = [];
   for (const a of library.authors) {
     if (a.id !== cur.id) {
-      opts.push({ label: t('Write as {name}', { name: a.name }), desc: t('Switch to this name’s shelves'), value: 'sw:' + a.id });
+      opts.push({ label: t('Write as {name}', { name: escHtml(a.name) }), desc: t('Switch to this name’s shelves'), value: 'sw:' + a.id });
     }
   }
-  opts.push({ label: t('Rename {name}', { name: cur.name }), value: 'rename' });
+  opts.push({ label: t('Rename {name}', { name: escHtml(cur.name) }), value: 'rename' });
   opts.push({ label: t('Add a pen name…'), desc: t('A separate set of shelves under another name'), value: 'add' });
   if (library.authors.length > 1) {
     opts.push({
-      label: t('Remove {name}', { name: cur.name }),
+      label: t('Remove {name}', { name: escHtml(cur.name) }),
       desc: t('These shelves and books move to your other name. Nothing is deleted from disk.'),
       danger: true, value: 'del'
     });
   }
-  const pick = await optionModal(t('Writing as {name}', { name: cur.name }), null, opts);
+  const pick = await optionModal(t('Writing as {name}', { name: escHtml(cur.name) }), null, opts);
   if (!pick) return;
   if (pick.startsWith('sw:')) {
     library.currentAuthorId = pick.slice(3);
@@ -2335,6 +2336,7 @@ function renderChapters() {
         head.classList.toggle('has-title', titleSpan.textContent.trim() !== '');
       });
       titleSpan.addEventListener('keydown', (e) => {
+        if (e.isComposing || e.keyCode === 229) { e.stopPropagation(); return; } // an input method's Enter confirms its word
         if (e.key === 'Enter' && e.shiftKey && (e.metaKey || e.ctrlKey)) {
           e.preventDefault();
           titleSpan.blur();
@@ -2482,7 +2484,7 @@ async function chapterMenu(chId, x = 0, y = 0, from = null) {
       ...(window.Capacitor ? [] : [{ label: 'PDF (.pdf)', value: 'pdf' }]),
       { label: t('Word (.docx)'), value: 'docx' }, { label: t('EPUB (.epub)'), value: 'epub' }
     ];
-    const fmt = await optionModal(t('Export “{title}”', { title: chapterHeading(chId) || chapterName(chId) }), null, formats);
+    const fmt = await optionModal(t('Export “{title}”', { title: escHtml(chapterHeading(chId) || chapterName(chId)) }), null, formats);
     if (fmt) await doExport(fmt, chId);
     return null;
   }
@@ -2525,6 +2527,12 @@ function copyrightStarter() {
 /*  EDITOR — typing                                                    */
 /* ================================================================== */
 
+// a drag that began on NEO's own page (moving words within the book)
+let dragFromInside = false;
+document.addEventListener('dragstart', () => { dragFromInside = true; }, true);
+document.addEventListener('dragend', () => { dragFromInside = false; }, true);
+document.addEventListener('drop', () => { setTimeout(() => { dragFromInside = false; }, 0); }, true);
+
 function wireChapterBody(body, chId) {
   body.addEventListener('focus', () => { currentChapterId = chId; updateCounters(); highlightNav(); });
 
@@ -2561,18 +2569,49 @@ function wireChapterBody(body, chId) {
     // a script's lines keep their elements; a script pasted as text is read
     if (isScript() && spPaste(e, body, chId)) return;
     e.preventDefault();
-    const html = e.clipboardData.getData('text/html');
-    const text = e.clipboardData.getData('text/plain');
+    insertClip(e.clipboardData);
+  });
+  // Text dragged in from another app (a browser, Word) is cleaned the same
+  // way as a paste, instead of landing with its fonts, colours and links.
+  // A drag within NEO's own pages is left to the engine.
+  body.addEventListener('drop', (e) => {
+    if (dragFromInside || isScript() || !e.dataTransfer || (e.dataTransfer.files && e.dataTransfer.files.length)) return;
+    const types = [...(e.dataTransfer.types || [])];
+    if (!types.includes('text/html') && !types.includes('text/plain')) return;
+    e.preventDefault();
+    const at = document.caretRangeFromPoint ? document.caretRangeFromPoint(e.clientX, e.clientY) : null;
+    if (at && body.contains(at.startContainer)) {
+      body.focus({ preventScroll: true });
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(at);
+    }
+    insertClip(e.dataTransfer);
+  });
+  function insertClip(data) {
+    writeOverGhost(); // pasted words over a gray note are prose, like typed ones
+    const html = data.getData('text/html');
+    const text = data.getData('text/plain');
     // hyphens set as dialogue dashes, the same as typing them
     const edges = caretEdges(body);
     if (html) {
       document.execCommand('insertHTML', false, cleanPasteHtml(html, { style: dashStyle(), ...edges }));
+      // the engine wraps inserted HTML (and its neighbours) in style spans
+      if (body.querySelector('span:not(.ph-mark)')) {
+        const caret = captureCaret();
+        stripJunkSpans(body);
+        restoreCaret(caret);
+      }
       reconcileMarks();
     } else if (text) {
       const parts = text.replace(/\r/g, '').split(/\n+/).filter((p) => p.trim());
       parts.forEach((p, i) => {
         if (i > 0) document.execCommand('insertParagraph');
-        const line = dialogueDashes(p.trim(), dashStyle(), { start: i > 0 || edges.start, end: i < parts.length - 1 || edges.end, spaced: i === 0 && edges.spaced });
+        // the clipboard's own space at either end stays when the paste lands
+        // mid-line ("the " + "big " + "dog"), and goes at a paragraph's edge
+        const lead = i === 0 && !edges.start && !edges.spaced && /^\s/.test(p) ? ' ' : '';
+        const tail = i === parts.length - 1 && !edges.end && !edges.spacedAfter && /\s$/.test(p) ? ' ' : '';
+        const line = lead + dialogueDashes(p.trim(), dashStyle(), { start: i > 0 || edges.start, end: i < parts.length - 1 || edges.end, spaced: i === 0 && edges.spaced }) + tail;
         // plain text written in Markdown keeps its *italics* and **bold**
         const styled = library && library.markdownOff ? null : markdownInline(line);
         if (styled) {
@@ -2581,7 +2620,7 @@ function wireChapterBody(body, chId) {
         } else document.execCommand('insertText', false, line);
       });
     }
-  });
+  }
   // While macOS composes input, shortcuts stand down completely.
   let composing = false;
   body.addEventListener('compositionstart', () => { composing = true; });
@@ -2666,9 +2705,7 @@ function wireChapterBody(body, chId) {
   // the moment writing hits a ghost, it becomes prose
   // (it keeps its data-sec-id so the outline knows it's been written)
   const ghostWas = {}; // each ghost's own words, from before it was written over
-  body.addEventListener('beforeinput', (e) => {
-    // undo and redo give words back; they don't write
-    if (e.inputType && e.inputType.startsWith('history')) return;
+  function writeOverGhost() {
     const sel = window.getSelection();
     if (!sel.rangeCount) return;
     let el = sel.anchorNode;
@@ -2679,7 +2716,17 @@ function wireChapterBody(body, chId) {
       if (secId && !(secId in ghostWas)) ghostWas[secId] = ghost.textContent;
       ghost.classList.remove('ghost');
     }
+  }
+  body.addEventListener('beforeinput', (e) => {
+    // undo and redo give words back; they don't write
+    if (e.inputType && e.inputType.startsWith('history')) return;
+    writeOverGhost();
   });
+  // NEO's own typing aids (smart quotes, capitals) write without a
+  // beforeinput: a key that types a letter over a ghost makes it prose first
+  body.addEventListener('keydown', (e) => {
+    if (e.key && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.isComposing) writeOverGhost();
+  }, true);
   // …and when undo brings a ghost's words back, the ghost comes back with
   // them: the class isn't part of the engine's undo, so it follows the text
   body.addEventListener('input', (e) => {
@@ -2970,10 +3017,13 @@ function handleTabSpacing(e) {
       while (n < 2 && r.startOffset - n > 0 &&
              node.textContent[r.startOffset - n - 1] === ' ') n++;
       if (n > 0) {
+        // through the engine, so the change is seen (and saved, and undone)
         const del = document.createRange();
         del.setStart(node, r.startOffset - n);
         del.setEnd(node, r.startOffset);
-        del.deleteContents();
+        sel.removeAllRanges();
+        sel.addRange(del);
+        document.execCommand('delete');
       }
     }
   }
@@ -3687,7 +3737,8 @@ function caretEdges(body) {
   post.selectNodeContents(block);
   post.setStart(range.endContainer, range.endOffset);
   const before = pre.toString();
-  return { start: !before.trim(), end: !post.toString().trim(), spaced: /\s$/.test(before) };
+  const after = post.toString();
+  return { start: !before.trim(), end: !after.trim(), spaced: /\s$/.test(before), spacedAfter: /^\s/.test(after) };
 }
 
 // Reduce pasted HTML to what a manuscript is made of: paragraphs, bold,
@@ -3699,7 +3750,7 @@ function caretEdges(body) {
 function cleanPasteHtml(html, dashes) {
   // parsed off to the side: nothing in a clipboard loads or runs
   const holder = new DOMParser().parseFromString(html, 'text/html').body;
-  holder.querySelectorAll('script,style,meta,link,img,table,head,title').forEach((n) => n.remove());
+  holder.querySelectorAll('script,style,meta,link,img,head,title').forEach((n) => n.remove());
   // Google Docs wraps the whole clipboard in <b style="font-weight:normal">
   holder.querySelectorAll('b, strong').forEach((b) => {
     const w = (b.style && b.style.fontWeight || '').toLowerCase();
@@ -3717,7 +3768,9 @@ function cleanPasteHtml(html, dashes) {
   });
   // a break marker at every block edge and every line break
   const BREAK = '\uE000';
-  const blocks = 'p, div, li, h1, h2, h3, h4, h5, h6, blockquote, pre, section, article, header, footer, tr, dd, dt';
+  // (a table's cells are paragraphs too: a letter or a sign set in a table
+  // keeps its words)
+  const blocks = 'p, div, li, h1, h2, h3, h4, h5, h6, blockquote, pre, section, article, header, footer, tr, td, th, dd, dt, caption';
   holder.querySelectorAll(blocks).forEach((b) => {
     b.before(document.createTextNode(BREAK));
     b.after(document.createTextNode(BREAK));
@@ -3737,10 +3790,14 @@ function cleanPasteHtml(html, dashes) {
   const out = paras.map((runs, n) => {
     // whitespace collapses like HTML's, and each paragraph is trimmed
     runs = runs.map((r) => (r.mark !== undefined ? r : { ...r, text: r.text.replace(/\s+/g, ' ') }));
+    // (one space is kept where the clipboard's words meet the line's own,
+    // mid-line: "the " + "big" + " dog" doesn't fuse into "thebigdog")
     const first = runs.find((r) => r.mark === undefined);
-    if (first) first.text = first.text.replace(/^\s+/, '');
+    const keepLead = dashes && n === filled.indexOf(true) && !dashes.start && !dashes.spaced;
+    const keepTail = dashes && n === filled.lastIndexOf(true) && !dashes.end && !dashes.spacedAfter;
+    if (first) first.text = first.text.replace(/^\s+/, keepLead && /^\s/.test(first.text) ? ' ' : '');
     const last = [...runs].reverse().find((r) => r.mark === undefined);
-    if (last) last.text = last.text.replace(/\s+$/, '');
+    if (last) last.text = last.text.replace(/\s+$/, keepTail && /\s$/.test(last.text) ? ' ' : '');
     if (dashes) {
       dashRuns(runs, dashes.style, {
         start: n !== filled.indexOf(true) || dashes.start,
@@ -4274,7 +4331,7 @@ $('#tp-subtitle').addEventListener('keydown', titleEnter);
 // to the Outline when Enter came from here
 $('#tp-author').addEventListener('keydown', titleEnter);
 function titleEnter(e) {
-  if (e.key !== 'Enter') return;
+  if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
   e.preventDefault();
   // into the story, past any pages that come before it
   const first = book.chapterOrder.find((c) => isStory(c));
@@ -4352,6 +4409,11 @@ document.addEventListener('keydown', (e) => {
     void setEditorFontSize(-1);
   }
   if (e.key === 'Escape') {
+    // an input method's Esc cancels its own composition, nothing more
+    if (e.isComposing || e.keyCode === 229) return;
+    // an open spelling menu closes; the book stays open
+    const spellMenu = document.querySelector('.spell-menu');
+    if (spellMenu) { e.preventDefault(); spellMenu.remove(); return; }
     // from the find bar's buttons too (the arrows take the focus when
     // clicked): back to the page. Typing on the page with the bar still
     // open, Esc only closes the bar and leaves the caret where it is.
@@ -5019,7 +5081,9 @@ function spToFountain(lines, title = {}) {
     gap();
     if (l.type === 'heading') out.push(SP_HEAD_RE.test(caps) ? caps : '.' + caps);
     else if (l.type === 'character') {
-      out.push(/\p{Ll}/u.test(caps) ? '@' + text : caps);
+      // a name Fountain wouldn't take for one on sight ("MAN IN THE BLUE
+      // HAT", "GUARD!") is forced, so the speech comes back as a speech
+      out.push(/\p{Ll}/u.test(caps) ? '@' + text : spLooksLikeCharacter(caps) ? caps : '@' + caps);
       inSpeech = true;
     } else if (l.type === 'transition') out.push(/TO:$/.test(caps) ? caps : '>' + caps);
     else if (l.type === 'shot') out.push('!' + caps);
@@ -5066,7 +5130,10 @@ function spFromFountain(src) {
   for (let k = 0; k < rows.length; k++) {
     const s = rows[k].trim();
     if (!s) { inSpeech = false; joinable = false; continue; }
-    if (/^={3,}$/.test(s) || /^#/.test(s) || /^=[^=]/.test(s) || s === '=' || SP_PDF_NOISE.test(s)) continue;
+    // inside a speech, a line is what's said ("#2 pencil", "42."): only a
+    // PDF's (MORE) and CONTINUED are left out there
+    if (inSpeech ? /^(?:\(MORE\)|\(?CONTINUED\)?:?)$/i.test(s)
+      : /^={3,}$/.test(s) || /^#/.test(s) || /^=[^=]/.test(s) || s === '=' || SP_PDF_NOISE.test(s)) continue;
     if (inSpeech) {
       if (/^\(.*\)$/.test(s)) push('paren', s);
       else push('dialogue', s.replace(/^~\s*/, ''), true);
@@ -5152,6 +5219,10 @@ const spXmlText = (s) => String(s).replace(/&#x([0-9a-f]+);/gi, (_, h) => String
   .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
 const spXmlAttr = (tag, name) => { const m = tag.match(new RegExp('\\b' + name + '="([^"]*)"')); return m ? spXmlText(m[1]) : ''; };
 function spFdxParas(xml) {
+  // Final Draft keeps a scene's summary and story beats inside its heading,
+  // as Paragraphs of their own: they come out first, or the heading's own
+  // text would be cut off at the first inner </Paragraph>
+  xml = xml.replace(/<SceneProperties\b[\s\S]*?<\/SceneProperties>/g, '').replace(/<ScriptNote\b[\s\S]*?<\/ScriptNote>/g, '');
   xml = xml.replace(/<Paragraph\b[^>]*>\s*<DualDialogue>([\s\S]*?)<\/DualDialogue>\s*<\/Paragraph>/g, '$1');
   const out = [];
   for (const m of xml.matchAll(/<Paragraph\b([^>]*)>([\s\S]*?)<\/Paragraph>/g)) {
@@ -6138,19 +6209,41 @@ async function spFontFaces() {
   }
   return css;
 }
+// Runs as marked-up text (Markdown, Fountain): a mark opens where its style
+// starts and closes where it ends, hugging the words, so runs that touch
+// ("un" + bold-italic "believ" + "able") come out as **un*believ*able**,
+// not as markers piled into each other
+function markedRuns(runs, marks, esc) {
+  let out = '';
+  const open = [];
+  const closeTo = (want) => {
+    const k = open.findIndex((key) => !want[key]);
+    if (k === -1) return;
+    const shut = open.splice(k).reverse().map((key) => marks.find((m) => m.key === key).close).join('');
+    const ws = out.match(/\s*$/)[0];
+    out = out.slice(0, out.length - ws.length) + shut + ws;
+  };
+  for (const r of runs) {
+    if (r.mark !== undefined) continue;
+    const text = esc(r.text || '');
+    if (!text.trim()) { out += text; continue; }
+    const want = {};
+    for (const m of marks) want[m.key] = !!r[m.key];
+    closeTo(want);
+    const lead = text.match(/^\s*/)[0];
+    const opening = marks.filter((m) => want[m.key] && !open.includes(m.key));
+    open.push(...opening.map((m) => m.key));
+    out += lead + opening.map((m) => m.open).join('') + text.slice(lead.length);
+  }
+  closeTo({});
+  return out;
+}
+
 function spFountain() {
+  const marks = [{ key: 'b', open: '**', close: '**' }, { key: 'i', open: '*', close: '*' }, { key: 'u', open: '_', close: '_' }];
   const lines = spExportLines().map((l) => ({
     type: l.type,
-    text: l.runs.map((r) => {
-      const s = r.text.replace(/([\\*_])/g, '\\$1');
-      const lead = s.match(/^\s*/)[0];
-      const trail = s.match(/\s*$/)[0];
-      let core = s.slice(lead.length, s.length - trail.length);
-      if (!core) return s;
-      const mark = r.b && r.i ? '***' : r.b ? '**' : r.i ? '*' : '';
-      if (r.u) core = '_' + core + '_';
-      return lead + mark + core + mark + trail;
-    }).join('')
+    text: markedRuns(l.runs, marks, (t) => t.replace(/([\\*_])/g, '\\$1'))
   }));
   return spToFountain(lines, spTitleFields());
 }
@@ -6418,6 +6511,17 @@ function renderNav() {
   if (!book) return; // a refresh queued just before the shelf came back
   // Replacing the source row during a native drag can interrupt its lifecycle.
   if (chapterDragActive) { navRefreshPending = true; return; }
+  // a chapter note being written in the pane isn't pulled out from under
+  // the writer: the pane catches up when they leave the note
+  const editingNote = document.activeElement && document.activeElement.closest && document.activeElement.closest('#nav-list .nav-note[contenteditable="true"]');
+  if (editingNote) {
+    navRefreshPending = true;
+    if (!editingNote.dataset.catchUp) {
+      editingNote.dataset.catchUp = '1';
+      editingNote.addEventListener('blur', () => { setTimeout(() => { if (navRefreshPending) renderNav(); }, 0); }, { once: true });
+    }
+    return;
+  }
   navRefreshPending = false;
   if (isScript()) { renderScriptNav(); return; }
   const list = $('#nav-list');
@@ -9487,6 +9591,7 @@ function trackDailyWords(total) {
     book.dailyCounts[today].start = total;
     scheduleMetaSave();
   }
+  if (sprint && sprint.bookId !== book.id) sprint = null; // a sprint belongs to the book it began in
   if (sprint && total < sprint.startCount) sprint.startCount = total;
   const wordsToday = book.dailyCounts[today].end - book.dailyCounts[today].start;
   const gc = $('#goal-counter');
@@ -10600,7 +10705,7 @@ function runSearch() {
   }
   searchState.matches = findRanges(q).map((range) => ({ range }));
   const n = searchState.matches.length;
-  $('#search-count').textContent = n ? `${n} found` : 'none';
+  $('#search-count').textContent = n ? t('{n} found', { n }) : t('none');
   paintHighlights();
 }
 
@@ -10628,9 +10733,14 @@ function replaceCurrent() {
   if (searchState.idx < 0) searchState.idx = 0; // start from the very first match
   const m = searchState.matches[searchState.idx];
   const rep = $('#replace-input').value;
+  // the match may have been edited away by hand since it was found: look
+  // again rather than put the replacement where it no longer is
+  if (m.range.toString().toLowerCase() !== String(searchState.query || '').toLowerCase()) { runSearch(); return; }
   let chapter = null;
   try {
     chapter = m.range.startContainer.parentElement.closest('.chapter');
+    snapshotStructure('replace');
+    breakRun++; // the engine never saw this change: ⌘Z goes to NEO's undo
     m.range.deleteContents();
     if (rep) m.range.insertNode(document.createTextNode(rep));
   } catch {
@@ -10668,6 +10778,7 @@ function replaceAllMatches() {
     if (touched) syncChapter(body, chId);
   }
   if (n === 0) undoStack.pop(); // nothing changed, nothing to undo
+  else breakRun++; // ⌘Z from inside the text reaches this undo too
   toast(n ? t('{n} replaced across the whole book — {key} to undo', { n, key: KZ }) : t('0 replaced'));
   runSearch();
 }
@@ -11585,7 +11696,7 @@ function openStats() {
         sprint = null;
       } else {
         const target = parseInt(bd.querySelector('#st-sprint').value, 10) || 500;
-        sprint = { target, startCount: bookWordCount(), startTime: Date.now(), done: false };
+        sprint = { target, startCount: bookWordCount(), startTime: Date.now(), done: false, bookId: book.id };
         toast(t('Sprint started — {n} words. Go.', { n: target }));
       }
       close();
@@ -12132,26 +12243,17 @@ function buildMd(data) {
   // a title like "Wool *Omnibus*" must not turn into markup (idea: nejcc, #70)
   const mdMeta = (s) => String(s || '').replace(/([\\`*_\[\]#<>])/g, '\\$1');
   // wrap a run in emphasis markers, keeping boundary spaces outside them
-  const mdRun = (r) => {
-    let t = r.text.replace(/([\\*_`~])/g, '\\$1');
-    const mark = r.b && r.i ? '***' : r.b ? '**' : r.i ? '*' : '';
-    if (!mark && !r.s && !r.u) return t;
-    const lead = t.match(/^\s*/)[0];
-    const trail = t.match(/\s*$/)[0];
-    let core = t.slice(lead.length, t.length - trail.length);
-    if (!core) return t;
-    // Markdown has strikethrough; underline goes as HTML, which it allows
-    if (r.s) core = '~~' + core + '~~';
-    if (r.u) core = '<u>' + core + '</u>';
-    return lead + mark + core + mark + trail;
-  };
+  // Markdown has strikethrough; underline goes as HTML, which it allows
+  const mdMarks = [{ key: 'b', open: '**', close: '**' }, { key: 'i', open: '*', close: '*' },
+    { key: 's', open: '~~', close: '~~' }, { key: 'u', open: '<u>', close: '</u>' }];
+  const mdRuns = (runs) => markedRuns(runs, mdMarks, (t) => t.replace(/([\\*_`~])/g, '\\$1'));
   let out = `# ${mdMeta(d.title)}\n\n`;
   if (d.subtitle) out += `*${mdMeta(d.subtitle)}*\n\n`;
   out += `**${t('by {author}', { author: mdMeta(d.author) })}**\n\n`;
   for (const ch of d.sections) {
     if (ch.heading) out += `\n## ${mdMeta(plainHeading(ch))}\n\n`;
     for (const p of ch.paras) {
-      out += p.sceneBreak ? '\n***\n\n' : (p.poetry ? '> ' : '') + p.runs.map(mdRun).join('') + '\n\n';
+      out += p.sceneBreak ? '\n***\n\n' : (p.poetry ? '> ' : '') + mdRuns(p.runs) + '\n\n';
     }
   }
   return out;

@@ -16,8 +16,10 @@ const { Buffer } = require('buffer');
   ipcMain.handle = (channel, fn) => handle(channel, (...args) => {
     // a handler's answer keeps its own timing: sync stays sync
     let out;
-    try { out = fn(...args); } catch (err) { reportBlockedWrite(err); throw err; }
-    if (out && typeof out.then === 'function') out.catch((err) => reportBlockedWrite(err));
+    // (and any failure lands in the error log, named by its channel, for
+    // whatever bug report follows)
+    try { out = fn(...args); } catch (err) { reportBlockedWrite(err); logError('ipc ' + channel, err); throw err; }
+    if (out && typeof out.then === 'function') out.catch((err) => { reportBlockedWrite(err); logError('ipc ' + channel, err); });
     return out;
   });
 }
@@ -397,10 +399,15 @@ function writeCatalog() {
       } catch { /* not a valid book folder */ }
     }
     lines.sort((a, b) => a.localeCompare(b));
-    fs.writeFileSync(path.join(LIBRARY_DIR, '_catalog.txt'),
-      t('NEO LIBRARY CATALOG — which folder is which book') + '\n' +
+    const text = t('NEO LIBRARY CATALOG — which folder is which book') + '\n' +
       t('(regenerated automatically; edits here do nothing)') + '\n\n' +
-      lines.join('\n') + '\n');
+      lines.join('\n') + '\n';
+    const file = path.join(LIBRARY_DIR, '_catalog.txt');
+    // unchanged, it's left alone: a rewrite on every save is a file for
+    // iCloud and Syncthing to send back and forth (and to clash over)
+    let old = null;
+    try { old = fs.readFileSync(file, 'utf8'); } catch { /* none yet */ }
+    if (old !== text) fs.writeFileSync(file, text);
   } catch (err) {
     logError('catalog', err);
   }
@@ -575,14 +582,26 @@ ipcMain.handle('library:listBooks', () => {
     for (const d of fs.readdirSync(LIBRARY_DIR)) {
       if (!d.startsWith('book-')) continue;
       const m = readJSON(path.join(LIBRARY_DIR, d, 'book.json'), null);
-      if (m && m.id) out.push({ id: m.id, title: m.title || t('Untitled'), author: m.author || '', modified: m.modified || '', kind: m.kind || '' });
+      // the folder is the book: a copied folder ("book-x copy") is its own
+      // book, even though the book.json inside still names the original
+      if (m && m.id) out.push({ id: d, title: m.title || t('Untitled'), author: m.author || '', modified: m.modified || '', kind: m.kind || '' });
     }
   } catch (err) { logError('listBooks', err); }
   return out;
 });
 
 ipcMain.handle('book:readMeta', (_e, bookId) => {
-  return readJSON(path.join(bookDir(bookId), 'book.json'), null) || rebuildBookMeta(bookId);
+  const dir = bookDir(bookId);
+  const meta = readJSON(path.join(dir, 'book.json'), null);
+  if (meta) {
+    if (meta.id !== bookId) meta.id = bookId; // a copied folder answers to its own name
+    return meta;
+  }
+  // iCloud (on older macOS) holds a file it hasn't downloaded as
+  // ".book.json.icloud": the book is there, just not here yet. Rebuilding
+  // it would put a bare book.json over the real one.
+  if (fs.existsSync(path.join(dir, '.book.json.icloud'))) return null;
+  return rebuildBookMeta(bookId);
 });
 
 ipcMain.handle('book:writeMeta', (_e, bookId, meta) => {
@@ -743,9 +762,13 @@ ipcMain.handle('cover:set', (_e, bookId, srcPath) => {
   if (!COVER_EXTS.includes(ext)) return null;
   const dir = bookDir(bookId);
   if (!fs.existsSync(dir)) return null;
-  clearCovers(dir);
+  // the new cover is copied in before the old ones go (the picked file may
+  // be one of them)
   const fname = 'cover-' + Date.now() + '.' + (ext === 'jpeg' ? 'jpg' : ext);
   fs.copyFileSync(srcPath, path.join(dir, fname));
+  for (const f of fs.readdirSync(dir)) {
+    if (/^cover-\d+\./.test(f) && f !== fname) fs.unlinkSync(path.join(dir, f));
+  }
   return fname;
 });
 
@@ -1640,8 +1663,18 @@ let spellChild = null;
 let spellSeq = 0;
 const spellWaiting = new Map();
 
+let spellLoaded = null; // the language the running helper has loaded
 function spellRequest(msg) {
   return new Promise((resolve) => {
+    // the helper went away (it crashed, the system reclaimed it): start a
+    // new one and load the dictionary again, rather than calling every
+    // word right for the rest of the session
+    if (!spellChild && msg.type !== 'load' && spellLoaded) {
+      const lang = spellLoaded;
+      spellLoaded = null;
+      loadSpellDictionary(lang).then(() => spellRequest(msg)).then(resolve, () => resolve({ ok: false, error: 'no spell process' }));
+      return;
+    }
     if (!spellChild) { resolve({ ok: false, error: 'no spell process' }); return; }
     const id = ++spellSeq;
     spellWaiting.set(id, resolve);
@@ -1680,6 +1713,7 @@ async function loadSpellDictionary(code) {
   const res = await spellRequest({ type: 'load', language: known, dir: path.join(__dirname, 'node_modules', entry.pkg), custom });
   if (!res.ok) { logError('spell', new Error(res.error || 'dictionary failed to load')); return false; }
   spellLanguage = known;
+  spellLoaded = known;
   return true;
 }
 
