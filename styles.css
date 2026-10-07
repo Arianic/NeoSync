@@ -1820,6 +1820,8 @@ body.night #paper.script #chapters { box-shadow: 0 4px 30px rgba(0,0,0,0.7); }
 /* scene headings stand out as you write, and print the same way */
 .sp-geom > p.sp-heading, .sp-narrow > p.sp-heading,
 .sp-geom > p.sp-shot, .sp-narrow > p.sp-shot { font-weight: bold; }
+/* …and underlined too, for the studios that want it (Format menu) */
+#paper.sp-uline .sp-geom > p.sp-heading, #paper.sp-uline .sp-narrow > p.sp-heading { text-decoration: underline; }
 /* two blank lines above a scene heading, and a shot, which is a heading
    without INT./EXT. (SP_BEFORE in app.js) */
 .sp-geom > p.sp-heading:not(:first-child), .sp-geom > p.sp-shot:not(:first-child) { margin-top: 2em; }

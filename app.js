@@ -5036,7 +5036,8 @@ function spPaginate(items, perPage = SP_LINES_PER_PAGE) {
   const blocks = [];
   for (let i = 0; i < n;) {
     let j = i + 1;
-    if (items[i].type === 'character') while (j < n && (items[j].type === 'dialogue' || items[j].type === 'paren')) j++;
+    // (a line the writer starts a page with begins a block of its own)
+    if (items[i].type === 'character') while (j < n && (items[j].type === 'dialogue' || items[j].type === 'paren') && !items[j].newPage) j++;
     blocks.push([i, j]);
     i = j;
   }
@@ -5053,7 +5054,8 @@ function spPaginate(items, perPage = SP_LINES_PER_PAGE) {
     let need = height(b, used === 0);
     const next = blocks[bi + 1];
     if (items[b[0]].type === 'heading' && next) need += height(next, false);
-    if (used > 0 && used + need > perPage) {
+    // Page Break Here: a new page, however much room is left
+    if (used > 0 && (items[b[0]].newPage || used + need > perPage)) {
       at[b[0]].brk = true;
       at[b[0]].fill = Math.max(0, perPage - used);
       page++;
@@ -5090,10 +5092,15 @@ function spToFountain(lines, title = {}) {
   if (out.length) out.push('');
   let inSpeech = false;
   const gap = () => { if (out.length && out[out.length - 1] !== '') out.push(''); };
+  let newPage = false;
   for (const l of lines) {
     const text = String(l.text || '').trim();
+    newPage = newPage || !!l.newPage;
     if (!text) { inSpeech = false; continue; }
     const caps = text.toUpperCase();
+    // Fountain's page break: === on a line of its own
+    if (newPage && out.some((x) => x !== '' && !/^[A-Za-z ]+:/.test(x))) { inSpeech = false; gap(); out.push('==='); }
+    newPage = false;
     if ((l.type === 'dialogue' || l.type === 'paren') && inSpeech) {
       out.push(l.type === 'paren' && !/^\(/.test(text) ? `(${text})` : text);
       continue;
@@ -5142,15 +5149,18 @@ function spFromFountain(src) {
   // a block's lines run on into one paragraph: Fountain keeps a writer's
   // line breaks, and a script copied from a PDF is broken at every line
   let joinable = false;
+  let breakNext = false;
   const push = (type, t, join = false) => {
     const last = out[out.length - 1];
-    if (join && joinable && last && last.type === type) last.text += ' ' + t;
-    else out.push({ type, text: t });
+    if (join && joinable && last && last.type === type && !breakNext) last.text += ' ' + t;
+    else out.push(breakNext && out.length ? { type, text: t, newPage: true } : { type, text: t });
     joinable = join;
+    breakNext = false;
   };
   for (let k = 0; k < rows.length; k++) {
     const s = rows[k].trim();
     if (!s) { inSpeech = false; joinable = false; continue; }
+    if (/^={3,}$/.test(s)) { breakNext = true; inSpeech = false; continue; }
     // inside a speech, a line is what's said ("#2 pencil", "42."): only a
     // PDF's (MORE) and CONTINUED are left out there
     if (inSpeech ? /^(?:\(MORE\)|\(?CONTINUED\)?:?)$/i.test(s)
@@ -5254,7 +5264,7 @@ function spFdxParas(xml) {
       const style = spXmlAttr(r[1], 'Style').toLowerCase().split('+');
       runs.push({ text, b: style.includes('bold'), i: style.includes('italic'), u: style.includes('underline'), s: style.includes('strikeout') });
     }
-    out.push({ type: spXmlAttr(m[1], 'Type'), align: spXmlAttr(m[1], 'Alignment').toLowerCase(), runs });
+    out.push({ type: spXmlAttr(m[1], 'Type'), align: spXmlAttr(m[1], 'Alignment').toLowerCase(), runs, newPage: /^yes$/i.test(spXmlAttr(m[1], 'StartsNewPage')) });
   }
   return out;
 }
@@ -5262,14 +5272,17 @@ function spFromFdx(xml) {
   xml = String(xml || '');
   const body = (xml.match(/<Content>([\s\S]*?)<\/Content>/) || [])[1] || '';
   const lines = [];
+  let newPage = false;
   for (const p of spFdxParas(body)) {
     const text = p.runs.map((r) => r.text).join('').trim();
+    newPage = newPage || p.newPage;
     if (!text) continue;
     const type = SP_FDX_TYPES[p.type.toLowerCase()] || 'action';
     let runs = p.runs;
     if (type === 'character') runs = [{ text: spDropContd(text), b: false, i: false, u: false, s: false }];
     if (type === 'paren' && !text.startsWith('(')) runs = [{ text: '(' + text + ')', b: false, i: false, u: false, s: false }];
-    lines.push({ type, runs });
+    lines.push(newPage && lines.length ? { type, runs, newPage } : { type, runs });
+    newPage = false;
   }
   // the title page: the centered lines are the title, the credit and the
   // writer; lines set left, below them, the contact; set right, the draft
@@ -5298,10 +5311,14 @@ function spToFdx(lines, title = {}) {
     return `      <Text${style ? ` Style="${style}"` : ''}>${esc(caps ? r.text.toUpperCase() : r.text)}</Text>\n`;
   };
   let out = '<?xml version="1.0" encoding="UTF-8" standalone="no" ?>\n<FinalDraft DocumentType="Script" Template="No" Version="1">\n\n  <Content>\n';
+  let newPage = false;
   for (const l of lines) {
-    const runs = (l.runs || []).filter((r) => r.text);
+    newPage = newPage || !!l.newPage;
+    let runs = (l.runs || []).filter((r) => r.text);
     if (!runs.length) continue;
-    out += `    <Paragraph Type="${NAMES[l.type] || 'Action'}">\n${runs.map((r) => textEl(r, CAPS.includes(l.type))).join('')}    </Paragraph>\n`;
+    if (l.type === 'heading' && title.underlineHeadings) runs = runs.map((r) => ({ ...r, b: true, u: true }));
+    out += `    <Paragraph Type="${NAMES[l.type] || 'Action'}"${newPage ? ' StartsNewPage="Yes"' : ''}>\n${runs.map((r) => textEl(r, CAPS.includes(l.type))).join('')}    </Paragraph>\n`;
+    newPage = false;
   }
   out += '  </Content>\n';
   const para = (text, align) => `    <Paragraph Alignment="${align}">\n      <Text>${esc(text)}</Text>\n    </Paragraph>\n`;
@@ -5346,6 +5363,8 @@ function spSetClass(p, type) {
 }
 function spCleanMarks(p) {
   for (const a of SP_SCREEN_ATTRS) if (p.hasAttribute(a)) p.removeAttribute(a);
+  // (a new line split from one that starts a page doesn't start one too)
+  if (p.hasAttribute('data-newpage')) p.removeAttribute('data-newpage');
 }
 // a page break's fill, as a custom property the stylesheet can read
 (() => {
@@ -5492,6 +5511,14 @@ function scriptKey(e, body) {
     return true;
   }
   if (e.key === 'Backspace' && spCaretAtStart(p)) {
+    // at the top of a line that starts a page, Backspace takes the page
+    // break away first, like the empty lines it stands for
+    if (p.hasAttribute('data-newpage')) {
+      e.preventDefault();
+      p.removeAttribute('data-newpage');
+      spAfterChange(p);
+      return true;
+    }
     const prev = p.previousElementSibling;
     // an empty speech under a name NEO guessed: it was action after all
     if (!p.textContent.trim() && spType(p) === 'dialogue' && prev && spType(prev) === 'character' && spGuessed.has(prev)) {
@@ -5688,13 +5715,13 @@ function spRepaginate() {
   const lines = spLinesOf(ps);
   // (CONT'D) first: it makes a name's line longer
   ps.forEach((p, i) => {
-    const c = lines[i].type === 'character' && spContd(lines, i);
+    const c = spContdOn() && lines[i].type === 'character' && spContd(lines, i);
     if (p.hasAttribute('data-contd') !== c) p.toggleAttribute('data-contd', c);
   });
   const narrow = $('#paper').classList.contains('narrow');
   const live = !narrow && currentTab === 'manuscript' && !$('#paper').hidden;
   const counts = spMeasure(ps, live);
-  const pg = spPaginate(ps.map((p, i) => ({ type: lines[i].type, lines: counts[i] })));
+  const pg = spPaginate(ps.map((p, i) => ({ type: lines[i].type, lines: counts[i], newPage: p.hasAttribute('data-newpage') })));
   ps.forEach((p, i) => {
     const a = pg.at[i];
     const page = a.brk ? String(a.page) : null;
@@ -5775,7 +5802,43 @@ function spHighlightScene() {
 function spReportState() {
   if (!window.neo.scriptState) return;
   const on = !!book && isScript() && !$('#editor-view').hidden;
-  window.neo.scriptState({ on, element: on ? spShownElement || 'action' : null });
+  window.neo.scriptState({ on, element: on ? spShownElement || 'action' : null, underline: on && spUnderlineOn(), contd: on && spContdOn() });
+}
+// the Format menu's two script-style items, and Page Break Here
+function spToggleStyle(key) {
+  if (!book || !isScript()) return;
+  if (key === 'underline') book.underlineHeadings = !spUnderlineOn();
+  else book.contd = spContdOn() ? false : undefined;
+  if (book.underlineHeadings === false) delete book.underlineHeadings;
+  if (book.contd === undefined) delete book.contd;
+  saveMeta();
+  spApplyStyle();
+  spRepaginate();
+  spReportState();
+}
+// the line a right-click landed on, for Page Break Here
+let spContextLine = null;
+document.addEventListener('contextmenu', (e) => {
+  spContextLine = null;
+  if (!book || !isScript() || !window.neo.scriptContext) return;
+  const body = e.target.closest && e.target.closest('.chapter-body.script-body');
+  if (!body) { window.neo.scriptContext(null); return; }
+  const at = document.caretRangeFromPoint ? document.caretRangeFromPoint(e.clientX, e.clientY) : null;
+  let el = at ? at.startContainer : e.target;
+  if (el && el.nodeType === Node.TEXT_NODE) el = el.parentElement;
+  const p = el && el.closest ? el.closest('p') : null;
+  // (the first line of a script already starts its first page)
+  spContextLine = p && body.contains(p) && spParas()[0] !== p ? p : null;
+  window.neo.scriptContext(spContextLine ? { pageBreak: spContextLine.hasAttribute('data-newpage') } : null);
+}, true);
+function spTogglePageBreak() {
+  const p = spContextLine;
+  spContextLine = null;
+  if (!p || !p.isConnected || !book || !isScript()) return;
+  snapshotStructure('page break');
+  p.toggleAttribute('data-newpage');
+  spAfterChange(p);
+  breakRun++;
 }
 function renderScriptNav() {
   const list = $('#nav-list');
@@ -5949,6 +6012,7 @@ function spEditorMode() {
   if (add) add.hidden = on;
   if (!on) setText($('#nav-head span'), t('Chapters'));
   spTitlePage(on);
+  spApplyStyle();
   // the pane stays open beside a script, unless the writer unpinned it there
   if (!NO_HOVER) {
     let kept = {};
@@ -5972,7 +6036,7 @@ function spPaste(e, body, chId) {
     const doc = new DOMParser().parseFromString(html, 'text/html');
     lines = [...doc.body.querySelectorAll('p')].map((p) => ({ type: spType(p), html: paraRuns(p.innerHTML, false).filter((r) => r.text).map(runHtml).join('') }));
   } else if (text && /\n/.test(text.trim())) {
-    lines = spFromFountain(text).map((l) => ({ type: l.type, html: spRunsFromFountain(l.text).map((x) => runHtml(x)).join('') }));
+    lines = spFromFountain(text).map((l) => ({ type: l.type, newPage: l.newPage, html: spRunsFromFountain(l.text).map((x) => runHtml(x)).join('') }));
   }
   if (!lines || !lines.length) return false;
   e.preventDefault();
@@ -6074,6 +6138,7 @@ function spPasteMany(lines, body, chId) {
   for (const l of lines) {
     const q = document.createElement('p');
     if (l.type !== 'action') q.className = 'sp-' + l.type;
+    if (l.newPage) q.setAttribute('data-newpage', '');
     q.innerHTML = l.html || '<br>';
     frag.appendChild(q);
     last = q;
@@ -6099,13 +6164,13 @@ function spPasteMany(lines, body, chId) {
 async function importScript(r, shelf) {
   const parsed = r.script === 'fdx'
     ? spFromFdx(r.source)
-    : { lines: spFromFountain(r.source).map((l) => ({ type: l.type, runs: spRunsFromFountain(l.text) })), title: spFountainTitle(r.source) };
+    : { lines: spFromFountain(r.source).map((l) => ({ type: l.type, newPage: l.newPage, runs: spRunsFromFountain(l.text) })), title: spFountainTitle(r.source) };
   if (!parsed.lines.length) return false;
   const tp = parsed.title || {};
   const title = tp.title || r.name;
   const meta = await window.neo.createBook({ author: tp.author || displayAuthor(), title });
   const chId = 'ch-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
-  const html = parsed.lines.map((l) => `<p${l.type === 'action' ? '' : ` class="sp-${l.type}"`}>${l.runs.map((x) => runHtml(x)).join('') || '<br>'}</p>`).join('');
+  const html = parsed.lines.map((l) => `<p${l.type === 'action' ? '' : ` class="sp-${l.type}"`}${l.newPage ? ' data-newpage=""' : ''}>${l.runs.map((x) => runHtml(x)).join('') || '<br>'}</p>`).join('');
   await window.neo.writeChapter(meta.id, chId, html);
   meta.title = title;
   meta.format = 'screenplay';
@@ -6132,12 +6197,20 @@ function spExportLines() {
     for (const p of holder.querySelectorAll('p')) {
       const runs = paraRuns(p.innerHTML, false).filter((r) => r.text && r.mark === undefined);
       const text = runs.map((r) => r.text).join('').replace(/\s+$/, '');
-      lines.push({ type: spType(p), runs, text });
+      lines.push({ type: spType(p), runs, text, newPage: p.hasAttribute('data-newpage') });
     }
   }
   const plain = lines.map((l) => ({ type: l.type, text: l.text }));
-  lines.forEach((l, i) => { l.contd = l.type === 'character' && spContd(plain, i); });
+  lines.forEach((l, i) => { l.contd = spContdOn() && l.type === 'character' && spContd(plain, i); });
   return lines;
+}
+// The script's own style (Format menu, while a script is open): scene
+// headings underlined as well as bold, which some studios ask for, and
+// whether a returning speaker gets (CONT'D). Kept in the script's book.json.
+const spContdOn = () => !book || book.contd !== false;
+const spUnderlineOn = () => !!(book && book.underlineHeadings);
+function spApplyStyle() {
+  $('#paper').classList.toggle('sp-uline', isScript() && spUnderlineOn());
 }
 const SP_CAPS = ['heading', 'character', 'transition', 'shot'];
 function spRunsHtml(l) {
@@ -6145,7 +6218,10 @@ function spRunsHtml(l) {
   return l.runs.map((r) => runHtml({ ...r, text: caps ? r.text.toUpperCase() : r.text })).join('') + (l.contd ? " (CONT'D)" : '');
 }
 async function spPdfHtml() {
-  const lines = spExportLines().filter((l, i, all) => l.text.trim() || (i > 0 && i < all.length - 1));
+  // (an empty line that starts a page passes its page on to the next one)
+  const all = spExportLines();
+  all.forEach((l, i) => { if (l.newPage && !l.text.trim() && all[i + 1]) all[i + 1].newPage = true; });
+  const lines = all.filter((l, i) => l.text.trim() || (i > 0 && i < all.length - 1));
   // lay the lines out off screen, as they print, to count them
   const holder = document.createElement('div');
   const ps = lines.map((l) => {
@@ -6157,7 +6233,7 @@ async function spPdfHtml() {
   });
   await document.fonts.load('1em "Courier Prime"').catch(() => {});
   const counts = spMeasure(ps, false);
-  const pg = spPaginate(lines.map((l, i) => ({ type: l.type, lines: counts[i] })));
+  const pg = spPaginate(lines.map((l, i) => ({ type: l.type, lines: counts[i], newPage: l.newPage })));
   const pages = [];
   lines.forEach((l, i) => {
     const a = pg.at[i];
@@ -6200,6 +6276,7 @@ p.sp-paren { margin-left: 9.6em; width: 15.3em; }
 p.sp-dialogue { margin-left: 6em; width: 21.3em; }
 p.sp-transition { text-align: right; }
 p.sp-heading, p.sp-shot { font-weight: bold; }
+${spUnderlineOn() ? 'p.sp-heading { text-decoration: underline; }' : ''}
 .title { text-align: center; }
 .tp-main { position: absolute; top: 3.5in; left: 1.5in; width: 6in; }
 .tp-main .gap { margin-top: 2em; }
@@ -6264,6 +6341,7 @@ function spFountain() {
   const marks = [{ key: 'b', open: '**', close: '**' }, { key: 'i', open: '*', close: '*' }, { key: 'u', open: '_', close: '_' }];
   const lines = spExportLines().map((l) => ({
     type: l.type,
+    newPage: l.newPage,
     text: markedRuns(l.runs, marks, (t) => t.replace(/([\\*_])/g, '\\$1'))
   }));
   return spToFountain(lines, spTitleFields());
@@ -6284,7 +6362,7 @@ async function spExport(format) {
   try {
     let payload;
     if (format === 'pdf') payload = { format: 'pdf', defaultName, content: await spPdfHtml(), print: 'screenplay' };
-    else if (format === 'fdx') payload = { format: 'fdx', defaultName, content: spToFdx(spExportLines(), spTitleFields()) };
+    else if (format === 'fdx') payload = { format: 'fdx', defaultName, content: spToFdx(spExportLines(), { ...spTitleFields(), underlineHeadings: spUnderlineOn() }) };
     else payload = { format: 'fountain', defaultName, content: spFountain() };
     const saved = await window.neo.exportSave(payload);
     if (saved) toast(t('Exported: {file}', { file: saved.split('/').pop() }));
@@ -13576,6 +13654,8 @@ window.neo.onMenu(async (msg) => {
   if (msg.type === 'update') updateMessage(msg);
   if (msg.type === 'export') doExport(msg.format);
   if (msg.type === 'scriptElement' && book && isScript()) spSetElement(msg.value);
+  if (msg.type === 'scriptStyle') spToggleStyle(msg.value);
+  if (msg.type === 'scriptPageBreak') spTogglePageBreak();
   if (msg.type === 'markdownEmphasis') {
     if (msg.checked) delete library.markdownOff; else library.markdownOff = true;
     await writeLibrary(library);
