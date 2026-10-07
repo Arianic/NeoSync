@@ -54,6 +54,7 @@ contextBridge.exposeInMainWorld('neo', {
   uiZoomState: (z) => ipcRenderer.send('uizoom:state', z),
   // interface language, fetched once before the page's scripts run
   i18n: ipcRenderer.sendSync('i18n:get'),
+  paper: ipcRenderer.sendSync('paper:get'), // 'Letter' or 'A4', from the computer's region
   reloadForLanguage: () => ipcRenderer.invoke('i18n:reload'),
 
   writingStyleState: (st) => ipcRenderer.send('style:state', st),

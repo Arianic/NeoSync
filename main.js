@@ -906,6 +906,17 @@ ipcMain.handle('fullscreen:escape', (e) => {
 // A script prints on US letter whatever the country (the industry's page),
 // with the margins laid out in the page itself
 const SCREENPLAY_PRINT = { pageSize: 'Letter', margins: { top: 0, bottom: 0, left: 0, right: 0 }, printBackground: false, preferCSSPageSize: true, generateTaggedPDF: true, generateDocumentOutline: false };
+// Letter is a habit of the Americas (and the Philippines); most of the world
+// prints A4. The computer's region decides, for the PDF and the Word file
+// alike. (A script is Letter everywhere: SCREENPLAY_PRINT.)
+const LETTER_COUNTRIES = ['US', 'CA', 'MX', 'PH', 'CL', 'CO', 'VE', 'GT', 'CR', 'PA', 'DO', 'PR', 'SV', 'HN', 'NI', 'BZ'];
+function paperSize() {
+  let cc = '';
+  try { cc = app.getLocaleCountryCode() || ''; } catch { /* unknown */ }
+  return LETTER_COUNTRIES.includes(cc.toUpperCase()) ? 'Letter' : 'A4';
+}
+ipcMain.on('paper:get', (e) => { e.returnValue = paperSize(); });
+
 async function renderPDF(html, print) {
   // The book reaches the PDF printer as a file, not as a data: URL. A URL
   // stops at 2 MB, and a long novel is bigger than that once it's encoded; a
@@ -915,10 +926,8 @@ async function renderPDF(html, print) {
   const tmp = path.join(app.getPath('temp'), `neo-print-${process.pid}-${Date.now()}.html`);
   fs.writeFileSync(tmp, html, 'utf8');
   const pdfWin = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });
-  // Letter is a North American habit; most of the world prints A4.
-  const letterCountries = ['US', 'CA', 'MX', 'PH'];
   const options = print === 'screenplay' ? SCREENPLAY_PRINT : {
-    pageSize: letterCountries.includes(app.getLocaleCountryCode()) ? 'Letter' : 'A4',
+    pageSize: paperSize(),
     margins: { top: 1, bottom: 1, left: 1, right: 1 },
     printBackground: false,
     // chapter headings become the PDF's bookmarks, for jumping around in

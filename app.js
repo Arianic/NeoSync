@@ -103,7 +103,14 @@ function chapterName(chId, meta = book) {
 }
 // a chapter's heading as the reader sees it: its name, then any title —
 // once, for an unnumbered chapter, whose name is its title
-function chapterHeading(chId, meta = book, sep = ' — ') {
+// The dash between a chapter's number and its title follows the book's
+// language: an en dash where that's how the language sets its dash
+// (KAPITEL 2 – SZENENWECHSEL), the em dash elsewhere (CHAPTER 2 — TITLE)
+const EN_DASH_LANGUAGES = ['de', 'nl', 'pl', 'ro', 'fr', 'it'];
+function headingDash() {
+  return EN_DASH_LANGUAGES.includes(writingLanguage().toLowerCase().split('-')[0]) ? '–' : '—';
+}
+function chapterHeading(chId, meta = book, sep = ' ' + headingDash() + ' ') {
   const title = ((meta.chapterTitles || {})[chId] || '').trim();
   const k = chapterKind(chId, meta);
   if (k === 'unnumbered') return title;
@@ -2338,7 +2345,7 @@ function renderChapters() {
       const sep = document.createElement('span');
       sep.className = 'ch-sep';
       sep.setAttribute('aria-hidden', 'true');
-      sep.textContent = '—';
+      sep.textContent = headingDash();
       const titleSpan = document.createElement('span');
       titleSpan.className = 'ch-title';
       titleSpan.contentEditable = 'true';
@@ -12633,8 +12640,11 @@ function docxP(runs, opts = {}) {
     const it = opts.flip ? !r.i : r.i;
     const caps = r.caps !== undefined ? r.caps : opts.caps;
     const size = r.size || opts.size;
+    // italic and bold are character styles (Emphasis, Strong), so an editor
+    // or typesetter can find and restyle them all at once
+    const rStyle = r.b && it ? 'StrongEmphasis' : r.b ? 'Strong' : it ? 'Emphasis' : '';
     // in the order the schema wants them (Word is strict about it)
-    const rPr = (r.b ? '<w:b/>' : '') + (it ? '<w:i/>' : '')
+    const rPr = (rStyle ? `<w:rStyle w:val="${rStyle}"/>` : '')
       + (caps === true ? '<w:caps/>' : caps === false ? '<w:caps w:val="0"/>' : '')
       + (r.s ? '<w:strike/>' : '')
       + (opts.tracking ? `<w:spacing w:val="${opts.tracking}"/>` : '')
@@ -12659,9 +12669,9 @@ function buildDocxEntries(data) {
     body.push(docxP(paraRuns(p.html), Object.assign({ align: 'center', flip: italic && !attr, size: attr ? 20 : undefined, spaceBefore: attr ? 240 : 0 }, lead)));
   });
   // title page
-  body.push(docxP([{ text: d.title, b: true }], { align: 'center', spaceBefore: 3000, size: 56 }));
-  if (d.subtitle) body.push(docxP([{ text: d.subtitle, i: true }], { align: 'center', size: 32 }));
-  body.push(docxP([{ text: d.author }], { align: 'center', spaceBefore: 800 }));
+  body.push(docxP([{ text: d.title }], { style: 'Title' }));
+  if (d.subtitle) body.push(docxP([{ text: d.subtitle }], { style: 'Subtitle' }));
+  body.push(docxP([{ text: d.author }], { style: 'Author' }));
   const contents = () => {
     body.push(docxP([{ text: t('Contents') }], { align: 'center', pageBreak: true, spaceBefore: 1200, size: 28, caps: true }));
     body.push(docxP([], {}));
@@ -12701,26 +12711,43 @@ function buildDocxEntries(data) {
     } else {
       body.push(docxP([], { pageBreak: true })); // headingless story still starts fresh
     }
+    // the prose by paragraph style: Body Text (indented), Body Text No
+    // Indent (a flush paragraph), Poetry, Scene Break; only a centered or
+    // right-set line adds its alignment on top
     for (const p of ch.paras) {
-      if (p.sceneBreak) body.push(docxP([{ text: '***' }], { align: 'center', spaceBefore: 240 }));
-      else if (p.poetry) body.push(docxP(paraRuns(p.html), { align: p.align === 'center' || p.align === 'right' ? p.align : '', poetry: true }));
-      else if (p.align === 'center' || p.align === 'right') body.push(docxP(paraRuns(p.html), { align: p.align }));
-      else body.push(docxP(paraRuns(p.html), { indent: !p.flush }));
+      if (p.sceneBreak) body.push(docxP([{ text: '***' }], { style: 'SceneBreak' }));
+      else if (p.poetry) body.push(docxP(paraRuns(p.html), { style: 'Poetry', align: p.align === 'center' || p.align === 'right' ? p.align : '' }));
+      else if (p.align === 'center' || p.align === 'right') body.push(docxP(paraRuns(p.html), { style: 'BodyTextNoIndent', align: p.align }));
+      else body.push(docxP(paraRuns(p.html), { style: p.flush ? 'BodyTextNoIndent' : 'BodyText' }));
     }
   });
   if (!placed) contents();
   const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body.join('')}
-<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>
+<w:sectPr>${(window.neo.paper || 'Letter') === 'A4' ? '<w:pgSz w:w="11906" w:h="16838"/>' : '<w:pgSz w:w="12240" w:h="15840"/>'}<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>
 </w:body></w:document>`;
-  const headingStyle = (n) => `<w:style w:type="paragraph" w:styleId="Heading${n}"><w:name w:val="heading ${n}"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/>
+  // the page's own typeface (on Linux, the bundled face it shows)
+  const font = escXml(firstFamily(exportBodyFont()) || 'Georgia');
+  const para = (id, name, pPr, next = 'BodyText', rPr = '') => `<w:style w:type="paragraph" w:styleId="${id}"><w:name w:val="${name}"/><w:basedOn w:val="Normal"/><w:next w:val="${next}"/><w:qFormat/>${pPr ? '<w:pPr>' + pPr + '</w:pPr>' : ''}${rPr ? '<w:rPr>' + rPr + '</w:rPr>' : ''}</w:style>`;
+  const chr = (id, name, rPr) => `<w:style w:type="character" w:styleId="${id}"><w:name w:val="${name}"/><w:qFormat/><w:rPr>${rPr}</w:rPr></w:style>`;
+  const headingStyle = (n) => `<w:style w:type="paragraph" w:styleId="Heading${n}"><w:name w:val="heading ${n}"/><w:basedOn w:val="Normal"/><w:next w:val="BodyText"/><w:uiPriority w:val="9"/><w:qFormat/>
 <w:pPr><w:keepNext/><w:pageBreakBefore/><w:spacing w:before="1200"/><w:jc w:val="center"/><w:outlineLvl w:val="${n - 1}"/></w:pPr><w:rPr><w:caps/><w:sz w:val="28"/></w:rPr></w:style>`;
   const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Georgia" w:hAnsi="Georgia"/><w:sz w:val="24"/></w:rPr></w:rPrDefault>
+<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${font}" w:hAnsi="${font}" w:cs="${font}"/><w:sz w:val="24"/></w:rPr></w:rPrDefault>
 <w:pPrDefault><w:pPr><w:spacing w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>
 <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>
+${para('BodyText', 'Body Text', '<w:ind w:firstLine="480"/>')}
+${para('BodyTextNoIndent', 'Body Text No Indent', '', 'BodyText')}
+${para('Poetry', 'Poetry', '<w:ind w:left="720" w:right="720"/>')}
+${para('SceneBreak', 'Scene Break', '<w:spacing w:before="240"/><w:jc w:val="center"/>', 'BodyText')}
+${para('Title', 'Title', '<w:spacing w:before="3000"/><w:jc w:val="center"/>', 'Normal', '<w:b/><w:sz w:val="56"/>')}
+${para('Subtitle', 'Subtitle', '<w:jc w:val="center"/>', 'Normal', '<w:i/><w:sz w:val="32"/>')}
+${para('Author', 'Author', '<w:spacing w:before="800"/><w:jc w:val="center"/>')}
 ${[1, 2, 3].map(headingStyle).join('\n')}
+${chr('Emphasis', 'Emphasis', '<w:i/>')}
+${chr('Strong', 'Strong', '<w:b/>')}
+${chr('StrongEmphasis', 'Strong Emphasis', '<w:b/><w:i/>')}
 </w:styles>`;
   return [
     { path: '[Content_Types].xml', content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -13099,7 +13126,7 @@ async function shelfBookData(shelf, opts = {}) {
       else {
         if (role) heading = role === 'prologue' ? t('Prologue') : t('Epilogue');
         else { n += 1; heading = t('Chapter {n}', { n }); }
-        if (chTitle) heading = library.exportCustomChapterTitles ? chTitle : heading + ' — ' + chTitle;
+        if (chTitle) heading = library.exportCustomChapterTitles ? chTitle : heading + ' ' + headingDash() + ' ' + chTitle;
       }
       const lv = underPart ? chLevel + 1 : chLevel;
       const s = push({ kind: 'chapter', heading, level: lv, paras: c.paras, role: role || '' });
