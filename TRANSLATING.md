@@ -18,11 +18,13 @@ NEO currently speaks:
 | `ru` | Русский | complete, reviewed by a native speaker |
 | `hu` | Magyar | complete, reviewed by a native speaker |
 
-Spellchecking (Edit → Spellcheck Language) covers English, French, Spanish, German, Dutch, Polish, Brazilian Portuguese, Romanian, Russian and Hungarian. The engine is Hunspell itself, compiled to WebAssembly, so every dictionary loads in well under a second. Italian is left out because the only Hunspell dictionary on npm is GPL-3.0-only, which does not sit well in an MIT app. The Brazilian Portuguese interface starts with the Brazilian dictionary; the European Portuguese interface leaves the choice to the writer, since spellings differ.
+Spellchecking (Edit → Spellcheck Language) covers English, French, Spanish, German, Dutch, Polish, Brazilian Portuguese, Romanian, Russian, Hungarian and Swedish. The engine is Hunspell itself, compiled to WebAssembly, so every dictionary loads in well under a second. Italian is left out because the only Hunspell dictionary on npm is GPL-3.0-only, which does not sit well in an MIT app. The Brazilian Portuguese interface starts with the Brazilian dictionary; the European Portuguese interface leaves the choice to the writer, since spellings differ.
 
 Spellcheck starts off on every launch. Choosing a dictionary does not turn it on. If the interface starts in Romanian and the library has no saved spellcheck language, NEO selects and saves Romanian. Explicit dictionary choices survive interface-language changes. Other interface languages keep their existing defaults.
 
 Romanian lookup accepts standard diacritics, legacy `ş/ţ`, and decomposed Unicode accents without changing manuscript text. Suggestions use standard Romanian spelling. This checks spelling, not grammar: both `sa` and `să` are words. See [the Romanian evaluation](scripts/romanian-spellcheck.md) and [the Portuguese evaluation](scripts/portuguese-spellcheck.md) for performance and licensing details.
+
+The Swedish dictionary (`sv`, **Svenska** in Edit → Spellcheck Language) is Göran Andersson's LibreOffice dictionary, pinned as `dictionary-sv` 4.0.0. Its data is LGPL 3.0, separately from NEO's MIT license. Desktop and Pocket distribute the unmodified `.aff`/`.dic` source files with attribution and the full LGPL/GPL license texts (`licenses/dictionary-sv`). This adds spellchecking only, not a Swedish interface translation.
 
 The Hungarian dictionary is LibreOffice's Magyar Ispell 1.9, kept in `dictionaries/hu` (the npm `dictionary-hu` package rejected common accusatives like *könyvet*). They are underlined in blue; right-click shows the fix and why. Each rule is a plain pattern run on the writer's computer, and fires only where a mistake is very likely.
 
