@@ -1,7 +1,4 @@
 {
-  "Go to the next tab": "",
-  "Go to the previous tab": "",
-  "Manuscript, Notes, Outline, Darlings, then round again.": "",
   "_meta": {
     "name": "Language name in that language",
     "translators": []
@@ -248,8 +245,10 @@
   "Gmail compose opened — drag in the PDF NEO revealed, then send": "",
   "Go to": "",
   "Go to the next chapter": "",
+  "Go to the next tab": "",
   "Go to the page": "",
   "Go to the previous chapter": "",
+  "Go to the previous tab": "",
   "goal": "",
   "Goals": "",
   "Goals and writing sprints": "",
@@ -305,6 +304,7 @@
   "Mail unavailable — snapshot saved to your Exports folder instead": "",
   "Make it a chapter": "",
   "Manuscript": "",
+  "Manuscript, Notes, Outline, Darlings, then round again.": "",
   "Manuscripts": "",
   "Markdown (.md)": "",
   "Markdown Emphasis": "",

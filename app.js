@@ -13671,7 +13671,6 @@ window.neo.onMenu(async (msg) => {
     return;
   }
   if (msg.type === 'help') showHelp();
-  if (msg.type === 'tab') goToTab(msg.value);
   if (msg.type === 'about') showAbout();
   if (msg.type === 'checkUpdate') checkForUpdate();
   if (msg.type === 'update') updateMessage(msg);
