@@ -4449,7 +4449,8 @@ function quoteOpenIn(text, q, straight = '') {
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (straight && c === straight) straights++;
-    else if (c === open && open !== close) depth++;
+    else if (c === open && open === close) depth = depth ? 0 : 1;
+    else if (c === open) depth++;
     else if (c === close) {
       if (close === '’' && /\p{L}/u.test(text[i - 1] || '') && /\p{L}/u.test(text[i + 1] || '')) continue;
       depth = Math.max(0, depth - 1);
@@ -4473,7 +4474,8 @@ const QUOTE_STYLES = {
   ro: { open: '„', close: '”' },
   ru: { open: '«', close: '»' },
   el: { open: '«', close: '»' },
-  hu: { open: '„', close: '”' }
+  hu: { open: '„', close: '”' },
+  sv: { open: '”', close: '”' }
 };
 // The single quotation marks, where ' types them: English and Dutch ‘…’;
 // German ‚…‘, or ›…‹ in a book set in »…«, or ‹…› in Swiss «…» (#286).
@@ -4509,7 +4511,7 @@ function bookQuotes(el) {
   const body = el && el.closest ? el.closest('.chapter-body') : null;
   let c = opens(body ? body.textContent : '');
   if (!c['»'] && !c['«'] && !c.own && book) c = opens(book.chapterOrder.map((id) => chapterHTML[id] || '').join(' '));
-  if (c['»'] > c.own && c['»'] >= c['«']) return { open: '»', close: '«' };
+  if (c['»'] > c.own && c['»'] >= c['«']) return { open: '»', close: writingLanguage().split('-')[0] === 'sv' ? '»' : '«' };
   if (c['«'] > c.own && c['«'] > c['»']) return { open: '«', close: '»' };
   return q;
 }
