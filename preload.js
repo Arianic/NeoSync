@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld('neo', {
   poetryState: (on) => ipcRenderer.send('poetry:state', on),
   flushState: (on) => ipcRenderer.send('flush:state', on),
   scriptState: (st) => ipcRenderer.send('script:state', st),
+  printPaperback: (job) => ipcRenderer.invoke('print:paperback', job),
   // sent (and waited for) as a script line is right-clicked, so the menu
   // that opens next can offer Page Break Here
   scriptContext: (st) => ipcRenderer.sendSync('script:context', st),

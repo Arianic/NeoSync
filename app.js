@@ -1791,10 +1791,11 @@ function bookTile(meta, opts = {}) {
       const fmt = await optionModal(t('Export “{title}”', { title: escHtml(meta.title) }), null, [
         { label: t('Text (.txt)'), value: 'txt' }, { label: t('Markdown (.md)'), value: 'md' }, { label: t('HTML (.html)'), value: 'html' },
         ...(window.Capacitor ? [] : [{ label: 'PDF (.pdf)', value: 'pdf' }]),
-        { label: t('Word (.docx)'), value: 'docx' }, { label: t('EPUB (.epub)'), value: 'epub' }
+        { label: t('Word (.docx)'), value: 'docx' }, { label: t('EPUB (.epub)'), value: 'epub' },
+        ...(window.Capacitor || isPageMeta(meta) ? [] : [{ label: t('Paperback for KDP…'), value: 'paperback' }])
       ]);
       if (!fmt) return;
-      if (window.Capacitor) {
+      if (window.Capacitor || fmt === 'paperback') {
         await openBook(meta.id);
         await doExport(fmt);
       } else {
@@ -12358,6 +12359,343 @@ function bookExportData() {
   };
 }
 
+/* ================================================================== */
+/*  PRINT BOOK — a paperback for KDP                                   */
+/*  File → Export → Paperback for KDP… lays the open book out as a     */
+/*  print-ready interior PDF at one of KDP's four common trim sizes,   */
+/*  and a cover template sized to its page count. This builds the      */
+/*  book's HTML; main.js (print:paperback) lays it out in pages with   */
+/*  Paged.js, hyphenates it, sets the inside margin KDP asks for at    */
+/*  that page count, and prints both files.                            */
+/* ================================================================== */
+
+const PRINT_TRIMS = [
+  { id: '5x8', label: '5 × 8 in', mm: '127 × 203 mm', size: 10.5, outside: 0.6, perPage: 250 },
+  { id: '5.25x8', label: '5.25 × 8 in', mm: '133 × 203 mm', size: 10.75, outside: 0.6, perPage: 265 },
+  { id: '5.5x8.5', label: '5.5 × 8.5 in', mm: '140 × 216 mm', size: 11, outside: 0.65, perPage: 290 },
+  { id: '6x9', label: '6 × 9 in', mm: '152 × 229 mm', size: 11.5, outside: 0.75, perPage: 330 }
+];
+const PRINT_DIMS = { '5x8': [5, 8], '5.25x8': [5.25, 8], '5.5x8.5': [5.5, 8.5], '6x9': [6, 9] };
+// a CSS string, for the running heads
+// (a "<" as an escape too, so a name can't close the style block it sits in)
+const cssString = (s) => '"' + String(s || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/</g, '\\3c ').replace(/[\n\r]+/g, ' ') + '"';
+
+// The book's pages for print: the title page, the copyright page on its
+// back, the dedication and epigraph, the contents where the writer put
+// one, the story (each chapter on a right-hand page), the pages at the back,
+// then the other books by the same name and a note to the reader.
+function buildPrintHtml(d, o) {
+  const trim = PRINT_TRIMS.find((x) => x.id === o.trim) || PRINT_TRIMS[0];
+  const [W, H] = PRINT_DIMS[trim.id];
+  const esc = (s) => escHtml(String(s || ''));
+  const cap = (library.fonts || {}).dropcap === 'none' ? '' : exportDropCapFont();
+  const year = String(new Date().getFullYear());
+  // paragraphs of prose, hyphenated in main.js (class "hy")
+  const prose = (paras, opening) => {
+    let first = opening;
+    let afterBreak = false;
+    return paras.map((p) => {
+      if (p.sceneBreak) { afterBreak = true; return '<p class="brk">*&#8195;*&#8195;*</p>'; }
+      const inner = p.html.replace(/^<p[^>]*>|<\/p>$/g, '');
+      if (p.poetry) { afterBreak = false; return `<p class="poetry"${p.align ? ` style="text-align:${p.align}"` : ''}>${inner}</p>`; }
+      const cls = ['hy'];
+      if (first) cls.push('first');
+      if (first && OPENING_DASH.test(p.text)) cls.push('dialogue');
+      if (afterBreak || p.flush) cls.push('flush');
+      first = false;
+      afterBreak = false;
+      return `<p class="${cls.join(' ')}"${p.align ? ` style="text-align:${p.align}"` : ''}>${inner}</p>`;
+    }).join('\n');
+  };
+  const lines = (paras) => paras.map((p) => {
+    if (p.sceneBreak) return '<p class="brk">*&#8195;*&#8195;*</p>';
+    const cls = [isAttribution(p) ? 'attr' : '', p.poetry ? 'poetry' : ''].filter(Boolean).join(' ');
+    return `<p${cls ? ` class="${cls}"` : ''}>${p.html.replace(/^<p[^>]*>|<\/p>$/g, '')}</p>`;
+  }).join('\n');
+
+  let body = '';
+  // the title page (page 1, a right-hand page)
+  body += `<section class="fm titlepage"><h1>${esc(d.title)}</h1>${d.subtitle ? `<p class="sub">${esc(d.subtitle)}</p>` : ''}<p class="auth">${esc(d.author)}</p></section>`;
+  // its back: the copyright page, the writer's own or the standard one
+  const own = d.sections.find((s) => s.kind === 'copyright');
+  let copy = own ? lines(own.paras) : [
+    t('Copyright © {year} {name}', { year, name: d.author }),
+    t('All rights reserved.'),
+    t('No part of this book may be reproduced in any form or by any electronic or mechanical means, including information storage and retrieval systems, without written permission from the author, except for the use of brief quotations in a book review.'),
+    ...(o.fiction ? [t('This is a work of fiction. Names, characters, places, and incidents either are the products of the author’s imagination or are used fictitiously. Any resemblance to actual persons, living or dead, events, or locales is entirely coincidental.')] : [])
+  ].map((x) => `<p>${esc(x)}</p>`).join('\n');
+  if (o.isbn && !/ISBN/i.test(copy)) copy += `\n<p>ISBN ${esc(o.isbn)}</p>`;
+  body += `<section class="fm copyright"><div class="cp">${copy}</div></section>`;
+  // the dedication and the epigraph, each on a right-hand page
+  for (const s of d.sections.filter((x) => x.kind === 'dedication' || x.kind === 'epigraph')) {
+    body += `<section class="fm ${s.kind}">${lines(s.paras)}</section>`;
+  }
+  // the contents, where the writer put a Contents page
+  if (d.contents && d.toc && d.toc.length) {
+    body += `<nav class="fm toc"><h2 class="toc-hd">${esc(t('Contents'))}</h2><ol>${d.toc.map((e) => `
+      <li class="lv${e.level} t-${e.type}"><a href="#s${e.num}"><span class="toc-t">${esc(e.label)}</span></a></li>`).join('')}</ol></nav>`;
+  }
+  // the story, then the pages at the back: the note to the reader first
+  // (right after the last page, where a reader decides to say something),
+  // then the writer's own pages, then the other books. The back starts on a
+  // right-hand page; its pages after that run on, with no blank between.
+  const backPages = [];
+  for (const s of d.sections) {
+    const id = 's' + s.num;
+    if (['copyright', 'dedication', 'epigraph'].includes(s.kind)) continue;
+    if (s.kind === 'part') {
+      body += `<section class="fm part" id="${id}"><h2><span class="pl">${esc(s.heading)}</span>${s.partTitle ? `<span class="pt">${esc(s.partTitle)}</span>` : ''}</h2>${lines(s.paras)}</section>`;
+      continue;
+    }
+    const back = s.kind === 'acknowledgments' || s.kind === 'about';
+    if (back) { backPages.push(s); continue; }
+    // a chapter's name and its title on lines of their own
+    let label = '';
+    let title = s.heading || '';
+    if (s.chId && chapterKind(s.chId) !== 'unnumbered') {
+      const own = ((book.chapterTitles || {})[s.chId] || '').trim();
+      if (!(library.exportCustomChapterTitles && own)) { label = chapterName(s.chId); title = own; }
+    }
+    // a title that only repeats the label ("Chapter 1" under "Chapter One") isn't printed twice
+    const word = label.split(/\s+/)[0];
+    if (title && word && (title.toLowerCase() === label.toLowerCase() ||
+        new RegExp('^' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s+([0-9]+|[ivxlcdm]+)\\.?$', 'i').test(title))) title = '';
+    // "Chapter 7" over "Holston"; a chapter with no title, or a page at
+    // the back, is its one line
+    let head = '';
+    if (label && title) head = `<p class="ch-num">${esc(label)}</p><h2 class="ch-title">${esc(title)}</h2>`;
+    else if (label || title) head = `<h2 class="ch-title ch-only">${esc(label || title)}</h2>`;
+    if (head) head = `<header class="ch-head">${head}</header>`;
+    body += `<section class="${back ? 'backpage' : 'chapter'}" id="${id}">${head}${prose(s.paras, !back && !!head)}</section>`;
+  }
+  const back = [];
+  // a note to the reader: a review, and where to find the writer
+  const links = o.links || {};
+  const reach = [
+    links.website && [t('Website'), links.website],
+    links.newsletter && [t('Newsletter'), links.newsletter],
+    links.email && [t('Email'), links.email],
+    ...String(links.social || '').split('\n').map((x) => x.trim()).filter(Boolean).map((x) => ['', x])
+  ].filter(Boolean);
+  if (o.review || reach.length) {
+    back.push(`<section class="backpage note"><header class="ch-head"><h2 class="ch-title ch-only">${esc(t('Thank You for Reading'))}</h2></header>
+      ${o.review ? `<p class="hy flush">${esc(t('If you enjoyed {title}, please consider leaving a review on Amazon or Goodreads. Even a line or two helps other readers find the book, and it means a great deal to me.', { title: d.title }))}</p>` : ''}
+      ${reach.length ? `<p class="reach-hd">${esc(t('Stay in touch'))}</p>${reach.map(([k, v]) => `<p class="reach">${k ? `<span class="k">${esc(k)}</span> ` : ''}${esc(v)}</p>`).join('')}` : ''}
+    </section>`);
+  }
+  // the writer's acknowledgments and about-the-author pages
+  for (const s of backPages) {
+    back.push(`<section class="backpage" id="s${s.num}"><header class="ch-head"><h2 class="ch-title ch-only">${esc(s.heading)}</h2></header>${prose(s.paras, false)}</section>`);
+  }
+  // other books by this name
+  if (o.alsoBy && o.alsoBy.length) {
+    back.push(`<section class="backpage also"><header class="ch-head"><h2 class="ch-title ch-only">${esc(t('Also by {author}', { author: d.author }))}</h2></header>${o.alsoBy.map((x) => `<p>${esc(x)}</p>`).join('')}</section>`);
+  }
+  body += back.map((x, i) => (i ? x.replace('class="backpage', 'class="backpage run-on') : x)).join('\n');
+
+  const sz = trim.size;
+  return `<!DOCTYPE html>
+<html lang="${esc(d.language || writingLanguage())}"><head><meta charset="utf-8"><title>${esc(d.title)}</title>
+<style>
+${o.fonts || ''}
+@page { size: ${W}in ${H}in; margin: 0.7in ${trim.outside}in 0.75in ${trim.outside}in; }
+@page :left {
+  margin-left: ${trim.outside}in; margin-right: __NEO_GUTTER__;
+  @top-center { content: ${cssString(d.author)}; }
+  @bottom-center { content: counter(page); }
+}
+@page :right {
+  margin-left: __NEO_GUTTER__; margin-right: ${trim.outside}in;
+  @top-center { content: ${cssString(d.title)}; }
+  @bottom-center { content: counter(page); }
+}
+@page { @top-center { font-family: ${exportBodyFont()}; font-size: ${(sz * 0.7).toFixed(2)}pt; letter-spacing: 0.16em; text-transform: uppercase; color: #333; vertical-align: bottom; padding-bottom: 0.18in; }
+        @bottom-center { font-family: ${exportBodyFont()}; font-size: ${(sz * 0.82).toFixed(2)}pt; color: #333; vertical-align: top; padding-top: 0.2in; } }
+@page :blank { @top-center { content: none; } @bottom-center { content: none; } }
+@page front { @top-center { content: none; } @bottom-center { content: none; } }
+@page chapter:first { @top-center { content: none; } }
+@page back { @top-center { content: none; } }
+html, body { margin: 0; padding: 0; }
+body { font-family: ${exportBodyFont()}; font-size: ${sz}pt; line-height: 1.42; color: #000; font-kerning: normal; font-variant-ligatures: common-ligatures; }
+p { margin: 0; orphans: 2; widows: 2; }
+.fm { page: front; break-before: right; text-align: center; }
+.titlepage { padding-top: 1.6in; }
+.titlepage h1 { font-size: ${(sz * 2.3).toFixed(1)}pt; line-height: 1.15; font-weight: normal; margin: 0; }
+.titlepage .sub { font-style: italic; font-size: ${(sz * 1.15).toFixed(1)}pt; margin-top: 0.18in; }
+.titlepage .auth { margin-top: 1.3in; font-size: ${(sz * 0.95).toFixed(1)}pt; letter-spacing: 0.2em; text-transform: uppercase; }
+.copyright { break-before: left; text-align: left; height: ${(H - 0.7 - 0.75 - 0.05).toFixed(2)}in; position: relative; }
+.copyright .cp { position: absolute; left: 0; right: 0; bottom: 0; font-size: ${(sz * 0.78).toFixed(2)}pt; line-height: 1.5; }
+.copyright .cp p { margin: 0 0 0.75em; }
+.dedication, .epigraph { padding-top: 1.7in; font-style: italic; }
+.dedication p, .epigraph p { margin: 0 0 0.6em; }
+.epigraph p.attr { font-style: normal; font-size: 0.9em; letter-spacing: 0.04em; margin-top: 0.8em; }
+.toc { text-align: left; padding-top: 0.6in; }
+.toc-hd { text-align: center; font-weight: normal; font-size: ${(sz * 1.05).toFixed(1)}pt; letter-spacing: 0.22em; text-transform: uppercase; margin: 0 0 0.45in; }
+.toc ol { list-style: none; margin: 0; padding: 0; }
+.toc li { margin: 0 0 0.35em; }
+.toc li.lv1 { padding-left: 1.2em; }
+.toc li.t-part { margin-top: 0.9em; letter-spacing: 0.1em; text-transform: uppercase; font-size: 0.92em; }
+.toc a { color: inherit; text-decoration: none; display: flex; }
+.toc .toc-t { flex: 1; }
+.toc a::after { content: target-counter(attr(href url), page); padding-left: 1em; font-variant-numeric: lining-nums tabular-nums; }
+.part { padding-top: 2.1in; }
+.part h2 { font-weight: normal; margin: 0 0 0.5in; }
+.part .pl { display: block; font-size: ${(sz * 1.05).toFixed(1)}pt; letter-spacing: 0.24em; text-transform: uppercase; }
+.part .pt { display: block; font-size: ${(sz * 1.9).toFixed(1)}pt; line-height: 1.2; margin-top: 0.2in; }
+.part p { font-style: italic; margin: 0 0.3in 0.6em; }
+.chapter { page: chapter; break-before: right; }
+.backpage { page: back; break-before: right; }
+.backpage.run-on { break-before: page; }
+.ch-head { padding-top: 1.35in; margin-bottom: 0.42in; text-align: center; break-after: avoid; }
+.ch-num { font-size: ${(sz * 0.95).toFixed(1)}pt; letter-spacing: 0.24em; text-transform: uppercase; margin: 0 0 0.16in; }
+.ch-title { font-weight: normal; font-size: ${(sz * 1.6).toFixed(1)}pt; line-height: 1.2; margin: 0; }
+.ch-title.ch-only { font-size: ${(sz * 1.35).toFixed(1)}pt; letter-spacing: 0.06em; }
+p.hy { text-align: justify; text-indent: 1.5em; hyphens: manual; -webkit-hyphens: manual; text-wrap: pretty; }
+p.hy.first, p.hy.flush { text-indent: 0; }
+${cap ? `p.first:not(.dialogue)::first-letter { initial-letter: 2; -webkit-initial-letter: 2; font-family: ${cap}; padding-right: 0.06em; }` : ''}
+p.brk { text-align: center; margin: 0.7em 0; break-after: avoid; letter-spacing: 0.1em; }
+p.poetry { margin: 0.5em 1.5em; text-align: left; }
+p.poetry + p.poetry { margin-top: 0; }
+.backpage p.hy { text-indent: 0; margin-bottom: 0.7em; }
+.also p { text-align: center; font-style: italic; margin: 0 0 0.45em; }
+.note .reach-hd { margin-top: 1.4em; text-align: center; letter-spacing: 0.18em; text-transform: uppercase; font-size: 0.85em; }
+.note .reach { text-align: center; margin-top: 0.35em; }
+.note .reach .k { font-variant-caps: all-small-caps; letter-spacing: 0.08em; }
+.neo-pad { page: front; break-before: page; height: 1px; }
+</style></head><body>
+${body}
+</body></html>`;
+}
+
+// File → Export → Paperback for KDP…: the size, the paper, and what goes
+// at the back. The choices are kept: the book's with the book, the
+// contact details with the name it's written under.
+async function printPaperback() {
+  if (!book) return;
+  if (isScript()) { toast(t('A script exports as a PDF, Fountain or Final Draft; paperbacks are for books')); return; }
+  // one at a time: the pages are set in a single window
+  if (printPaperback.busy) { toast(t('Still setting the pages of the last paperback…')); return; }
+  flushAllSaves();
+  const author = currentAuthor();
+  const bp = book.print || {};
+  const ap = author.print || {};
+  const hasDedication = book.chapterOrder.some((c) => chapterKind(c) === 'dedication');
+  // the other books written under this name, newest first
+  const others = [];
+  for (const s of shelvesFor(author.id)) {
+    for (const id of s.bookIds) {
+      if (id === book.id) continue;
+      const m = await shelfMeta(id);
+      if (!m || isPageMeta(m) || isScript(m) || isUntitled(m.title)) continue;
+      others.push({ id, title: m.title });
+    }
+  }
+  const chosen = new Set(ap.alsoBy || []);
+  const field = (id, label, value, ph = '') => `<label>${label}<input id="${id}" type="text" spellcheck="false" value="${escHtml(value || '').replace(/"/g, '&quot;')}" placeholder="${escHtml(ph).replace(/"/g, '&quot;')}"/></label>`;
+  const bd = document.createElement('div');
+  bd.className = 'modal-backdrop';
+  bd.innerHTML = `
+    <div class="modal print-modal" style="width:560px">
+      <h2 style="font-size:17px">${t('Paperback for KDP')}</h2>
+      <p class="pm-hint">${t('A print-ready interior PDF and a cover template sized to its page count, for Amazon KDP.')}</p>
+      <div class="pm-row pm-trims">${PRINT_TRIMS.map((x) => `
+        <button type="button" class="fr-choice${(bp.trim || '5.5x8.5') === x.id ? ' sel' : ''}" data-trim="${x.id}"><strong>${x.label}</strong><span>${x.mm}</span></button>`).join('')}
+      </div>
+      <div class="pm-row">
+        <label>${t('Paper')}
+          <select id="pm-paper">
+            ${[['cream', t('Cream')], ['white', t('White')], ['groundwood', t('Groundwood')]].map(([v, l]) => `<option value="${v}"${(bp.paper || 'cream') === v ? ' selected' : ''}>${l}</option>`).join('')}
+          </select>
+        </label>
+        ${field('pm-isbn', t('ISBN (optional)'), bp.isbn, '979-8-…')}
+      </div>
+      <label class="pm-check"><input id="pm-fiction" type="checkbox"${bp.fiction !== false ? ' checked' : ''}/> ${t('The standard fiction notice on the copyright page')}</label>
+      ${hasDedication ? '' : field('pm-dedication', t('Dedication (optional)'), '', t('For…'))}
+      <h3>${t('At the back of the book, for {name}', { name: escHtml(author.name || displayAuthor()) })}</h3>
+      <label class="pm-check"><input id="pm-review" type="checkbox"${ap.review !== false ? ' checked' : ''}/> ${t('Ask readers for a review on Amazon or Goodreads')}</label>
+      <div class="pm-row">
+        ${field('pm-web', t('Website'), ap.website, 'example.com')}
+        ${field('pm-news', t('Newsletter'), ap.newsletter, 'example.com/newsletter')}
+      </div>
+      <div class="pm-row">
+        ${field('pm-email', t('Email'), ap.email)}
+        <label>${t('Social media, one per line')}<textarea id="pm-social" rows="2" spellcheck="false">${escHtml(ap.social || '')}</textarea></label>
+      </div>
+      ${others.length ? `<div class="pm-also"><div class="pm-also-hd">${t('Also by {name}', { name: escHtml(author.name || displayAuthor()) })}</div>${others.map((x) => `
+        <label class="pm-check"><input type="checkbox" data-also="${escHtml(x.id)}"${chosen.has(x.id) ? ' checked' : ''}/> ${escHtml(x.title)}</label>`).join('')}</div>` : ''}
+      <div style="text-align:right;margin-top:14px">
+        <button class="m-cancel btn-quiet" style="margin-right:10px">${t('Cancel')}</button>
+        <button class="m-ok btn-gold">${t('Make PDFs')}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(bd);
+  let trim = bp.trim || '5.5x8.5';
+  const selTrim = bd.querySelector('.fr-choice.sel');
+  if (selTrim) selTrim.focus({ preventScroll: true });
+  for (const b of bd.querySelectorAll('[data-trim]')) {
+    b.onclick = () => { trim = b.dataset.trim; b.focus({ preventScroll: true }); bd.querySelectorAll('[data-trim]').forEach((x) => x.classList.toggle('sel', x === b)); };
+  }
+  const go = await new Promise((resolve) => {
+    bd.querySelector('.m-ok').onclick = () => resolve(true);
+    bd.querySelector('.m-cancel').onclick = () => resolve(false);
+    bd.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); resolve(false); } });
+  });
+  const val = (id) => { const el = bd.querySelector('#' + id); return el ? el.value.trim() : ''; };
+  const opts = {
+    trim,
+    paper: val('pm-paper') || 'cream',
+    isbn: val('pm-isbn'),
+    fiction: bd.querySelector('#pm-fiction').checked,
+    review: bd.querySelector('#pm-review').checked,
+    links: { website: val('pm-web'), newsletter: val('pm-news'), email: val('pm-email'), social: bd.querySelector('#pm-social').value.trim() },
+    alsoById: [...bd.querySelectorAll('[data-also]')].filter((x) => x.checked).map((x) => x.dataset.also),
+    dedication: val('pm-dedication')
+  };
+  bd.remove();
+  if (!go) return;
+  // kept for next time
+  book.print = { trim: opts.trim, paper: opts.paper, isbn: opts.isbn, fiction: opts.fiction };
+  author.print = { review: opts.review, ...opts.links, alsoBy: opts.alsoById };
+  await saveMeta();
+  await writeLibrary(library);
+  // a dedication typed here becomes the book's own Dedication page
+  if (opts.dedication && !hasDedication) {
+    const at = book.chapterOrder.findIndex((c) => !['copyright'].includes(chapterKind(c)));
+    const chId = newEntryId();
+    book.chapterOrder.splice(at < 0 ? 0 : at, 0, chId);
+    setChapterKind(chId, 'dedication');
+    chapterHTML[chId] = `<p>${escHtml(opts.dedication)}</p>`;
+    await persistChapter(chId);
+    await saveMeta();
+    renderChapters();
+  }
+  const d = bookExportData();
+  opts.alsoBy = others.filter((x) => opts.alsoById.includes(x.id)).map((x) => x.title);
+  const words = d.sections.reduce((n, s) => n + s.paras.reduce((m, p) => m + countWords(p.text || ''), 0), 0);
+  const per = (PRINT_TRIMS.find((x) => x.id === opts.trim) || PRINT_TRIMS[0]).perPage;
+  toast(t('Setting the pages…'), 600000);
+  printPaperback.busy = true;
+  try {
+    const html = buildPrintHtml(d, { ...opts, fonts: await exportFontFaces(d) });
+    const r = await window.neo.printPaperback({
+      html, trim: opts.trim, paper: opts.paper, language: d.language,
+      pagesGuess: Math.round(words / per) + d.sections.length * 1.5 + 8,
+      title: d.title, author: d.author,
+      defaultName: safeName(d.title) + ' - ' + t('paperback') + ' ' + opts.trim
+    });
+    if (!r) { toast(t('Not saved')); return; }
+    let msg = t('Saved the interior ({pages} pages) and its cover template (spine {spine} in)', { pages: r.pages, spine: r.spine });
+    if (r.tooFew) msg += ' · ' + t('KDP needs at least 24 pages');
+    if (r.tooMany) msg += ' · ' + t('more pages than KDP prints on this paper');
+    toast(msg, 9000);
+  } catch (err) {
+    window.neo.logError('paperback: ' + (err && err.stack || err));
+    toast(t('Couldn’t export: {error}', { error: plainError(err) }), 8000);
+  } finally {
+    printPaperback.busy = false;
+  }
+}
+
 // One chapter, on its own: the book's title page, then that chapter, headed
 // as it is in the book (Chapter 7 — Holston). No cover image in a web page
 // or PDF; an EPUB keeps the book's cover, since e-readers expect one.
@@ -13415,6 +13753,7 @@ async function exportFromShelf(bookId, format) {
 
 async function doExport(format, chId = null) {
   if (!book) { toast(t('Open a book first')); return; }
+  if (format === 'paperback') { await printPaperback(); return; }
   // a script leaves as a PDF set the way scripts print, or as Fountain
   if (isScript()) { await spExport(['pdf', 'fdx'].includes(format) ? format : 'fountain'); return; }
   flushAllSaves();
