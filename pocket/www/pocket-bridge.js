@@ -8,6 +8,10 @@
 /* quietly; writing never does.                                          */
 
 (function () {
+  // The interface language, as in app.js. NeoI18n (i18n.js) loads before this
+  // file and app.js chooses the language as it loads, before the writer can
+  // see any of these words.
+  const t = (s, vars) => (window.NeoI18n ? window.NeoI18n.t(s, vars) : s);
   const FS = () => window.Capacitor.Plugins.Filesystem;
   const DIR = 'DOCUMENTS';
   const ROOT = 'NEO Library';
@@ -28,7 +32,7 @@
       // first launch on a new iPad: the whole library is still in the cloud
       if (CLOUD) await libraryHome().fetch({ wait: 20000 });
     } catch (err) {
-      showErrorDetail('Could not find the library folder: ' + (err && err.message || err) +
+      showErrorDetail(t('Could not find the library folder: {error}', { error: String(err && err.message || err) }) +
         '\nplugins the page can see: ' + Object.keys((window.Capacitor && window.Capacitor.Plugins) || {}).join(', '));
     }
   })();
@@ -84,7 +88,7 @@
       await FS().writeFile({ ...at(path), data, encoding: 'utf8', recursive: true });
       try { await FS().deleteFile(at(tmp)); } catch { /* fine */ }
     } catch (err) {
-      showErrorDetail('Could not save ' + path + ': ' + (err && err.message || err));
+      showErrorDetail(t('Could not save {file}: {error}', { file: path, error: String(err && err.message || err) }));
       throw err;
     }
   }
@@ -96,10 +100,11 @@
     const bd = document.createElement('div');
     bd.style.cssText = 'position:fixed;inset:0;background:#191919;color:#d6d2c6;z-index:9999;' +
       'display:flex;align-items:center;justify-content:center;padding:40px;text-align:center';
+    const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const why = isIOS()
-      ? '<p style="line-height:1.6;margin-top:16px">Pocket couldn\'t open its NEO Library folder. Force-quit and reopen the app; if it keeps happening, check that iCloud Drive is signed in (Settings → your name → iCloud), or turn it off so Pocket keeps books on the iPad itself.</p>'
-      : '<p style="line-height:1.6;margin-top:16px">Pocket can see the NEO Library folder but Android is blocking it from reading files that other apps (like Syncthing) created.</p>' +
-        '<p style="line-height:1.6;color:#999;margin-top:12px">The switch is not on the app\'s own Permissions page. Open Android Settings, search for <b>All files access</b> (or Apps → Special app access → All files access), turn it on for NEO Pocket, then come back here.</p>';
+      ? '<p style="line-height:1.6;margin-top:16px">' + esc(t('Pocket couldn\'t open its NEO Library folder. Force-quit and reopen the app; if it keeps happening, check that iCloud Drive is signed in (Settings → your name → iCloud), or turn it off so Pocket keeps books on the iPad itself.')) + '</p>'
+      : '<p style="line-height:1.6;margin-top:16px">' + esc(t('Pocket can see the NEO Library folder but Android is blocking it from reading files that other apps (like Syncthing) created.')) + '</p>' +
+        '<p style="line-height:1.6;color:#999;margin-top:12px">' + esc(t('The switch is not on the app\'s own Permissions page. Open Android Settings, search for {setting} (or Apps → Special app access → {setting}), turn it on for NEO Pocket, then come back here.')).split('{setting}').join('<b>' + esc(t('All files access')) + '</b>') + '</p>';
     bd.innerHTML = '<div style="max-width:420px"><h2 style="letter-spacing:5px">NEO POCKET</h2>' + why +
       '<p style="font:12px/1.5 monospace;color:#777;margin-top:20px;word-break:break-word">' + String(err && err.message || err || '') + '</p></div>';
     document.body.appendChild(bd);
@@ -119,7 +124,7 @@
         box.addEventListener('click', () => box.remove());
         document.body.appendChild(box);
       }
-      box.textContent = String(msg).slice(0, 2000) + '\n\n(tap to dismiss)';
+      box.textContent = String(msg).slice(0, 2000) + '\n\n' + t('(tap to dismiss)');
     } catch { /* never let the reporter itself hiccup */ }
   }
 
@@ -224,7 +229,7 @@
         for (const name of await listDir('')) {
           if (!String(name).startsWith('book-')) continue;
           const m = await readJSONFile(p(name, 'book.json'), null);
-          if (m && m.id) out.push({ id: m.id, title: m.title || 'Untitled', author: m.author || '', modified: m.modified || '', kind: m.kind || '' });
+          if (m && m.id) out.push({ id: m.id, title: m.title || t('Untitled'), author: m.author || '', modified: m.modified || '', kind: m.kind || '' });
         }
       } catch { /* an empty list is honest enough */ }
       return out;
@@ -242,7 +247,7 @@
       const id = 'book-' + (seed ? seed + '-' : '') + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
       const book = {
         id,
-        title: (opts && opts.title) || 'Untitled',
+        title: (opts && opts.title) || t('Untitled'),
         subtitle: '',
         author: (opts && opts.author) || '',
         created: new Date().toISOString(),
@@ -273,7 +278,7 @@
         await FS().rename({ from: from.path, to: to.path, directory: from.directory, toDirectory: to.directory });
         return true;
       } catch (err) {
-        showErrorDetail('Could not delete ' + bookId + ': ' + (err && err.message || err));
+        showErrorDetail(t('Could not delete {book}: {error}', { book: bookId, error: String(err && err.message || err) }));
         return false;
       }
     },
@@ -352,7 +357,7 @@
       try {
         const Share = window.Capacitor.Plugins.Share;
         if (!Share) throw new Error('Sharing is not available in this build');
-        if (format === 'pdf') { if (typeof toast === 'function') toast('PDF export happens on the desktop — html, docx and epub work here'); return null; }
+        if (format === 'pdf') { if (typeof toast === 'function') toast(t('PDF export happens on the desktop — html, docx and epub work here')); return null; }
         const name = (defaultName || 'book') + '.' + format;
         let data;
         let encoding = 'utf8';
@@ -372,7 +377,7 @@
         await Share.share({ title: name, url: w.uri });
         return name;
       } catch (err) {
-        if (!/cancel/i.test(String(err && err.message || err))) showErrorDetail('Export failed: ' + (err && err.message || err));
+        if (!/cancel/i.test(String(err && err.message || err))) showErrorDetail(t('Export failed: {error}', { error: String(err && err.message || err) }));
         return null;
       }
     },
@@ -645,7 +650,7 @@
     // a field already focused takes the change on its next focus
     const el = document.activeElement;
     if (el && el.matches && el.matches(EDITABLE)) { el.blur(); if (on) setTimeout(() => el.focus(), 50); }
-    if (typeof toast === 'function') toast(on ? 'On-screen keyboard on' : 'On-screen keyboard off — long-press ☰ to bring it back');
+    if (typeof toast === 'function') toast(on ? t('On-screen keyboard on') : t('On-screen keyboard off — long-press ☰ to bring it back'));
     return on;
   };
   // from MainActivity, when a keyboard is connected or disconnected
