@@ -3890,8 +3890,26 @@ function captureBody(body) {
   // (a page marks the lines that say who said it, and a chapter the speech
   // after a scene break, for the screen only)
   // (and a script's page breaks, (CONT'D) and suggestions)
-  return body.innerHTML.replace(/<(b|i|em|strong|u|s|strike|sub|sup)\s+style="[^"]*"/g, '<$1').replace(/<p\b[^>]*>/g, (tag) => tag.replace(/ data-(?:attr|speech|first|walk)=""/g, '')
+  return dropJunkSpans(body.innerHTML).replace(/<(b|i|em|strong|u|s|strike|sub|sup)\s+style="[^"]*"/g, '<$1').replace(/<p\b[^>]*>/g, (tag) => tag.replace(/ data-(?:attr|speech|first|walk)=""/g, '')
     .replace(/ data-(?:pg|fill|contd|ghost|ghost-empty|sp-paste)(?:="[^"]*")?/g, ''));
+}
+
+// The engine's style spans (stripJunkSpans), left out of what's saved. A
+// cut, Backspace or Delete across paragraphs wraps the words it joins in
+// them (the indent and white-space of the paragraph they came from); taken
+// off the page there and then, they'd break ⌘Z, which puts back what the
+// engine itself took away. So the page keeps them until the chapter is next
+// opened, and the file never has them. NEO's own spans (placeholder flags)
+// stay.
+function dropJunkSpans(html) {
+  if (html.indexOf('<span') < 0) return html;
+  const junk = [];
+  return html.replace(/<span\b[^>]*>|<\/span>/g, (tag) => {
+    if (tag[1] === '/') return junk.pop() ? '' : tag;
+    const drop = !/\sclass="[^"]*\bph-mark\b/.test(tag);
+    junk.push(drop);
+    return drop ? '' : tag;
+  });
 }
 
 // A chapter that opens on a line of dialogue sets no drop cap: the dash
