@@ -447,7 +447,11 @@ button { font: inherit; cursor: pointer; }
 .ps-paper .ps-body i, .ps-paper .ps-body em { font-style: normal; }
 .ps-paper.kind-copyright { justify-content: flex-end; }
 .ps-paper.kind-copyright .ps-body { font-size: 10.5px; }
-.ps-paper.kind-copyright .ps-body p + p { margin-top: 0.9em; }
+/* p:not(:first-child), never p + p: these pages hold only paragraphs, so the
+   two pick the same ones, but a p + p rule anywhere in the sheet, beside the
+   ::highlight and ::selection rules, makes Chromium restyle every paragraph
+   of every chapter when one is added (7 ms in a 2,000-paragraph chapter) */
+.ps-paper.kind-copyright .ps-body p:not(:first-child) { margin-top: 0.9em; }
 .ps-paper.kind-copyright .ps-body i, .ps-paper.kind-copyright .ps-body em,
 .ps-paper.kind-acknowledgments .ps-body i, .ps-paper.kind-acknowledgments .ps-body em,
 .ps-paper.kind-about .ps-body i, .ps-paper.kind-about .ps-body em { font-style: italic; }
@@ -460,7 +464,7 @@ button { font: inherit; cursor: pointer; }
 .ps-paper.kind-part .ps-body.empty p:first-child { min-height: 1.3em; }
 .ps-paper.kind-acknowledgments, .ps-paper.kind-about { padding-top: 100px; }
 .ps-paper.kind-acknowledgments .ps-label, .ps-paper.kind-about .ps-label { margin-bottom: 34px; }
-.ps-paper.kind-acknowledgments .ps-body p + p, .ps-paper.kind-about .ps-body p + p { text-indent: 1.5em; }
+.ps-paper.kind-acknowledgments .ps-body p:not(:first-child), .ps-paper.kind-about .ps-body p:not(:first-child) { text-indent: 1.5em; }
 /* the cover opens to the title page */
 .ps-paper.kind-title { justify-content: center; align-items: stretch; gap: 14px; padding-bottom: 150px; text-align: center; }
 .ps-paper .tp-field { outline: none; min-height: 1.2em; line-height: 1.3; }
@@ -778,7 +782,7 @@ body.bright .spell-menu button { color: #eee; }
 .chapter.kind-copyright .chapter-body {
   margin-top: auto; font-size: calc(var(--editor-size, 17px) * 0.66 * var(--page-zoom, 1)); line-height: 1.6;
 }
-.chapter.kind-copyright .chapter-body p + p { margin-top: 0.9em; }
+.chapter.kind-copyright .chapter-body p:not(:first-child) { margin-top: 0.9em; }
 .chapter.kind-dedication .chapter-body, .chapter.kind-epigraph .chapter-body {
   margin: auto 0; padding-bottom: 14vh; text-align: center; font-style: italic;
 }
@@ -790,7 +794,7 @@ body.bright .spell-menu button { color: #eee; }
 .chapter.kind-part .chapter-body p { margin: 0 2em; }
 .chapter.kind-part .chapter-body p:first-child { font-style: normal; font-size: 1.55em; line-height: 1.3; margin: 0 0 0.9em; }
 .chapter.kind-part .chapter-body.blank::before { font-size: 1.55em; line-height: 1.3; }
-.chapter.kind-acknowledgments .chapter-body p + p, .chapter.kind-about .chapter-body p + p { text-indent: 2em; }
+.chapter.kind-acknowledgments .chapter-body p:not(:first-child), .chapter.kind-about .chapter-body p:not(:first-child) { text-indent: 2em; }
 /* the contents: the book's own shape, each line a way there */
 .toc-list {
   list-style: none; margin: 0 1.5em; padding: 0;
