@@ -1686,8 +1686,8 @@ function bookTile(meta, opts = {}) {
     bar.firstElementChild.style.width = pct + '%';
   }
   el.title = meta.wordGoal
-    ? t('{title} — {count} / {goal} words', { title: meta.title, count: meta.wordCount || 0, goal: meta.wordGoal })
-    : meta.title;
+    ? t('{title} — {count} / {goal} words', { title: shownTitle(meta.title), count: meta.wordCount || 0, goal: meta.wordGoal })
+    : shownTitle(meta.title);
   el.onclick = () => (opts.cover ? openTitlePage(opts.cover, meta) : openBook(meta.id));
   pressable(el, [el.title, meta.author ? t('by {author}', { author: meta.author }) : ''].filter(Boolean).join(', '));
   const refresh = el.querySelector('.b-refresh');
@@ -1833,7 +1833,7 @@ function bookTile(meta, opts = {}) {
       for (const s of library.shelves) s.bookIds = s.bookIds.filter((b) => b !== meta.id);
       await writeLibrary(library);
       renderShelves();
-      toast(t('“{title}” removed from the shelves — its files are still in your NEO Library', { title: meta.title }));
+      toast(t('“{title}” removed from the shelves — its files are still in your NEO Library', { title: shownTitle(meta.title) }));
     } else if (choice === 'trash') {
       const ok = await window.neo.deleteBook(meta.id, meta.title);
       if (ok) {
@@ -2137,7 +2137,7 @@ async function moveBookToAuthor(bookId, authorId) {
   await writeBookMeta(bookId, meta);
   await writeLibrary(library);
   renderShelves();
-  toast(t('“{title}” now sits on {name}’s top shelf — Esc puts it back', { title: meta.title, name: target.name }), 6000);
+  toast(t('“{title}” now sits on {name}’s top shelf — Esc puts it back', { title: shownTitle(meta.title), name: target.name }), 6000);
 }
 async function undoShelfMove() {
   const m = lastShelfMove;
@@ -2150,7 +2150,7 @@ async function undoShelfMove() {
   if (meta) { meta.author = m.author; await writeBookMeta(m.bookId, meta); }
   await writeLibrary(library);
   renderShelves();
-  toast(t('“{title}” is back where it was', { title: m.title }));
+  toast(t('“{title}” is back where it was', { title: shownTitle(m.title) }));
   return true;
 }
 document.addEventListener('keydown', (e) => {
@@ -2404,7 +2404,7 @@ function renderChapters() {
     // screen readers name each chapter by its heading (a lone chapter by the book)
     body.setAttribute('role', 'textbox');
     body.setAttribute('aria-multiline', 'true');
-    if (chId === solo) body.setAttribute('aria-label', book.title || t('The story'));
+    if (chId === solo) body.setAttribute('aria-label', book.title ? shownTitle(book.title) : t('The story'));
     else body.setAttribute('aria-labelledby', head.id);
     body.spellcheck = false; // NEO runs its own spellcheck pass
     if (!story) body.classList.add('no-cap');
@@ -6696,7 +6696,7 @@ function renderNav() {
     item.innerHTML = `<div class="n-row" title="${t('Drag to reorder chapters')}"><span class="n-label"></span>
       <span style="display:flex;align-items:center">${story ? `<span class="n-words">${fmtNum(words)}</span>` : ''}${flagged ? `<span class="n-flag" title="${t('Unresolved placeholder')}"></span>` : ''}</span></div>`;
     item.querySelector('.n-label').textContent = chId === solo
-      ? (book.title || t('The story'))
+      ? (book.title ? shownTitle(book.title) : t('The story'))
       : (chTitle ? `${chapterMark(chId)} · ${chTitle}` : chapterName(chId));
 
     // the row is the drag handle, so the note below stays freely editable
@@ -11795,7 +11795,7 @@ function openStats() {
   bd.className = 'modal-backdrop';
   bd.innerHTML = `
     <div class="modal" style="width:${hasBook ? 580 : 380}px">
-      <h2 style="font-size:17px">${hasBook ? t('{title} — progress', { title: escHtml(book.title) }) : t('Goals')}</h2>
+      <h2 style="font-size:17px">${hasBook ? t('{title} — progress', { title: escHtml(shownTitle(book.title)) }) : t('Goals')}</h2>
       ${hasBook ? `
       <div class="stats-nums">
         <div><div class="big">${fmtNum(total)}</div><div class="lbl">${t('total words')}</div></div>
@@ -13497,9 +13497,9 @@ async function doEmailDraft() {
     if (!ok) return;
   }
   const total = bookWordCount();
-  const subject = t('NEO draft — {title} — {n} words — {date}', { title: book.title, n: total, date: fmtDate(new Date()) });
+  const subject = t('NEO draft — {title} — {n} words — {date}', { title: shownTitle(book.title), n: total, date: fmtDate(new Date()) });
   const hash = await manuscriptHash();
-  const body = t('Draft snapshot of “{title}” — {n} words.', { title: book.title, n: total }) + '\n'
+  const body = t('Draft snapshot of “{title}” — {n} words.', { title: shownTitle(book.title), n: total }) + '\n'
     + t('Sent from NEO on {date}.', { date: new Date().toLocaleString(NeoI18n.getLocale()) }) + '\n\n'
     + t('SHA-256 fingerprint of the manuscript text:') + `\n${hash}\n\n`
     + (library.emailMethod === 'gmail'
