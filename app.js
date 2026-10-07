@@ -4336,6 +4336,26 @@ function frenchTypography() {
   return /^fr-CA$/i.test(NeoI18n.getLocale()) ? 'ca' : 'fr';
 }
 
+// ⌥⌘→ / ⌥⌘← (Ctrl+Alt on Windows and Linux): the next or previous tab,
+// Manuscript → Notes → Outline → Darlings, round again. Caught here, like the
+// chapter keys, so no menu accelerator flashes the menu or takes AltGr input.
+function goToTab(name) {
+  if (!book || $('#editor-view').hidden || name === currentTab) return;
+  if (document.querySelector('.modal-backdrop:not([hidden])')) return;
+  switchTab(name);
+}
+const TAB_ORDER = ['manuscript', 'notes', 'outline', 'darlings'];
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+  const cmd = IS_POCKET ? (e.metaKey !== e.ctrlKey) : (IS_MAC ? e.metaKey : e.ctrlKey);
+  if (!cmd || !e.altKey || e.shiftKey || e.isComposing) return;
+  if ($('#editor-view').hidden || document.querySelector('.modal-backdrop:not([hidden])')) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const step = e.key === 'ArrowRight' ? 1 : TAB_ORDER.length - 1;
+  goToTab(TAB_ORDER[(TAB_ORDER.indexOf(currentTab) + step) % TAB_ORDER.length]);
+}, true);
+
 // Titles, outline lines, notes and shelf names get the same typography as
 // the manuscript (which calls smartKeys itself). Capture phase, because
 // those fields keep their keystrokes from bubbling to the page.
@@ -12115,6 +12135,8 @@ function bookShortcutSections() {
       [K('⌘⇧O', 'Ctrl+Shift+O'), tk('Cycle focus mode'), tk('Off → paragraph → sentence → off.')],
       [IS_MAC ? '⌥⌘↓' : ['Ctrl+Alt+↓', 'Ctrl+Page Down'], tk('Go to the next chapter')],
       [IS_MAC ? '⌥⌘↑' : ['Ctrl+Alt+↑', 'Ctrl+Page Up'], tk('Go to the previous chapter')],
+      [K('⌥⌘→', 'Ctrl+Alt+→'), tk('Go to the next tab'), tk('Manuscript, Notes, Outline, Darlings, then round again.')],
+      [K('⌥⌘←', 'Ctrl+Alt+←'), tk('Go to the previous tab')],
       [['F6', K('⌃Tab', 'Ctrl+Tab')], tk('Move between the page, the chapters, the notes and the bottom bar'), tk('Add Shift to go back. Esc returns to the page. On the shelf: the books, then the header.')],
       ...(IS_MAC ? [
         ['⌘H', tk('Hide NEO')],
@@ -13649,6 +13671,7 @@ window.neo.onMenu(async (msg) => {
     return;
   }
   if (msg.type === 'help') showHelp();
+  if (msg.type === 'tab') goToTab(msg.value);
   if (msg.type === 'about') showAbout();
   if (msg.type === 'checkUpdate') checkForUpdate();
   if (msg.type === 'update') updateMessage(msg);

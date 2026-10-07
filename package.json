@@ -10,6 +10,7 @@
     "test:spellcheck": "node --test scripts/spellcheck.test.js",
     "test:dashes": "node --test scripts/dashes.test.js",
     "test:words": "electron scripts/words.e2e.js",
+    "test:tabs": "electron scripts/tabs.e2e.js",
     "test": "node --test \"scripts/*.test.js\"",
     "test:coverage": "node --test --experimental-test-coverage \"scripts/*.test.js\"",
     "lint": "oxlint",

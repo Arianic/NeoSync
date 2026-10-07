@@ -2123,6 +2123,15 @@ function buildMenu() {
           registerAccelerator: false, // the window answers / and ? itself (isHelpShortcut)
           click: () => sendToWindow({ type: 'help' })
         },
+        {
+          label: t('Go to'),
+          submenu: [
+            { label: t('Manuscript'), click: () => sendToWindow({ type: 'tab', value: 'manuscript' }) },
+            { label: t('Notes'), click: () => sendToWindow({ type: 'tab', value: 'notes' }) },
+            { label: t('Outline'), click: () => sendToWindow({ type: 'tab', value: 'outline' }) },
+            { label: t('Darlings'), click: () => sendToWindow({ type: 'tab', value: 'darlings' }) }
+          ]
+        },
         { type: 'separator' },
         {
           label: t('Full Screen'),

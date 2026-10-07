@@ -102,6 +102,8 @@ npm install
 npm start
 ```
 
+`Cmd+Option+→` and `Cmd+Option+←` (`Ctrl+Alt+→` and `Ctrl+Alt+←` on Windows and Linux) move to the next or previous tab: Manuscript, Notes, Outline, Darlings. **View → Go to** lists the four.
+
 **View → Keyboard Shortcuts…** opens the shortcut reference. You can also press `Cmd+/` on macOS or `Ctrl+/` on Windows and Linux, or use **Help → NEO Shortcuts**.
 
 To build installers: `npm install electron-builder --save-dev`, then `npm run package` (macOS, also `npm run package:mac`), `npm run package:win` (Windows), or `npm run package:all`. Output lands in `dist/`.
