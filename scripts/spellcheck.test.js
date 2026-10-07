@@ -34,29 +34,6 @@ test('Hunspell reads the pinned Hungarian dictionary and suggests accents', asyn
   assert.ok((await send({ type: 'suggest', word: 'gyonyoru' })).result.includes('gyönyörű'));
 });
 
-test('Hungarian grammar hints that lean on the dictionary: agreement, numerals, conjugation', async () => {
-  const send = spellWorker();
-  assert.equal((await send({ type: 'load', language: 'hu', dir: path.join(root, 'node_modules/dictionary-hu') })).ok, true);
-  const { check } = require(path.join(root, 'grammar-hu.js'));
-  const lookup = async (text) => {
-    const words = text.match(/[\p{L}\p{M}]+/gu);
-    const res = (await send({ type: 'morph', words })).result;
-    return (w) => res[w] || null;
-  };
-  const hints = async (text) => check(text, await lookup(text))
-    .map((h) => [text.substr(h.at, h.len), h.fix, h.rule]);
-  assert.deepEqual(await hints('Ők megy a boltba.'), [['megy', null, 'agree']]);
-  assert.deepEqual(await hints('Én megyünk haza.'), [['megyünk', null, 'agree']]);
-  assert.deepEqual(await hints('Három almák voltak.'), [['almák', 'alma', 'numeral']]);
-  assert.deepEqual(await hints('Két házakban laktunk.'), [['házakban', 'házban', 'numeral']]);
-  assert.deepEqual(await hints('A gyerekek játszik.'), [['játszik', null, 'subject']]);
-  assert.deepEqual(await hints('Olvasok a könyvet.'), [['Olvasok', null, 'definite']]);
-  assert.deepEqual(await hints('Olvasom egy könyvet.'), [['Olvasom', null, 'indefinite']]);
-  // and correct prose stays clean
-  const lines = fs.readFileSync(path.join(__dirname, 'grammar-hu.correct.txt'), 'utf8').trim().split('\n');
-  for (const line of lines) assert.deepEqual(await hints(line), [], line);
-});
-
 test('the Hungarian dictionary takes every accusative (könyvet, szívet, évet)', async () => {
   const send = spellWorker();
   assert.equal((await send({ type: 'load', language: 'hu', dir: path.join(root, 'node_modules/dictionary-hu') })).ok, true);

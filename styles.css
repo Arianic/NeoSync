@@ -738,16 +738,6 @@ body:not(.no-dropcap) .chapter-body:not(.cap-off):not(.no-cap):not(.opens-dialog
   text-decoration-skip-ink: none;
   background-color: rgba(207, 92, 86, 0.12);
 }
-/* grammar hints (Hungarian): blue and dotted, apart from misspellings */
-::highlight(neo-grammar) {
-  text-decoration: underline dotted #5b8fd6 2px;
-  text-decoration-skip-ink: none;
-  background-color: rgba(91, 143, 214, 0.14);
-}
-.spell-menu .sm-note {
-  max-width: 260px; padding: 6px 10px 8px; font-size: 12px; line-height: 1.4;
-  color: #a8a49a; border-bottom: 1px solid #3a3a3a; margin-bottom: 4px;
-}
 .spell-menu {
   position: fixed; z-index: 300; min-width: 170px;
   background: #262626; border: 1px solid #3a3a3a; border-radius: 8px;
