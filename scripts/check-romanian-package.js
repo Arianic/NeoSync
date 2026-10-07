@@ -35,4 +35,9 @@ for (const file of ['NOTICE.txt', 'MPL-1.1.txt']) {
   assert.deepEqual(fs.readFileSync(path.join(resources, 'licenses/hunspell', file)),
     fs.readFileSync(path.join(root, 'licenses/hunspell', file)), file);
 }
-console.log('Romanian and Portuguese dictionaries, Hunspell and license notices, and worker code verified.');
+const hungarian = path.join(resources, 'app.asar.unpacked/node_modules/dictionary-hu');
+for (const file of ['index.aff', 'index.dic', 'NOTICE.txt', 'MPL-2.0.txt', 'README_hu_HU.txt']) {
+  assert.deepEqual(fs.readFileSync(path.join(hungarian, file)),
+    fs.readFileSync(path.join(root, 'dictionaries/hu', file)), file);
+}
+console.log('Romanian, Portuguese and Hungarian dictionaries, Hunspell, license notices, and worker code verified.');

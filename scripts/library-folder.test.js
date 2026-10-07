@@ -135,4 +135,14 @@ describe('a library folder that can\'t be written', { concurrency: 1 }, () => {
       pc.done();
     }
   });
+  test('an unavailable chosen folder uses the NeoSync fallback for this session without forgetting the choice', () => {
+    const pc = computer({ chosen: true });
+    try {
+      const chosen = pc.settings().libraryDir;
+      const fallback = pc.run('awaitChosenLibrary(startDir)');
+      assert.equal(path.basename(fallback), 'NeoSync Library');
+      assert.equal(pc.settings().libraryDir, chosen);
+      assert.equal(pc.shown.sync.length, 1);
+    } finally { pc.done(); }
+  });
 });

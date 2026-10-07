@@ -33,9 +33,11 @@ jobs:
       - run: npm run test:sync:desktop
       - run: npm run test:sync:restart
       - run: npm run test:sync:ui
+      - run: npm run test:tabs
       - run: npm run test:updates
       - run: npm run package:win
       - run: node scripts/check-update-artifacts.js windows
+      - run: node scripts/check-romanian-package.js dist/win-unpacked/resources
       - name: Hash Windows installers
         shell: pwsh
         run: |

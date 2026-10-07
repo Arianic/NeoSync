@@ -99,6 +99,69 @@ app.whenReady().then(async () => {
     assert.equal(fs.readFileSync(path.join(root, ids.book, 'chapters', ids.chapter + '.html'), 'utf8'), '<p>Words waiting for disk.</p>');
     assert.equal(await js('document.body.inert'), false);
     await js('updateDialog.close()');
+    // Work already in a renderer queue must be awaited even when savedHTML
+    // matches the latest text and a second flush creates no new chapter write.
+    const holdWrite = channel => {
+      const real = registered.get(channel);
+      let release, begin;
+      const began = new Promise(resolve => { begin = resolve; });
+      const gate = new Promise(resolve => { release = resolve; });
+      electron.ipcMain.removeHandler(channel);
+      register(channel, async (...args) => { begin(); await gate; return real(...args); });
+      return { began, release, restore() { electron.ipcMain.removeHandler(channel); register(channel, real); } };
+    };
+    const queuedChapter = holdWrite('chapter:write');
+    await js(`chapterHTML[book.chapterOrder[0]] = '<p>A queued chapter save.</p>';
+      window.queuedChapterSave = persistChapter(book.chapterOrder[0]); void 0;`);
+    await queuedChapter.began;
+    const readyDialog = `updateDialog = updateDialogBox({latestVersion:'99.0.0',currentVersion:'1.3.3-beta.6'}); updateDialogShow('ready');`;
+    await js(readyDialog + 'window.restartTest = updateDialog.querySelector(".m-ok").onclick(); void 0;');
+    await tick(); assert.equal(installs, 1);
+    queuedChapter.release(); await js('window.restartTest'); queuedChapter.restore();
+    assert.equal(installs, 2);
+    await js('updateDialog.close()');
+
+    // Notes and JSON sidecars are serialized per file and included in restart.
+    await js('switchTab("notes")'); await tick();
+    const notes = holdWrite('aux:write'), sidecar = holdWrite('json:write');
+    await js(`document.querySelector('#aux-editor').innerHTML = '<p>First notes.</p>'; auxDirty = true;
+      window.firstNotes = flushAux();
+      window.firstSidecar = writeSidecar(book.id, 'darlings', [{id:'queue-test', text:'First copy'}]); void 0;`);
+    await Promise.all([notes.began, sidecar.began]);
+    await js(`document.querySelector('#aux-editor').innerHTML = '<p>Latest notes.</p>'; auxDirty = true;
+      window.latestNotes = flushAux();
+      window.latestSidecar = writeSidecar(book.id, 'darlings', [{id:'queue-test', text:'Latest copy'}]); void 0;`);
+    await js(readyDialog + 'window.restartTest = updateDialog.querySelector(".m-ok").onclick(); void 0;');
+    await tick(); assert.equal(installs, 2);
+    notes.release(); await tick(); assert.equal(installs, 2);
+    sidecar.release(); await js('window.restartTest'); notes.restore(); sidecar.restore();
+    assert.equal(installs, 3);
+    assert.equal(fs.readFileSync(path.join(root, ids.book, 'notes.html'), 'utf8'), '<p>Latest notes.</p>');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, ids.book, 'darlings.json')))[0].text, 'Latest copy');
+    await js('updateDialog.close()');
+
+    // Failure keeps the draft queued, blocks leaving the book and blocks restart.
+    electron.ipcMain.removeHandler('aux:write');
+    register('aux:write', async () => { throw new Error('Test notes disk failure'); });
+    await js(`document.querySelector('#aux-editor').innerHTML = '<p>Notes after retry.</p>'; auxDirty = true;`);
+    assert.equal(await js('backToShelf().then(() => false, () => !!book)'), true);
+    await js(readyDialog + 'updateDialog.querySelector(".m-ok").onclick();');
+    assert.equal(installs, 3);
+    assert.equal(await js('document.body.inert'), false);
+    assert.equal(await js('Object.keys(auxPending).length > 0'), true);
+    notes.restore();
+    await js('updateDialog.querySelector(".m-ok").onclick();');
+    assert.equal(installs, 4);
+    assert.equal(fs.readFileSync(path.join(root, ids.book, 'notes.html'), 'utf8'), '<p>Notes after retry.</p>');
+    await js('updateDialog.close()');
+
+    // A real competing disk write reaches the new IPC expected-text check.
+    fs.writeFileSync(path.join(root, ids.book, 'chapters', ids.chapter + '.html'), '<p>Competing device words.</p>');
+    await js(`chapterHTML[book.chapterOrder[0]] = '<p>Our newer words.</p>'; persistChapter(book.chapterOrder[0]);`);
+    const savedBook = JSON.parse(fs.readFileSync(path.join(root, ids.book, 'book.json'), 'utf8'));
+    assert.equal(fs.readFileSync(path.join(root, ids.book, 'chapters', ids.chapter + '.html'), 'utf8'), '<p>Our newer words.</p>');
+    assert.equal(savedBook.chapterOrder.length, 2);
+    assert.equal(fs.readFileSync(path.join(root, ids.book, 'chapters', savedBook.chapterOrder[1] + '.html'), 'utf8'), '<p>Competing device words.</p>');
     // Upstream's new zoom belongs to this device, never a library sync write.
     const libraryBeforeZoom = fs.readFileSync(path.join(root, 'library.json'), 'utf8');
     await js('setPageZoom(1.4); switchTab("outline"); stepCardZoom(1);');
@@ -139,12 +202,39 @@ app.whenReady().then(async () => {
     assert.equal(await js('currentTab'), 'notes');
     assert.equal(await js('activePageZoom()'), 1.4);
     await js('backToShelf()');
-    win.webContents.send('menu', { type: 'syncPrepare', token: 'shelf-test' });
-    await tick(); assert.equal(await js('document.body.inert'), true);
+    const prepareSync = token => new Promise(resolve => {
+      const listener = (_e, responseToken, ready) => {
+        if (responseToken !== token) return;
+        electron.ipcMain.removeListener('sync:ready', listener); resolve(ready);
+      };
+      electron.ipcMain.on('sync:ready', listener);
+      win.webContents.send('menu', { type: 'syncPrepare', token });
+    });
+    // A failed queued sidecar on the shelf must also block incoming sync.
+    electron.ipcMain.removeHandler('json:write');
+    register('json:write', async () => { throw new Error('Test sidecar disk failure'); });
+    await js(`writeSidecar(${JSON.stringify(ids.book)}, 'darlings', [{id:'shelf-queued',text:'Keep this copy'}]).catch(() => {});`);
+    assert.equal(await prepareSync('failed-sidecar'), false);
+    win.webContents.send('menu', { type: 'syncApplied', token: 'failed-sidecar' }); await tick();
+    sidecar.restore();
+    assert.equal(await prepareSync('shelf-test'), true);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, ids.book, 'darlings.json')))[0].text, 'Keep this copy');
+    assert.equal(await js('document.body.inert'), true);
     win.webContents.send('menu', { type: 'syncApplied', token: 'shelf-test' });
     await tick(); assert.equal(await js('document.body.inert'), false);
+    // The shelf export's read phase must exclude incoming sync and restart.
+    const exportRead = holdWrite('book:readMeta');
+    electron.ipcMain.removeHandler('export:save'); register('export:save', () => false);
+    await js(`window.exportTest = exportFromShelf(${JSON.stringify(ids.book)}, 'txt'); void 0;`);
+    await exportRead.began;
+    assert.equal(await prepareSync('during-export'), false);
+    await js(readyDialog + 'updateDialog.querySelector(".m-ok").onclick();');
+    assert.equal(installs, 4);
+    exportRead.release(); await js('window.exportTest'); exportRead.restore();
+    await js('updateDialog.close()');
+    assert.equal(await js('book === null && !shelfExport'), true);
     assert.ok(app.getPath('userData').startsWith(tmp + path.sep));
-    console.log('Desktop smoke passed: identity, settings, preload, offline save, outline-card flush, local zoom, last-tab restore, editor/shelf apply handoff.');
+    console.log('Desktop smoke passed: identity, queued saves/retries, conflict copies, restart/sync barriers, shelf export, outline-card flush, local zoom and last-tab restore.');
     console.log('Temporary profile retained until Electron exits: ' + tmp);
     clearTimeout(timeout); app.exit(0);
   } catch (err) { console.error(err); clearTimeout(timeout); app.exit(1); }

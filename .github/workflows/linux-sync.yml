@@ -47,12 +47,15 @@ jobs:
             npm run test:sync:desktop -- --password-store=gnome-libsecret
             env -u KDE_SESSION_VERSION -u KDE_FULL_SESSION XDG_CURRENT_DESKTOP=NeoSyncTestWM DESKTOP_SESSION=NeoSyncTestWM npm run test:sync:restart
             npm run test:sync:ui -- --password-store=gnome-libsecret
+            npm run test:tabs -- --password-store=gnome-libsecret
             npm run test:updates
           '
       - name: Package AppImage and Debian installer (no publishing)
         run: npm run package:linux:x64
       - name: Verify update feed and installer checksums
         run: node scripts/check-update-artifacts.js linux
+      - name: Verify packaged dictionaries and license notices
+        run: node scripts/check-romanian-package.js dist/linux-unpacked/resources
       - name: Hash Linux installers
         run: cd dist && sha256sum *.AppImage *.deb > SHA256SUMS-linux.txt
       - uses: actions/upload-artifact@v4

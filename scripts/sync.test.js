@@ -90,15 +90,18 @@ test('independent chapter edits and metadata fields merge on both devices', asyn
 test('upstream outline metadata syncs, merges independent cards, and preserves competing notes', async t => {
   const { device } = fixtures(t), a = device('a'), b = device('b');
   const outline = {
+    format: 'screenplay', underlineHeadings: true, contd: false,
     sectionNotes: { a: [{ id: 'section-a', text: 'A section', dismissed: false }] },
     sceneNotes: { 'scene-a': 'A scene' },
     looseCards: [{ id: 'loose-a', text: 'An idea' }]
   };
-  const html = '<p class="sp-heading" data-scene-id="scene-a">INT. ROOM - DAY</p><p data-sec-id="section-a">Words</p>';
+  const html = '<p class="sp-heading" data-scene-id="scene-a" data-newpage="1">INT. ROOM - DAY</p><p data-sec-id="section-a">Words</p>';
   a.write(chapter, html); a.write(metadata, meta(outline));
   await a.engine.run(); await b.engine.run();
   assert.equal(b.text(chapter), html);
   assert.deepEqual(JSON.parse(b.text(metadata)).sceneNotes, outline.sceneNotes);
+  assert.equal(JSON.parse(b.text(metadata)).underlineHeadings, true);
+  assert.equal(JSON.parse(b.text(metadata)).contd, false);
   const left = JSON.parse(a.text(metadata)), right = JSON.parse(b.text(metadata));
   left.sceneNotes['scene-a'] = 'Revised scene';
   right.looseCards[0].text = 'Revised idea';
