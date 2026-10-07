@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('neo', {
   writeLibrary: (data) => ipcRenderer.invoke('library:write', data),
 
   createBook: (meta) => ipcRenderer.invoke('book:create', meta),
+  duplicateBook: (bookId, title) => ipcRenderer.invoke('book:duplicate', bookId, title),
   listBooks: () => ipcRenderer.invoke('library:listBooks'),
   readBookMeta: (bookId) => ipcRenderer.invoke('book:readMeta', bookId),
   writeBookMeta: (bookId, meta) => ipcRenderer.invoke('book:writeMeta', bookId, meta),

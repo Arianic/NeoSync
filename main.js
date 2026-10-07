@@ -575,6 +575,49 @@ ipcMain.handle('book:create', (_e, meta) => {
   return book;
 });
 
+// A copy of a book, for a backup or a version to play with: every file in
+// its folder (chapters, notes, darlings, covers) written whole into a new
+// folder, then its book.json under the new id and title. A half-made copy
+// is removed; the original is only ever read.
+ipcMain.handle('book:duplicate', (_e, bookId, title) => {
+  ensureLibrary();
+  const src = bookDir(bookId);
+  const meta = readJSON(path.join(src, 'book.json'), null);
+  if (!meta) throw new Error('That book could not be read');
+  const slug = String(title || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30);
+  const id = 'book-' + (slug ? slug + '-' : '') +
+    Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+  const dest = bookDir(id);
+  // a chapter iCloud hasn't brought down yet would be missing from the copy
+  const waiting = (dir) => fs.readdirSync(dir, { withFileTypes: true }).some((e) => (e.isDirectory() ? waiting(path.join(dir, e.name)) : /\.icloud$/.test(e.name)));
+  if (waiting(src)) throw new Error('Some of this book is still downloading from iCloud. Try again in a moment');
+  const copyDir = (from, to) => {
+    fs.mkdirSync(to, { recursive: true });
+    for (const ent of fs.readdirSync(from, { withFileTypes: true })) {
+      // (a write caught halfway, a spare copy, a placeholder: not the book)
+      if (/\.(tmp|bak|icloud)$/.test(ent.name) || ent.name === 'book.json') continue;
+      const a = path.join(from, ent.name);
+      const b = path.join(to, ent.name);
+      if (ent.isDirectory()) copyDir(a, b);
+      else if (ent.isFile()) writeFileDurable(b, fs.readFileSync(a));
+    }
+  };
+  try {
+    copyDir(src, dest);
+    const now = new Date().toISOString();
+    const copy = { ...meta, id, title: title || meta.title, created: now, modified: now };
+    delete copy.uuid; // an ebook store sees a new book
+    writeJSON(path.join(dest, 'book.json'), copy);
+    writeCatalog();
+    return copy;
+  } catch (err) {
+    logError('duplicate', err);
+    try { fs.rmSync(dest, { recursive: true, force: true }); } catch { /* left for the writer */ }
+    throw err;
+  }
+});
+
 // every book folder in the library, shelved or not — for File → Reshelve
 ipcMain.handle('library:listBooks', () => {
   const out = [];
@@ -917,6 +960,20 @@ function paperSize() {
 }
 ipcMain.on('paper:get', (e) => { e.returnValue = paperSize(); });
 
+// Exports open where the writer last saved one, on this computer (kept in
+// settings.json; the first time, Documents)
+function exportFolder() {
+  const kept = readSettings().exportFolder;
+  try { if (kept && fs.statSync(kept).isDirectory()) return kept; } catch { /* gone: an unplugged drive */ }
+  return path.join(os.homedir(), 'Documents');
+}
+function rememberExportFolder(file) {
+  try {
+    const dir = path.dirname(file);
+    if (readSettings().exportFolder !== dir) writeSettings({ ...readSettings(), exportFolder: dir });
+  } catch (err) { logError('settings', err); }
+}
+
 async function renderPDF(html, print) {
   // The book reaches the PDF printer as a file, not as a data: URL. A URL
   // stops at 2 MB, and a long novel is bigger than that once it's encoded; a
@@ -944,6 +1001,10 @@ async function renderPDF(html, print) {
     // on the page, so nothing moves between the two printings.
     if (html.includes('class="toc-pg"')) {
       const pages = pdfAnchorPages(pdf);
+      // page 1 is the story's first page; the ones before it aren't counted
+      const p1 = /data-p1="([A-Za-z0-9_-]+)"/.exec(html);
+      const skip = p1 && pages[p1[1]] ? pages[p1[1]] - 1 : 0;
+      for (const k of Object.keys(pages)) pages[k] = pages[k] - skip > 0 ? pages[k] - skip : '';
       if (Object.keys(pages).length) {
         await pdfWin.webContents.executeJavaScript(`(() => {
           const pages = ${JSON.stringify(pages)};
@@ -1023,10 +1084,11 @@ async function buildZip(zipEntries) {
 ipcMain.handle('export:save', async (_e, { format, defaultName, content, zipEntries, base64, print }) => {
   const win = BrowserWindow.getFocusedWindow();
   const { canceled, filePath } = await dialog.showSaveDialog(win, {
-    defaultPath: path.join(os.homedir(), 'Documents', defaultName + '.' + format),
+    defaultPath: path.join(exportFolder(), defaultName + '.' + format),
     filters: [{ name: format.toUpperCase(), extensions: [format] }]
   });
   if (canceled || !filePath) return null;
+  rememberExportFolder(filePath);
   try {
     if (zipEntries) {
       fs.writeFileSync(filePath, await buildZip(zipEntries));
@@ -1133,10 +1195,13 @@ async function renderPaged(html, { width, height, plain = false }) {
   const at = (s, tag, last) => (last ? s.lastIndexOf(tag) : s.indexOf(tag));
   const splice = (s, tag, add, last) => { const i = at(s, tag, last); return i < 0 ? s + add : s.slice(0, i) + add + s.slice(i); };
   let page = html;
+  // (page 1 is the page that holds .pg1, the story's first: each page's
+  // number is set on it outright, which Chromium follows where Paged.js's
+  // own counter reset doesn't carry past that page)
   if (plain) {
     page = splice(page, '</body>', '<script>window.__neoPages = 1;</script>', true);
   } else {
-    page = splice(page, '</body>', '<script>window.PagedPolyfill.preview().then(() => { window.__neoPages = document.querySelectorAll(".pagedjs_page").length; }, (e) => { window.__neoPagedError = String(e && e.stack || e); });</script>', true);
+    page = splice(page, '</body>', '<script>window.PagedPolyfill.preview().then(() => { const pp = [...document.querySelectorAll(".pagedjs_page")]; const s = pp.findIndex((p) => p.querySelector(".pg1:not([data-split-from])")); if (s >= 0) pp.forEach((p, i) => { p.style.counterReset = "page " + (i >= s ? i - s + 1 : 0); p.style.counterIncrement = "none"; }); window.__neoPages = pp.length; }, (e) => { window.__neoPagedError = String(e && e.stack || e); });</script>', true);
     page = splice(page, '</head>', '<script>window.PagedConfig = { auto: false };</script><script>' + paged + '</script>', false);
   }
   fs.writeFileSync(tmp, page, 'utf8');
@@ -1304,10 +1369,11 @@ async function makePaperback({ html, trim, paper, pagesGuess, title, author, def
   if (!settled) throw new Error('The page count would not settle');
   const pages = result.pages;
   const { canceled, filePath } = await dialog.showSaveDialog(win, {
-    defaultPath: path.join(os.homedir(), 'Documents', defaultName + '.pdf'),
+    defaultPath: path.join(exportFolder(), defaultName + '.pdf'),
     filters: [{ name: 'PDF', extensions: ['pdf'] }]
   });
   if (canceled || !filePath) return null;
+  rememberExportFolder(filePath);
   const coverPath = filePath.replace(/\.pdf$/i, '') + ' - ' + t('cover template') + '.pdf';
   try {
     fs.writeFileSync(filePath, result.pdf);
@@ -1834,7 +1900,11 @@ let backupRunning = false;
 // The window's own color, seen for a moment before the page draws and at the
 // edges while it resizes: the room's color, dark or (View → Page → Light) light
 function roomColor(theme) { return theme === 'light' ? '#efede8' : '#191919'; }
+// (this computer's own page, kept in settings.json as the window reports
+// it; the library's, the last device's, until it has one)
 function libraryPageTheme() {
+  const own = readSettings().pageTheme;
+  if (own) return own;
   try { return JSON.parse(fs.readFileSync(LIBRARY_FILE, 'utf8')).pageTheme || 'night'; } catch { return 'night'; }
 }
 
@@ -2139,6 +2209,7 @@ ipcMain.on('uizoom:state', (_e, z) => {
 // View and Format menu ticks: the focus level, the page, Brighter Interface, and the writing
 // format the page is using (body font, drop cap style, paragraph alignment).
 let viewState = { focus: 'off', pageTheme: 'night', uiBright: false, bodyFont: '', dropCap: 'literary', align: null };
+let keptTheme = null;
 ipcMain.on('view:state', (e, st) => {
   st = st || {};
   const next = {
@@ -2149,6 +2220,11 @@ ipcMain.on('view:state', (e, st) => {
     dropCap: typeof st.dropCap === 'string' ? st.dropCap : 'literary',
     align: ['left', 'center', 'right', 'justify'].includes(st.align) ? st.align : null
   };
+  // this computer's page, for the window's color at the next start
+  if (next.pageTheme !== keptTheme) {
+    keptTheme = next.pageTheme;
+    try { if (readSettings().pageTheme !== keptTheme) writeSettings({ ...readSettings(), pageTheme: keptTheme }); } catch (err) { logError('settings', err); }
+  }
   if (JSON.stringify(next) === JSON.stringify(viewState)) return;
   if (next.pageTheme !== viewState.pageTheme) {
     const w = BrowserWindow.fromWebContents(e.sender);
