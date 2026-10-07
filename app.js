@@ -180,6 +180,8 @@ function setChapterKind(chId, kind) {
 }
 
 const isUntitled = (s) => !s || s === 'Untitled' || s === t('Untitled');
+// a title as the writer reads it: the untitled default in the current language
+const shownTitle = (s) => (isUntitled(s) ? t('Untitled') : s);
 
 // ---------- state ----------
 let library = null;          // library.json
@@ -1740,7 +1742,7 @@ function bookTile(meta, opts = {}) {
       const at = home.bookIds.indexOf(meta.id);
       const prev = at > 0 ? bookMetaCache.get(home.bookIds[at - 1]) : null;
       if (!(prev && prev.kind === 'part')) {
-        options.push({ label: t('Start a part here'), desc: t('A part page goes in before “{title}”.', { title: escHtml(meta.title) }), value: 'part' });
+        options.push({ label: t('Start a part here'), desc: t('A part page goes in before “{title}”.', { title: escHtml(shownTitle(meta.title)) }), value: 'part' });
       }
     }
     // no hover on a touch screen, so the ↻ that lives under the pointer
@@ -1762,7 +1764,8 @@ function bookTile(meta, opts = {}) {
       options.push({ label: t('Export…'), value: 'export' });
     }
     // the ↻ on the cover, for the keyboard and screen readers
-    if (!script) options.push({ label: t('New cover'), value: 'refresh' });
+    // (a touch screen has it already, at the top)
+    if (!script && !NO_HOVER) options.push({ label: t('New cover'), value: 'refresh' });
     options.push(
       { label: t('Set word goal…'), desc: t('Adds the subtle progress bar to the cover.'), value: 'goal' },
       { label: t('Remove from bookshelf'), desc: t('Takes it off your shelves. The files stay safe in your NEO Library folder on disk.'), value: 'remove' },
@@ -1774,13 +1777,13 @@ function bookTile(meta, opts = {}) {
           danger: true, value: 'trash'
         }
     );
-    const choice = await optionModal(`“${escHtml(meta.title)}”`, null, options);
+    const choice = await optionModal(t('“{title}”', { title: escHtml(shownTitle(meta.title)) }), null, options);
     if (choice === 'part') {
       await addPage(home, 'part', meta.id);
     } else if (choice === 'refresh') {
       await refreshCover(meta, el);
     } else if (choice === 'export' && script) {
-      const fmt = await optionModal(t('Export “{title}”', { title: escHtml(meta.title) }), null, [
+      const fmt = await optionModal(t('Export “{title}”', { title: escHtml(shownTitle(meta.title)) }), null, [
         ...(window.Capacitor ? [] : [{ label: 'PDF (.pdf)', value: 'pdf' }]),
         { label: 'Fountain (.fountain)', value: 'fountain' }, { label: 'Final Draft (.fdx)', value: 'fdx' }
       ]);
@@ -1788,7 +1791,7 @@ function bookTile(meta, opts = {}) {
       await openBook(meta.id);
       await doExport(fmt);
     } else if (choice === 'export') {
-      const fmt = await optionModal(t('Export “{title}”', { title: escHtml(meta.title) }), null, [
+      const fmt = await optionModal(t('Export “{title}”', { title: escHtml(shownTitle(meta.title)) }), null, [
         { label: t('Text (.txt)'), value: 'txt' }, { label: t('Markdown (.md)'), value: 'md' }, { label: t('HTML (.html)'), value: 'html' },
         ...(window.Capacitor ? [] : [{ label: 'PDF (.pdf)', value: 'pdf' }]),
         { label: t('Word (.docx)'), value: 'docx' }, { label: t('EPUB (.epub)'), value: 'epub' }
@@ -1820,7 +1823,7 @@ function bookTile(meta, opts = {}) {
       await writeBookMeta(meta.id, meta);
       renderShelves();
     } else if (choice === 'goal') {
-      const goal = await askInput(t('Word count goal for “{title}”', { title: escHtml(meta.title) }), t('e.g. 80000 — blank removes the goal'),
+      const goal = await askInput(t('Word count goal for “{title}”', { title: escHtml(shownTitle(meta.title)) }), t('e.g. 80000 — blank removes the goal'),
         meta.wordGoal ? String(meta.wordGoal) : '');
       if (goal === null) return;
       meta.wordGoal = parseInt(goal, 10) || 0;
@@ -1966,7 +1969,7 @@ async function refreshCover(meta, el) {
       : { label: t('Paint a cover from the text'), desc: t('Once the story passes {n} words.', { n: PAINT_AT }), value: 'nope' });
   }
   // a plain abstract with nothing else to offer just re-rolls
-  const choice = options.length === 1 ? 'reroll' : await optionModal(t('Cover for “{title}”', { title: escHtml(meta.title) }), null, options);
+  const choice = options.length === 1 ? 'reroll' : await optionModal(t('Cover for “{title}”', { title: escHtml(shownTitle(meta.title)) }), null, options);
   if (!choice || choice === 'nope') return;
   const live = (book && book.id === meta.id) ? book : meta;
   if (choice === 'paint') {
