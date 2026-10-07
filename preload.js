@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld('neo', {
 
   readChapter: (bookId, chId) => invoke('chapter:read', bookId, chId),
   chapterStamps: (bookId) => invoke('chapter:stamps', bookId),
-  writeChapter: (bookId, chId, html) => invoke('chapter:write', bookId, chId, html),
+  writeChapter: (bookId, chId, html, expected) => invoke('chapter:write', bookId, chId, html, expected),
   deleteChapter: (bookId, chId) => invoke('chapter:delete', bookId, chId),
 
   readAux: (bookId, name) => invoke('aux:read', bookId, name),
@@ -62,11 +62,15 @@ contextBridge.exposeInMainWorld('neo', {
   poetryState: (on) => ipcRenderer.send('poetry:state', on),
   flushState: (on) => ipcRenderer.send('flush:state', on),
   scriptState: (st) => ipcRenderer.send('script:state', st),
+  // sent (and waited for) as a script line is right-clicked, so the menu
+  // that opens next can offer Page Break Here
+  scriptContext: (st) => ipcRenderer.sendSync('script:context', st),
   typewriterState: (st) => ipcRenderer.send('typewriter:state', st),
   vimState: (on) => ipcRenderer.send('vim:state', on),
   uiZoomState: (z) => ipcRenderer.send('uizoom:state', z),
   // interface language, fetched once before the page's scripts run
   i18n: ipcRenderer.sendSync('i18n:get'),
+  paper: ipcRenderer.sendSync('paper:get'),
   reloadForLanguage: () => invoke('i18n:reload'),
 
   writingStyleState: (st) => ipcRenderer.send('style:state', st),
