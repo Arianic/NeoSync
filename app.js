@@ -3126,13 +3126,24 @@ function caretRect() {
 // A chapter split, merged or taken away redraws the chapters. The writer's
 // line stays at the height it had in the window, so the page doesn't jump:
 // caretHeight() before the change, keepCaretHeight(it) after.
+// (The browser's own scroll anchoring is paused meanwhile: it moves the page
+// to make up for what changed above the window, after NEO has already put
+// the line back, and the page landed a line or two off.)
 function caretHeight() {
+  const sc = $('#paper-scroll');
+  sc.style.overflowAnchor = 'none';
+  clearTimeout(caretHeight.t);
+  caretHeight.t = setTimeout(() => { sc.style.overflowAnchor = ''; }, 3000); // (never left off)
   const rect = caretRect();
-  return rect ? rect.top - $('#paper-scroll').getBoundingClientRect().top : null;
+  return rect ? rect.top - sc.getBoundingClientRect().top : null;
 }
 function keepCaretHeight(was) {
-  const now = caretHeight();
-  if (was != null && now != null) $('#paper-scroll').scrollTop += now - was;
+  const sc = $('#paper-scroll');
+  const rect = caretRect();
+  if (was != null && rect) sc.scrollTop += rect.top - sc.getBoundingClientRect().top - was;
+  // anchoring back on once the page has settled where NEO put it
+  clearTimeout(caretHeight.t);
+  caretHeight.t = setTimeout(() => { sc.style.overflowAnchor = ''; }, 300);
 }
 
 // The caret never types out of sight: an Enter (or anything else) on the
