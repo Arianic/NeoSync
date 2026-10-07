@@ -3021,14 +3021,15 @@ function emptyChapterBackspace(e, body, chId) {
   e.preventDefault();
   snapshotStructure('empty chapter removed');
   breakRun++;
+  const was = caretHeight();
   if (idx > 0) {
     const prev = book.chapterOrder[idx - 1];
-    deleteChapterQuiet(chId).then(() => { focusChapterEnd(prev); resetNativeUndo(); });
+    deleteChapterQuiet(chId).then(() => { focusChapterEnd(prev); resetNativeUndo(); keepCaretHeight(was); });
   } else {
     // an empty chapter 1 dissolves too — the caret lands at the top of
     // what just became the new chapter 1
     const next = book.chapterOrder[1];
-    deleteChapterQuiet(chId).then(() => { focusChapterStart(next); resetNativeUndo(); });
+    deleteChapterQuiet(chId).then(() => { focusChapterStart(next); resetNativeUndo(); keepCaretHeight(was); });
   }
   return true;
 }
@@ -3108,22 +3109,39 @@ function gotoChapter(step) {
   sec.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
 }
 
+// The caret's line on screen, or null when the caret isn't on the page
+function caretRect() {
+  const sc = $('#paper-scroll');
+  const sel = window.getSelection();
+  if (!sc || !sel.rangeCount || !sc.contains(sel.anchorNode)) return null;
+  const r = sel.getRangeAt(0).cloneRange();
+  r.collapse(false);
+  const rect = r.getBoundingClientRect();
+  if (rect.height) return rect;
+  // an empty line has no text to measure: its paragraph does
+  const node = r.endContainer.nodeType === Node.ELEMENT_NODE ? r.endContainer : r.endContainer.parentElement;
+  return node ? node.getBoundingClientRect() : null;
+}
+
+// A chapter split, merged or taken away redraws the chapters. The writer's
+// line stays at the height it had in the window, so the page doesn't jump:
+// caretHeight() before the change, keepCaretHeight(it) after.
+function caretHeight() {
+  const rect = caretRect();
+  return rect ? rect.top - $('#paper-scroll').getBoundingClientRect().top : null;
+}
+function keepCaretHeight(was) {
+  const now = caretHeight();
+  if (was != null && now != null) $('#paper-scroll').scrollTop += now - was;
+}
+
 // The caret never types out of sight: an Enter (or anything else) on the
 // window's bottom line brings the new line into view, with a little room
 // below it. (Typewriter scrolling keeps the line centered on its own.)
 function revealCaret() {
   const sc = $('#paper-scroll');
-  const sel = window.getSelection();
-  if (!sc || !sel.rangeCount || !sc.contains(sel.anchorNode)) return;
-  const r = sel.getRangeAt(0).cloneRange();
-  r.collapse(false);
-  let rect = r.getBoundingClientRect();
-  if (!rect.height) {
-    // an empty line has no text to measure: its paragraph does
-    const node = r.endContainer.nodeType === Node.ELEMENT_NODE ? r.endContainer : r.endContainer.parentElement;
-    if (!node) return;
-    rect = node.getBoundingClientRect();
-  }
+  const rect = caretRect();
+  if (!rect) return;
   const box = sc.getBoundingClientRect();
   const room = Math.min(48, box.height / 6);
   if (rect.bottom > box.bottom - room) sc.scrollTop += rect.bottom - (box.bottom - room);
@@ -3170,12 +3188,14 @@ function chapterStartBackspace(e, body, chId) {
     // empty chapter above: swallow it
     snapshotStructure('empty chapter removed');
     breakRun++;
-    deleteChapterQuiet(prevId).then(() => { focusChapterStart(chId); resetNativeUndo(); });
+    const was = caretHeight();
+    deleteChapterQuiet(prevId).then(() => { focusChapterStart(chId); resetNativeUndo(); keepCaretHeight(was); });
     return true;
   }
   // chapter with words above: merge this chapter up into it — the inverse
   // of a triple-Enter split, and ⌘Z restores the split
   snapshotStructure('chapters merged');
+  const was = caretHeight();
   const prevCount = prevBody.querySelectorAll('p').length;
   const keepScroll = $('#paper-scroll').scrollTop;
   chapterHTML[prevId] = captureBody(prevBody) + captureBody(body);
@@ -3209,6 +3229,7 @@ function chapterStartBackspace(e, body, chId) {
   renderStickies();
   restoreCaret({ chId: prevId, pIdx: prevCount, off: 0, scroll: keepScroll });
   resetNativeUndo();
+  keepCaretHeight(was); // the line stays put as the heading above it goes
   breakRun++;
   return true;
 }
@@ -3410,7 +3431,8 @@ let enterRun = 0;
 // recent edits are breaks, ⌘Z routes to NEO's structural undo, one per press
 let breakRun = 0;
 
-function splitChapterAt(body, chId, block, sel) {
+// was: the caret's height in the window before the *** above it went
+function splitChapterAt(body, chId, block, sel, was) {
   // an empty line is no way to start a chapter, or end one: blank lines at
   // the seam stay behind (the new chapter opens on its first words)
   const blank = (p) => p && p.tagName === 'P' && !p.classList.contains('scene-break') && p.textContent.trim() === '' && !p.querySelector('.ph-mark');
@@ -3437,7 +3459,15 @@ function splitChapterAt(body, chId, block, sel) {
   renderChapters();
   focusChapterStart(newId);
   resetNativeUndo();
-  document.querySelector(`.chapter[data-id="${newId}"] p`).scrollIntoView({ block: 'start' });
+  // the writer's line stays where it was in the window, the new chapter's
+  // heading above it; only a line near the window's top moves down, as far
+  // as it takes for the heading to show
+  keepCaretHeight(was);
+  const sc = $('#paper-scroll');
+  const head = document.querySelector(`.chapter[data-id="${newId}"] .chapter-head`).getBoundingClientRect();
+  const top = sc.getBoundingClientRect().top + 8;
+  if (head.height && head.top < top) sc.scrollTop -= top - head.top;
+  revealCaret();
   breakRun++;
 }
 
@@ -3508,8 +3538,9 @@ function handleEnter(e, body, chId) {
         // third Enter: everything from here becomes the next chapter
         e.preventDefault();
         snapshotStructure('chapter split');
+        const was = caretHeight();
         prev.remove();
-        splitChapterAt(body, chId, block, sel);
+        splitChapterAt(body, chId, block, sel, was);
         return true;
       }
       e.preventDefault();
@@ -3534,6 +3565,10 @@ function handleEnter(e, body, chId) {
       sel.addRange(keep);
       syncChapter(body, chId);
       resetNativeUndo();
+      // no input event follows a break made by hand, so the caret is kept in
+      // sight here, as typing keeps it: a break near the window's foot pushed
+      // the line below it until the next key
+      if (!typewriterEnabled) revealCaret();
       breakRun++;
       return true;
     }
@@ -3556,8 +3591,9 @@ function handleEnter(e, body, chId) {
   if (prev && prev.classList.contains('scene-break')) {
     e.preventDefault();
     snapshotStructure('chapter split');
+    const was = caretHeight();
     prev.remove();
-    splitChapterAt(body, chId, block, sel);
+    splitChapterAt(body, chId, block, sel, was);
     return true;
   }
 
@@ -3578,6 +3614,7 @@ function handleEnter(e, body, chId) {
     sel.addRange(range);
     syncChapter(body, chId);
     resetNativeUndo();
+    if (!typewriterEnabled) revealCaret(); // (see the break above)
     breakRun++;
     return true;
   }
