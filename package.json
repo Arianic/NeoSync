@@ -100,7 +100,8 @@
     },
     "asarUnpack": [
       "node_modules/dictionary-ro/**",
-      "node_modules/dictionary-pt/**"
+      "node_modules/dictionary-pt/**",
+      "node_modules/dictionary-hu/**"
     ],
     "extraResources": [
       {
@@ -126,6 +127,7 @@
       "!scripts/**",
       "!licenses/**",
       "!Claude outputs/**",
+      "!dictionaries/**",
       "!locales/_template.json",
       "!node_modules/koffi/build/koffi/{freebsd,linux,musl,openbsd,win32}_*/**",
       "!node_modules/koffi/{src,vendor,doc}/**"
@@ -151,6 +153,7 @@
     "dictionary-en-us": "^2.2.1",
     "dictionary-es": "^4.0.0",
     "dictionary-fr": "^3.0.0",
+    "dictionary-hu": "file:dictionaries/hu",
     "dictionary-nl": "^2.0.0",
     "dictionary-pl": "^2.0.0",
     "dictionary-pt": "4.0.0",

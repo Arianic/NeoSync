@@ -22,6 +22,48 @@ test('Hunspell reads the pinned Romanian dictionary as published', async () => {
   for (const [word, ok] of Object.entries(res.result)) assert.equal(ok, true, word);
 });
 
+test('Hunspell reads the pinned Hungarian dictionary and suggests accents', async () => {
+  const dir = path.join(root, 'node_modules/dictionary-hu');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'))).version, '1.9.0');
+  const send = spellWorker();
+  assert.equal((await send({ type: 'load', language: 'hu', dir })).ok, true);
+  const good = await send({ type: 'check', words: ['ház', 'házaimban', 'gyönyörű', 'Budapesten', 'íróasztal', 'szerkesztőknek'] });
+  for (const [word, ok] of Object.entries(good.result)) assert.equal(ok, true, word);
+  const bad = await send({ type: 'check', words: ['gyonyoru', 'haz'] });
+  for (const [word, ok] of Object.entries(bad.result)) assert.equal(ok, false, word);
+  assert.ok((await send({ type: 'suggest', word: 'gyonyoru' })).result.includes('gyönyörű'));
+});
+
+test('Hungarian grammar hints that lean on the dictionary: agreement, numerals, conjugation', async () => {
+  const send = spellWorker();
+  assert.equal((await send({ type: 'load', language: 'hu', dir: path.join(root, 'node_modules/dictionary-hu') })).ok, true);
+  const { check } = require(path.join(root, 'grammar-hu.js'));
+  const lookup = async (text) => {
+    const words = text.match(/[\p{L}\p{M}]+/gu);
+    const res = (await send({ type: 'morph', words })).result;
+    return (w) => res[w] || null;
+  };
+  const hints = async (text) => check(text, await lookup(text))
+    .map((h) => [text.substr(h.at, h.len), h.fix, h.rule]);
+  assert.deepEqual(await hints('Ők megy a boltba.'), [['megy', null, 'agree']]);
+  assert.deepEqual(await hints('Én megyünk haza.'), [['megyünk', null, 'agree']]);
+  assert.deepEqual(await hints('Három almák voltak.'), [['almák', 'alma', 'numeral']]);
+  assert.deepEqual(await hints('Két házakban laktunk.'), [['házakban', 'házban', 'numeral']]);
+  assert.deepEqual(await hints('A gyerekek játszik.'), [['játszik', null, 'subject']]);
+  assert.deepEqual(await hints('Olvasok a könyvet.'), [['Olvasok', null, 'definite']]);
+  assert.deepEqual(await hints('Olvasom egy könyvet.'), [['Olvasom', null, 'indefinite']]);
+  // and correct prose stays clean
+  const lines = fs.readFileSync(path.join(__dirname, 'grammar-hu.correct.txt'), 'utf8').trim().split('\n');
+  for (const line of lines) assert.deepEqual(await hints(line), [], line);
+});
+
+test('the Hungarian dictionary takes every accusative (könyvet, szívet, évet)', async () => {
+  const send = spellWorker();
+  assert.equal((await send({ type: 'load', language: 'hu', dir: path.join(root, 'node_modules/dictionary-hu') })).ok, true);
+  const res = await send({ type: 'check', words: ['könyvet', 'szívet', 'évet', 'kertet', 'almát'] });
+  for (const [word, ok] of Object.entries(res.result)) assert.equal(ok, true, word);
+});
+
 function spellWorker() {
   let handle, reply;
   const context = vm.createContext({
@@ -121,7 +163,7 @@ test('learning a Romanian word removes cached Unicode-variant underlines across 
     },
     Node: { TEXT_NODE: 3 }, NodeFilter: { SHOW_TEXT: 4 }, Range: TextRange,
     Highlight: Set, CSS: { highlights },
-    $: () => editors['aux-editor'], t: (text) => text, toast() {},
+    $: () => editors['aux-editor'], t: (text) => text, tk: (text) => text, toast() {},
     currentTab: 'manuscript', currentChapterId: 'ch-test', library: {},
     captureMenu: (_x, _y, _word, _suggestions, callbacks) => { actions = callbacks; },
     window: { neo: {
@@ -274,7 +316,7 @@ test('hyphenated words: the whole word first, then only the wrong pieces', async
       createTreeWalker: () => { let n = node; return { nextNode: () => { const x = n; n = null; return x; } }; }
     },
     NodeFilter: { SHOW_TEXT: 4 }, Range: TextRange, Highlight: Set, CSS: { highlights },
-    $: () => null, t: (text) => text, toast() {},
+    $: () => null, t: (text) => text, tk: (text) => text, toast() {},
     window: { neo: { spellCheckWords: async (words) => (await send({ type: 'check', words })).result } }
   });
   const app = source('app.js');
@@ -307,7 +349,7 @@ test('a hyphenated word underlined whole opens the menu; a stammer is no misspel
       execCommand: (_cmd, _ui, text) => { node.data = node.data.slice(0, selected.start) + text + node.data.slice(selected.end); }
     },
     Node: { TEXT_NODE: 3 }, NodeFilter: { SHOW_TEXT: 4 }, Range: TextRange, Highlight: Set, CSS: { highlights },
-    $: () => null, t: (text) => text, toast() {},
+    $: () => null, t: (text) => text, tk: (text) => text, toast() {},
     captureMenu: (_x, _y, word, suggestions, actions) => { menu = { word, suggestions, actions }; },
     window: {
       getSelection: () => ({ removeAllRanges() {}, addRange: (r) => { selected = r; } }),

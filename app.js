@@ -530,6 +530,14 @@ function coverUrl(meta) {
 async function loadLibrary() {
   libraryDirPath = await window.neo.libraryPath();
   library = await window.neo.readLibrary();
+  // A first shelf is named in the language NEO had when it was made. If the
+  // writer never renamed it, it follows a change of language.
+  const DEFAULT_SHELF = 'Works in Progress';
+  const own = t(DEFAULT_SHELF);
+  // (each writing name has a first shelf of its own, made the same way)
+  const untouched = (library.shelves || []).filter((s) => s.name === DEFAULT_SHELF && own !== DEFAULT_SHELF);
+  for (const s of untouched) s.name = own;
+  if (untouched.length) await writeLibrary(library);
   if (window.neo.writingStyleState) window.neo.writingStyleState(library.writingStyle);
   if (!library.firstRunDone) {
     showFirstRun();
@@ -4231,7 +4239,8 @@ const QUOTE_STYLES = {
   pl: { open: '„', close: '”' },
   ro: { open: '„', close: '”' },
   ru: { open: '«', close: '»' },
-  el: { open: '«', close: '»' }
+  el: { open: '«', close: '»' },
+  hu: { open: '„', close: '”' }
 };
 // The single quotation marks, where ' types them: English and Dutch ‘…’;
 // German ‚…‘, or ›…‹ in a book set in »…«, or ‹…› in Swiss «…» (#286).
@@ -4282,6 +4291,7 @@ function bookQuotes(el) {
 const DIALOGUE_DASHES = {
   pt: { open: '—', space: ' ', mid: '—' },   // — Olá — diz ela.
   ru: { open: '—', space: ' ', mid: '—' },
+  hu: { open: '–', space: ' ', mid: '–' },   // – Szia – mondta.
   es: { open: '—', space: '', mid: '—' },    // —Hola —dijo él—.
   en: { open: '—', mid: '–' }                // and every other language: word – word
 };
@@ -11120,8 +11130,91 @@ async function spellScanEl(el, key) {
   const caps = capitalSlips(el);
   for (const r of caps) ranges.push(r);
   capsRanges.set(key, caps);
+  const morph = await grammarMorph(el);
+  if (!spellOn) return;
+  grammarRanges.set(key, grammarHints(el, morph));
   spellRanges.set(key, ranges);
   rebuildSpellHighlight();
+}
+
+// Grammar hints (grammar-hu.js): slips a dictionary can't see, for writing in
+// Hungarian. Underlined in blue, apart from misspellings; right-click shows
+// the fix and why. Nothing changes unless the writer picks the fix.
+const grammarRanges = new Map(); // key → [{ range, fix, rule }]
+const GRAMMAR_RULES = {
+  article: { why: tk('Before a vowel the article is “az”.') },
+  comma: { why: tk('A comma goes before this conjunction.') },
+  particle: { why: tk('The question particle -e is joined with a hyphen.') },
+  repeat: { why: tk('The same word twice in a row.'), label: tk('Remove the repeated word') },
+  spaces: { why: tk('Two spaces in a row.'), label: tk('One space') },
+  punct: { why: tk('No space goes before punctuation.'), label: tk('Remove the space') },
+  mint: { why: tk('In a comparison, a comma goes before “mint”.') },
+  mood: { why: tk('With “én”, the conditional ends in -nám or -nék; -nák is “they”.') },
+  illative: { why: tk('This says where something is (hol?), so -ban/-ben; -ba/-be says where it goes (hová?).') },
+  calendar: { why: tk('Months and days are lowercase in Hungarian.') },
+  date: { why: tk('Hungarian dates take a space after each period.') },
+  ordinal: { why: tk('Ordinal numbers are written with a period.') },
+  abbrev: { why: tk('This abbreviation takes a period.') },
+  joined: { why: tk('This is written as one word.') },
+  confused: { why: tk('Often confused with a similar word: check which one you mean.') },
+  agree: { why: tk('The verb doesn’t agree with its subject (én, te, ő, mi, ti, ők).') },
+  numeral: { why: tk('After a number or a quantity word the noun stays singular: három alma.') },
+  subject: { why: tk('The subject is plural, so the verb should be too: a gyerekek játszanak.') },
+  definite: { why: tk('A definite object (a/az …-t, azt, ezt) takes the definite conjugation: olvasom a könyvet.') },
+  indefinite: { why: tk('An indefinite object (egy …-t) takes the indefinite conjugation: olvasok egy könyvet.') }
+};
+// What the dictionary says of each word (its lemmas, and which are verbs),
+// for the hints that need to know a verb from a noun. Asked once per word.
+const morphCache = new Map();
+async function grammarMorph(el) {
+  if (typeof NeoGrammarHu === 'undefined' || !/^hu\b/.test(writingLanguage()) || !window.neo.spellMorph) return null;
+  const words = new Set();
+  for (const w of (el.textContent || '').match(/[\p{L}\p{M}]+(?:-[\p{L}\p{M}]+)*/gu) || []) {
+    if (!morphCache.has(w)) words.add(w);
+  }
+  if (words.size) {
+    try {
+      const res = await window.neo.spellMorph([...words]);
+      for (const w of words) morphCache.set(w, (res && res[w]) || null);
+    } catch { return null; }
+  }
+  return (w) => morphCache.get(w) || null;
+}
+function grammarHints(el, morph) {
+  const out = [];
+  if (typeof NeoGrammarHu === 'undefined' || !/^hu\b/.test(writingLanguage())) return out;
+  if (typeof el.querySelectorAll !== 'function') return out;
+  for (const p of el.querySelectorAll('p:not(.poetry):not(.scene-break):not(.ghost)')) {
+    const segs = [];
+    let text = '';
+    const w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = w.nextNode())) {
+      if (n.parentElement && n.parentElement.closest('.ghost, .ph-mark')) continue;
+      segs.push({ node: n, at: text.length });
+      text += n.data;
+    }
+    const point = (i, end) => {
+      let s = segs[0];
+      for (const g of segs) if (g.at < i || (!end && g.at === i)) s = g; else break;
+      return [s.node, Math.min(i - s.at, s.node.length)];
+    };
+    for (const h of NeoGrammarHu.check(text, morph || undefined)) {
+      try {
+        const r = new Range();
+        r.setStart(...point(h.at, false));
+        r.setEnd(...point(h.at + h.len, true));
+        let insertAt = null;
+        if (h.insert) {
+          insertAt = new Range();
+          insertAt.setStart(...point(h.insert.at, true));
+          insertAt.collapse(true);
+        }
+        out.push({ range: r, fix: h.fix, rule: h.rule, insertAt, insertText: h.insert ? h.insert.text : '' });
+      } catch { /* changed underneath us */ }
+    }
+  }
+  return out;
 }
 
 // Capitals the dictionary can't see, since it takes any word in lowercase:
@@ -11187,6 +11280,9 @@ function rebuildSpellHighlight() {
   const hl = new Highlight();
   for (const list of spellRanges.values()) for (const r of list) hl.add(r);
   CSS.highlights.set('neo-spell', hl);
+  const gh = new Highlight();
+  for (const list of grammarRanges.values()) for (const h of list) gh.add(h.range);
+  CSS.highlights.set('neo-grammar', gh);
 }
 
 function scanSpellingIn(el, key) {
@@ -11215,11 +11311,14 @@ function toggleSpellcheck() {
     spellScanned = new Set();
     spellRanges = new Map();
     capsRanges.clear();
+    grammarRanges.clear();
     scanSpellingHere();
   } else {
     CSS.highlights.delete('neo-spell');
+    CSS.highlights.delete('neo-grammar');
     spellRanges = new Map();
     capsRanges.clear();
+    grammarRanges.clear();
     document.querySelector('.spell-menu')?.remove();
   }
   toast(spellOn ? t('Spellcheck on') : t('Spellcheck off'));
@@ -11230,7 +11329,7 @@ function toggleSpellcheck() {
 const SPELL_LANGUAGE_NAMES = {
   'en-US': t('US English'), 'en-GB': t('UK English'), 'en-CA': t('Canadian English'),
   'en-AU': t('Australian English'), fr: t('French'), es: t('Spanish'), de: t('German'),
-  nl: t('Dutch'), pl: t('Polish'), 'pt-BR': t('Brazilian Portuguese'), ro: t('Romanian'), ru: t('Russian')
+  nl: t('Dutch'), pl: t('Polish'), 'pt-BR': t('Brazilian Portuguese'), ro: t('Romanian'), ru: t('Russian'), hu: t('Hungarian')
 };
 async function changeSpellLanguage(code) {
   const ok = await window.neo.setSpellLanguage(code);
@@ -11238,11 +11337,14 @@ async function changeSpellLanguage(code) {
   library.spellLanguage = code;
   await writeLibrary(library);
   spellCache.clear();
+  morphCache.clear();
   if (spellOn) {
     spellScanned = new Set();
     spellRanges = new Map();
     capsRanges.clear();
+    grammarRanges.clear();
     CSS.highlights.delete('neo-spell');
+    CSS.highlights.delete('neo-grammar');
     scanSpellingHere();
   }
   toast(t('Spellcheck: {lang}', { lang: SPELL_LANGUAGE_NAMES[code] || code }));
@@ -11257,6 +11359,32 @@ document.addEventListener('contextmenu', async (e) => {
   if (!pos || pos.startContainer.nodeType !== Node.TEXT_NODE) return;
   const node = pos.startContainer;
   const text = node.data;
+  // a grammar hint: its fix, why, and a way to leave it be
+  for (const [key, list] of grammarRanges) {
+    const hit = list.find((h) => h.range.startContainer.isConnected && h.range.isPointInRange(node, pos.startOffset));
+    if (!hit) continue;
+    e.preventDefault();
+    const rule = GRAMMAR_RULES[hit.rule] || {};
+    const shown = hit.range.toString();
+    const label = hit.fix == null ? null : rule.label ? t(rule.label) : hit.fix.trim();
+    showSpellMenu(e.clientX, e.clientY, shown, label == null ? [] : [label], {
+      note: rule.why ? t(rule.why) : '',
+      replace: () => {
+        const sel = window.getSelection();
+        editor.focus({ preventScroll: true });
+        sel.removeAllRanges(); sel.addRange(hit.insertAt || hit.range);
+        if (hit.insertAt) document.execCommand('insertText', false, hit.insertText);
+        else if (hit.fix) document.execCommand('insertText', false, hit.fix);
+        else document.execCommand('delete');
+        spellScanEl(spellElFor(key), key);
+      },
+      ignore: () => {
+        grammarRanges.set(key, list.filter((h) => h !== hit));
+        rebuildSpellHighlight();
+      }
+    });
+    return;
+  }
   // a capital slip (see capitalSlips): the letter's capital, and nothing to learn
   let ws = pos.startOffset;
   while (ws > 0 && /[\p{L}\p{M}]/u.test(text[ws - 1])) ws--;
@@ -11329,6 +11457,12 @@ function showSpellMenu(x, y, word, suggestions, actions) {
   document.querySelector('.spell-menu')?.remove();
   const menu = document.createElement('div');
   menu.className = 'spell-menu';
+  if (actions.note) {
+    const note = document.createElement('div');
+    note.className = 'sm-note';
+    note.textContent = actions.note;
+    menu.appendChild(note);
+  }
   if (suggestions.length) {
     for (const s of suggestions) {
       const btn = document.createElement('button');
@@ -11350,6 +11484,15 @@ function showSpellMenu(x, y, word, suggestions, actions) {
     learn.textContent = t('Add “{word}” to dictionary', { word });
     learn.onclick = () => { menu.remove(); actions.learn(); };
     menu.appendChild(learn);
+  }
+  if (actions.ignore) {
+    const sep = document.createElement('div');
+    sep.className = 'sm-sep';
+    menu.appendChild(sep);
+    const ignore = document.createElement('button');
+    ignore.textContent = t('Ignore');
+    ignore.onclick = () => { menu.remove(); actions.ignore(); };
+    menu.appendChild(ignore);
   }
   document.body.appendChild(menu);
   const r = menu.getBoundingClientRect();

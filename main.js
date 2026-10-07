@@ -1225,12 +1225,15 @@ const CHAPTER_WORDS = new RegExp('^(' + [
   'глава', 'пролог', 'эпилог', 'часть',                            // ru
   'κεφάλαιο', 'κεφαλαιο', 'πρόλογος', 'προλογος',
   'επίλογος', 'επιλογος', 'μέρος', 'μερος',
-  'ραψωδία', 'ραψωδια'                                              // el
+  'ραψωδία', 'ραψωδια',                                             // el
+  // hu: the number comes first ("3. fejezet", "II. rész")
+  'prológus', 'prologus', 'epilógus', 'epilogus',
+  '(?:\\d{1,3}|[ivxlc]{1,7})\\.\\s*(?:fejezet|rész|resz)'
 ].join('|') + ')(?![\\p{L}\\d])', 'iu');
 
 // A manuscript's own Prologue / Epilogue headings give those chapters their role
-const PROLOGUE_WORDS = /^(prologue|prólogo|prologo|prolog|proloog)(?![\p{L}\d])/iu;
-const EPILOGUE_WORDS = /^(epilogue|épilogue|epílogo|epilogo|epilog|epiloog)(?![\p{L}\d])/iu;
+const PROLOGUE_WORDS = /^(prologue|prólogo|prologo|prolog|proloog|prológus|prologus)(?![\p{L}\d])/iu;
+const EPILOGUE_WORDS = /^(epilogue|épilogue|epílogo|epilogo|epilog|epiloog|epilógus|epilogus)(?![\p{L}\d])/iu;
 
 // A text file in whatever it was saved as: UTF-8 (with or without its
 // mark), UTF-16 (Notepad's "Unicode"), or, when it isn't valid UTF-8, the
@@ -1675,6 +1678,7 @@ const SPELL_LANGUAGES = {
   'pl': { label: 'Polski', pkg: 'dictionary-pl' },
   'pt-BR': { label: 'Português (Brasil)', pkg: 'dictionary-pt' },
   'ro': { label: 'Română', pkg: 'dictionary-ro' },
+  'hu': { label: 'Magyar', pkg: 'dictionary-hu' },
   'ru': { label: 'Русский', pkg: 'dictionary-ru' },
   'el': { label: 'Ελληνικά', pkg: 'dictionary-el' }
 };
@@ -1783,6 +1787,12 @@ ipcMain.handle('spell:check', async (_e, words) => {
 ipcMain.handle('spell:suggest', async (_e, word) => {
   const res = await spellRequest({ type: 'suggest', word });
   return res.ok ? res.result : [];
+});
+
+// the grammar hints' view of a word: its dictionary forms, and which are verbs
+ipcMain.handle('spell:morph', async (_e, words) => {
+  const res = await spellRequest({ type: 'morph', words: Array.isArray(words) ? words.slice(0, 2000) : [] });
+  return res.ok ? res.result : {};
 });
 
 ipcMain.handle('spell:learn', async (_e, word) => {

@@ -28,6 +28,20 @@ function correct(word) {
   return spell.hunspell.spell(normalizeWord(word));
 }
 
+// A verb's dictionary form is its third person singular (olvas, eszik,
+// megy). Most make their infinitive with -ni (olvasni, enni from eszik is
+// irregular, so those few are named).
+const IRREGULAR_VERBS = new Set([
+  'van', 'megy', 'jön', 'lesz', 'tesz', 'vesz', 'visz', 'hisz', 'eszik', 'iszik',
+  'alszik', 'fekszik', 'nő', 'sző', 'fő', 'lő', 'ró', 'nyű', 'hí', 'mos'
+]);
+function isVerb(lemma) {
+  if (!spell || !lemma) return false;
+  if (IRREGULAR_VERBS.has(lemma)) return true;
+  const base = lemma.endsWith('ik') ? lemma.slice(0, -2) : lemma;
+  return base.length > 1 && ['ni', 'ani', 'eni'].some((end) => spell.hunspell.spell(base + end));
+}
+
 async function load(msg) {
   if (!factory) factory = await loadModule();
   const aff = fs.readFileSync(path.join(msg.dir, 'index.aff'));
@@ -71,6 +85,17 @@ async function handle(msg) {
       reply(msg, { ok: true, result: out });
     } else if (msg.type === 'suggest') {
       reply(msg, { ok: true, result: spell && msg.word ? spell.hunspell.suggest(normalizeWord(msg.word)).slice(0, 6) : [] });
+    } else if (msg.type === 'morph') {
+      // for the grammar hints: each word's dictionary forms (lemmas), and
+      // which of them are verbs
+      const out = {};
+      for (const word of msg.words || []) {
+        if (!spell || typeof word !== 'string' || !word) continue;
+        const w = normalizeWord(word);
+        const lemmas = spell.hunspell.spell(w) ? spell.hunspell.stem(w) : [];
+        out[word] = { lemmas, verbs: lemmas.map(isVerb) };
+      }
+      reply(msg, { ok: true, result: out });
     } else if (msg.type === 'add') {
       if (spell && typeof msg.word === 'string' && msg.word) spell.hunspell.addWord(normalizeWord(msg.word));
       reply(msg, { ok: true });
