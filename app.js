@@ -180,6 +180,8 @@ function setChapterKind(chId, kind) {
 }
 
 const isUntitled = (s) => !s || s === 'Untitled' || s === t('Untitled');
+// a title as the writer reads it: the untitled default in the current language
+const shownTitle = (s) => (isUntitled(s) ? t('Untitled') : s);
 
 // ---------- state ----------
 let library = null;          // library.json
@@ -1860,8 +1862,8 @@ function bookTile(meta, opts = {}) {
     bar.firstElementChild.style.width = pct + '%';
   }
   el.title = meta.wordGoal
-    ? t('{title} — {count} / {goal} words', { title: meta.title, count: meta.wordCount || 0, goal: meta.wordGoal })
-    : meta.title;
+    ? t('{title} — {count} / {goal} words', { title: shownTitle(meta.title), count: meta.wordCount || 0, goal: meta.wordGoal })
+    : shownTitle(meta.title);
   el.onclick = () => (opts.cover ? openTitlePage(opts.cover, meta) : openBook(meta.id));
   pressable(el, [el.title, meta.author ? t('by {author}', { author: meta.author }) : ''].filter(Boolean).join(', '));
   const refresh = el.querySelector('.b-refresh');
@@ -1932,7 +1934,7 @@ function bookTile(meta, opts = {}) {
     if (NO_HOVER || window.Capacitor) {
       // a touch screen: the larger cards, each saying what it does
       const options = [];
-      if (startPart) options.push({ label: t('Start a part here'), desc: t('A part page goes in before “{title}”.', { title: escHtml(meta.title) }), value: 'part' });
+      if (startPart) options.push({ label: t('Start a part here'), desc: t('A part page goes in before “{title}”.', { title: escHtml(shownTitle(meta.title)) }), value: 'part' });
       options.push(window.Capacitor
         ? { label: t('Export…'), desc: script ? t('PDF, Fountain or Final Draft, through the share sheet.') : t('Text, Markdown, HTML, PDF, Word or EPUB, through the share sheet.'), value: 'export' }
         : { label: t('Export…'), value: 'export' });
@@ -1943,7 +1945,7 @@ function bookTile(meta, opts = {}) {
         { label: t('Remove from bookshelf'), desc: t('Takes it off your shelves. The files stay safe in your NEO Library folder on disk.'), value: 'remove' },
         { label: trashLabel, desc: window.Capacitor ? t('Moves the book folder to Deleted Books in your NEO Library, where you can recover it.') : t('Sends the book folder to your system trash, where you can recover it.'), danger: true, value: 'trash' }
       );
-      choice = await optionModal(`“${escHtml(meta.title)}”`, null, options);
+      choice = await optionModal(t('“{title}”', { title: escHtml(shownTitle(meta.title)) }), null, options);
       if (choice === 'coverMenu') choice = await optionModal(t('Cover'), null, coverItems.filter((x) => x !== '-'));
     } else {
       // the desktop: a small menu at the pointer, the cover's choices one level in
@@ -1956,7 +1958,7 @@ function bookTile(meta, opts = {}) {
       items.push('-', { label: t('Remove from bookshelf'), value: 'remove' }, { label: trashLabel, value: 'trash', danger: true });
       const x = e.clientX;
       const y = e.clientY;
-      choice = await popMenu(x, y, items, { title: meta.title, from: el });
+      choice = await popMenu(x, y, items, { title: shownTitle(meta.title), from: el });
       if (choice === 'coverMenu') choice = await popMenu(x, y, coverItems, { title: t('Cover'), from: el });
     }
     if (choice === 'part') {
@@ -1966,7 +1968,7 @@ function bookTile(meta, opts = {}) {
     } else if (choice === 'refresh') {
       await refreshCover(meta, el);
     } else if (choice === 'export' && script) {
-      const fmt = await optionModal(t('Export “{title}”', { title: escHtml(meta.title) }), null, [
+      const fmt = await optionModal(t('Export “{title}”', { title: escHtml(shownTitle(meta.title)) }), null, [
         { label: 'PDF (.pdf)', value: 'pdf' },
         { label: 'Fountain (.fountain)', value: 'fountain' }, { label: 'Final Draft (.fdx)', value: 'fdx' }
       ]);
@@ -1974,7 +1976,7 @@ function bookTile(meta, opts = {}) {
       await openBook(meta.id);
       await doExport(fmt);
     } else if (choice === 'export') {
-      const fmt = await optionModal(t('Export “{title}”', { title: escHtml(meta.title) }), null, [
+      const fmt = await optionModal(t('Export “{title}”', { title: escHtml(shownTitle(meta.title)) }), null, [
         { label: t('Text (.txt)'), value: 'txt' }, { label: t('Markdown (.md)'), value: 'md' }, { label: t('HTML (.html)'), value: 'html' },
         { label: 'PDF (.pdf)', value: 'pdf' },
         { label: t('Word (.docx)'), value: 'docx' }, { label: t('EPUB (.epub)'), value: 'epub' },
@@ -2007,7 +2009,7 @@ function bookTile(meta, opts = {}) {
       await writeBookMeta(meta.id, meta);
       renderShelves();
     } else if (choice === 'goal') {
-      const goal = await askInput(t('Word count goal for “{title}”', { title: escHtml(meta.title) }), t('e.g. 80000 — blank removes the goal'),
+      const goal = await askInput(t('Word count goal for “{title}”', { title: escHtml(shownTitle(meta.title)) }), t('e.g. 80000 — blank removes the goal'),
         meta.wordGoal ? String(meta.wordGoal) : '');
       if (goal === null) return;
       meta.wordGoal = parseInt(goal, 10) || 0;
@@ -2017,7 +2019,7 @@ function bookTile(meta, opts = {}) {
       for (const s of library.shelves) s.bookIds = s.bookIds.filter((b) => b !== meta.id);
       await writeLibrary(library);
       renderShelves();
-      toast(t('“{title}” removed from the shelves — its files are still in your NEO Library', { title: meta.title }));
+      toast(t('“{title}” removed from the shelves — its files are still in your NEO Library', { title: shownTitle(meta.title) }));
     } else if (choice === 'trash') {
       const ok = await window.neo.deleteBook(meta.id, meta.title);
       if (ok) {
@@ -2189,7 +2191,7 @@ async function refreshCover(meta, el) {
       : { label: t('Paint a cover from the text'), desc: t('Once the story passes {n} words.', { n: PAINT_AT }), value: 'nope' });
   }
   // a plain abstract with nothing else to offer just re-rolls
-  const choice = options.length === 1 ? 'reroll' : await optionModal(t('Cover for “{title}”', { title: escHtml(meta.title) }), null, options);
+  const choice = options.length === 1 ? 'reroll' : await optionModal(t('Cover for “{title}”', { title: escHtml(shownTitle(meta.title)) }), null, options);
   if (!choice || choice === 'nope') return;
   const live = (book && book.id === meta.id) ? book : meta;
   if (choice === 'paint') {
@@ -2357,7 +2359,7 @@ async function moveBookToAuthor(bookId, authorId) {
   await writeBookMeta(bookId, meta);
   await writeLibrary(library);
   renderShelves();
-  toast(t('“{title}” now sits on {name}’s top shelf — Esc puts it back', { title: meta.title, name: target.name }), 6000);
+  toast(t('“{title}” now sits on {name}’s top shelf — Esc puts it back', { title: shownTitle(meta.title), name: target.name }), 6000);
 }
 async function undoShelfMove() {
   const m = lastShelfMove;
@@ -2370,7 +2372,7 @@ async function undoShelfMove() {
   if (meta) { meta.author = m.author; await writeBookMeta(m.bookId, meta); }
   await writeLibrary(library);
   renderShelves();
-  toast(t('“{title}” is back where it was', { title: m.title }));
+  toast(t('“{title}” is back where it was', { title: shownTitle(m.title) }));
   return true;
 }
 document.addEventListener('keydown', (e) => {
@@ -2625,7 +2627,7 @@ function renderChapters() {
     // screen readers name each chapter by its heading (a lone chapter by the book)
     body.setAttribute('role', 'textbox');
     body.setAttribute('aria-multiline', 'true');
-    if (chId === solo) body.setAttribute('aria-label', book.title || t('The story'));
+    if (chId === solo) body.setAttribute('aria-label', book.title ? shownTitle(book.title) : t('The story'));
     else body.setAttribute('aria-labelledby', head.id);
     body.spellcheck = false; // NEO runs its own spellcheck pass
     if (!story) body.classList.add('no-cap');
@@ -7143,7 +7145,7 @@ function renderNav() {
     item.innerHTML = `<div class="n-row" title="${t('Drag to reorder chapters')}"><span class="n-label"></span>
       <span style="display:flex;align-items:center">${story ? `<span class="n-words">${fmtNum(words)}</span>` : ''}${flagged ? `<span class="n-flag" title="${t('Unresolved placeholder')}"></span>` : ''}</span></div>`;
     item.querySelector('.n-label').textContent = chId === solo
-      ? (book.title || t('The story'))
+      ? (book.title ? shownTitle(book.title) : t('The story'))
       : (chTitle ? `${chapterMark(chId)} · ${chTitle}` : chapterName(chId));
 
     // the row is the drag handle, so the note below stays freely editable
@@ -12703,7 +12705,7 @@ function openStats() {
   bd.className = 'modal-backdrop';
   bd.innerHTML = `
     <div class="modal" style="width:${hasBook ? 580 : 380}px">
-      <h2 style="font-size:17px">${hasBook ? t('{title} — progress', { title: escHtml(book.title) }) : t('Goals')}</h2>
+      <h2 style="font-size:17px">${hasBook ? t('{title} — progress', { title: escHtml(shownTitle(book.title)) }) : t('Goals')}</h2>
       ${hasBook ? `
       <div class="stats-nums">
         <div><div class="big">${fmtNum(total)}</div><div class="lbl">${t('total words')}</div></div>
@@ -14790,9 +14792,9 @@ async function doEmailDraft() {
     if (!ok) return;
   }
   const total = bookWordCount();
-  const subject = t('NEO draft — {title} — {n} words — {date}', { title: book.title, n: total, date: fmtDate(new Date()) });
+  const subject = t('NEO draft — {title} — {n} words — {date}', { title: shownTitle(book.title), n: total, date: fmtDate(new Date()) });
   const hash = await manuscriptHash();
-  const body = t('Draft snapshot of “{title}” — {n} words.', { title: book.title, n: total }) + '\n'
+  const body = t('Draft snapshot of “{title}” — {n} words.', { title: shownTitle(book.title), n: total }) + '\n'
     + t('Sent from NEO on {date}.', { date: new Date().toLocaleString(NeoI18n.getLocale()) }) + '\n\n'
     + t('SHA-256 fingerprint of the manuscript text:') + `\n${hash}\n\n`
     + (library.emailMethod === 'gmail'

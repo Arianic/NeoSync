@@ -150,7 +150,7 @@ node scripts/i18n.js template
 node scripts/i18n.js check fr
 ```
 
-`scripts/i18n.js` only scans `app.js`, `main.js`, `covers.js`, and `index.html`. A new string in another file will not enter the template until that list includes it.
+`scripts/i18n.js` only scans `app.js`, `main.js`, `covers.js`, `index.html`, and Pocket's own `pocket/www/index.html` and `pocket/www/pocket-bridge.js`. A new string in another file will not enter the template until that list includes it. Pocket's page marks its words with the same `data-i18n*` attributes as the desktop's, and its ⋯ sheet and bridge use `t()`.
 
 Details, plural forms, and regional fallback (`fr-CA` → `fr` → English) are in [TRANSLATING.md](TRANSLATING.md). Quotation marks follow the spellcheck language (`QUOTE_STYLES` in `app.js`). Import chapter detection is `CHAPTER_WORDS` in `main.js`. Cover small-words are `CONNECTORS` in `covers.js`.
 
