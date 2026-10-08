@@ -101,6 +101,15 @@ function chapterName(chId, meta = book) {
   if (k === 'unnumbered') return ((meta.chapterTitles || {})[chId] || '').trim() || t('Untitled');
   return kindName(k);
 }
+// the chapter a note sits in, for the notes pane: its name, or for an
+// unnumbered chapter with no title (whose name would be Untitled), its
+// opening words (#346)
+function stickyChapterLabel(chId) {
+  if (chapterKind(chId) !== 'unnumbered' || ((book.chapterTitles || {})[chId] || '').trim()) return chapterName(chId);
+  const words = chapterText(chId).replace(/\s+/g, ' ').trim();
+  if (!words) return t('Untitled');
+  return words.length > 32 ? words.slice(0, 30).replace(/\s+\S*$/, '') + '…' : words;
+}
 // a chapter's heading as the reader sees it: its name, then any title —
 // once, for an unnumbered chapter, whose name is its title
 // The dash between a chapter's number and its title follows the book's
@@ -2460,6 +2469,7 @@ $('#author-chip').onclick = async () => {
 
 let openGeneration = 0;
 async function openBook(bookId) {
+  diskWordsAt = Date.now();
   // a book being exported from the shelf finishes first (it borrows the
   // open book's place for the moment it takes)
   while (shelfExport) await new Promise((r) => setTimeout(r, 50));
@@ -6968,7 +6978,7 @@ function renderStickies() {
     el.className = 'sticky unresolved';
     el.dataset.sid = s.id;
     el.innerHTML = `
-      <div class="s-ch">${chIdx >= 0 ? chapterName(s.chapterId) : t('Unplaced')}</div>
+      <div class="s-ch">${chIdx >= 0 ? escHtml(stickyChapterLabel(s.chapterId)) : t('Unplaced')}</div>
       <textarea placeholder="${t('What needs doing here?')}" spellcheck="false"></textarea>
       <div class="s-actions"><button class="s-go">${t('Go to')}</button><span class="s-sep">·</span><button class="s-done">${t('Resolve')}</button></div>`;
     const ta = el.querySelector('textarea');
@@ -10534,6 +10544,7 @@ function updateCounters() {
     return;
   }
   const total = bookWordCount();
+  const known = book.wordCount; // the count before this one (trackDailyWords)
   const wc = $('#word-counter');
   if (isScript()) spCounters();
   else updateBookCounters(total, wc);
@@ -10548,7 +10559,7 @@ function updateCounters() {
       requestPaint(book, bookPlainText());
     }
   }
-  trackDailyWords(total);
+  trackDailyWords(total, known);
 }
 function updateBookCounters(total, wc) {
   if (wordMode === 'book') setText(wc, t('{n} words', { n: total }));
@@ -10583,9 +10594,16 @@ function writingDay(d = new Date()) {
 }
 const todayStr = () => writingDay();
 
-function trackDailyWords(total) {
+// when the text last came in from disk (a book opening, another device's
+// changes adopted): a drop then isn't the writer cutting (#345)
+let diskWordsAt = 0;
+function trackDailyWords(total, known = book.wordCount) {
   book.dailyCounts = book.dailyCounts || {};
   const today = todayStr();
+  // a book that reads as empty for a moment (its chapters still coming in,
+  // or a synced folder still downloading them) must not set the day's start:
+  // from zero, "today" would count the whole book (#345)
+  if (!total && (known || 0) > 0) return;
   if (!book.dailyCounts[today]) {
     book.dailyCounts[today] = { start: total, end: total };
     scheduleMetaSave();
@@ -10596,13 +10614,13 @@ function trackDailyWords(total) {
   // day's start down with them, so today never reads below zero, and what's
   // written after the cut counts in full. (Cut what you wrote today, and
   // today is smaller: that part is honest.)
-  if (total < book.dailyCounts[today].start) {
+  if (total < book.dailyCounts[today].start && Date.now() - diskWordsAt > 3000) {
     book.dailyCounts[today].start = total;
     scheduleMetaSave();
   }
   if (sprint && sprint.bookId !== book.id) sprint = null; // a sprint belongs to the book it began in
   if (sprint && total < sprint.startCount) sprint.startCount = total;
-  const wordsToday = book.dailyCounts[today].end - book.dailyCounts[today].start;
+  const wordsToday = Math.max(0, book.dailyCounts[today].end - book.dailyCounts[today].start);
   const gc = $('#goal-counter');
   if (sprint && !sprint.done) {
     const sprintWords = total - sprint.startCount;
@@ -10912,6 +10930,7 @@ let refreshing = false;
 async function refreshFromDisk() {
   if (refreshing || shelfExport) return;
   refreshing = true;
+  diskWordsAt = Date.now();
   bookMetaCache.clear(); // whatever another device wrote, the next redraw reads
   try {
     if (!book) {
@@ -11130,6 +11149,7 @@ async function refreshFromDisk() {
   } catch (err) {
     console.error(err);
   } finally {
+    diskWordsAt = Date.now();
     refreshing = false;
   }
 }
@@ -11609,7 +11629,7 @@ document.addEventListener('keydown', (e) => {
   const cmd = e.metaKey || e.ctrlKey;
   // on Linux, Ctrl+Shift+U belongs to the input method (it types a Unicode
   // character by its code), so Read Aloud there is Ctrl+Shift+K (#287)
-  if (cmd && e.shiftKey && !e.altKey && (e.code === 'KeyU' || (IS_LINUX && e.code === 'KeyK'))) {
+  if (cmd && e.shiftKey && !e.altKey && e.code === (IS_LINUX ? 'KeyK' : 'KeyU')) {
     if (!book || $('#editor-view').hidden) return;
     e.preventDefault();
     e.stopPropagation();
