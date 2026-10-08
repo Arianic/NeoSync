@@ -716,6 +716,7 @@ function coverUrl(meta) {
 
 async function loadLibrary() {
   libraryDirPath = await window.neo.libraryPath();
+  applyShelfZoom();
   library = applyDeviceLook(await window.neo.readLibrary());
   // A first shelf is named in the language NEO had when it was made. If the
   // writer never renamed it, it follows a change of language.
@@ -4008,7 +4009,7 @@ function captureBody(body) {
   // after a scene break, for the screen only)
   // (and a script's page breaks, (CONT'D) and suggestions)
   return dropJunkSpans(body.innerHTML).replace(/<(b|i|em|strong|u|s|strike|sub|sup)\s+style="[^"]*"/g, '<$1').replace(/<p\b[^>]*>/g, (tag) => tag.replace(/ data-(?:attr|speech|first|walk)=""/g, '')
-    .replace(/ data-(?:pg|fill|contd|ghost|ghost-empty|sp-paste)(?:="[^"]*")?/g, ''));
+    .replace(/ data-(?:pg|fill|contd|ghost|ghost-empty|sp-paste|scene-note)(?:="[^"]*")?/g, ''));
 }
 
 // The engine's style spans (stripJunkSpans), left out of what's saved. A
@@ -5788,7 +5789,7 @@ const SP_NAMES = {
 };
 const spKey = (n) => K('⌘' + n, 'Ctrl+' + n);
 // the screen's own marks on a script's lines, never saved
-const SP_SCREEN_ATTRS = ['data-pg', 'data-fill', 'data-contd', 'data-ghost', 'data-ghost-empty'];
+const SP_SCREEN_ATTRS = ['data-pg', 'data-fill', 'data-contd', 'data-ghost', 'data-ghost-empty', 'data-scene-note'];
 // characters NEO guessed from a line in capitals, and headings it made of
 // INT./EXT.: either goes back to action when the guess turns out wrong
 const spGuessed = new WeakSet();
@@ -6096,8 +6097,38 @@ function scriptInput(body) {
   spShowElement();
 }
 
+// ---- a scene's card note, in gray on its empty first line ----
+// The way a book's section notes stand on the page until written over: a
+// scene with nothing written under its heading yet shows its note there,
+// gone at the first letter typed. A screen mark (data-scene-note), never
+// saved, and nothing Enter takes. (#339)
+function spSceneNoteGhosts(ps, lines) {
+  const notes = book.sceneNotes || {};
+  const want = new Map();
+  for (let i = 0; i < ps.length; i++) {
+    if (lines[i].type !== 'heading') continue;
+    const note = ps[i].dataset.sceneId && notes[ps[i].dataset.sceneId];
+    if (!note) continue;
+    let j = i + 1;
+    let blank = null;
+    let written = false;
+    for (; j < ps.length && lines[j].type !== 'heading'; j++) {
+      if (ps[j].textContent.trim()) { written = true; break; }
+      if (!blank) blank = ps[j];
+    }
+    if (!written && blank) want.set(blank, note);
+  }
+  for (const p of ps) {
+    const note = want.get(p) || null;
+    if (p.getAttribute('data-scene-note') !== note) { if (note) p.setAttribute('data-scene-note', note); else p.removeAttribute('data-scene-note'); }
+  }
+}
+
 // ---- the gray suggestion at the caret ----
 function spRefreshGhost() {
+  // a scene note on the line being typed on goes the moment it has words
+  const at = spCaretPara();
+  if (at && at.hasAttribute('data-scene-note') && at.textContent.trim()) at.removeAttribute('data-scene-note');
   const p = spCaretPara();
   let ghost = '';
   if (p && document.activeElement === spBodyOf(p) && ['character', 'heading', 'transition'].includes(spType(p)) && spCaretAtEnd(p) && spDismissed.get(p) !== p.textContent) {
@@ -6173,6 +6204,7 @@ function spRepaginate() {
     const fill = a.brk ? String(Math.min(SP_LINES_PER_PAGE, a.fill)) : null;
     if (p.getAttribute('data-fill') !== fill) { if (fill) p.setAttribute('data-fill', fill); else p.removeAttribute('data-fill'); }
   });
+  spSceneNoteGhosts(ps, lines);
   const chapters = $('#chapters');
   chapters.style.setProperty('--sp-last', String(Math.max(0, SP_LINES_PER_PAGE - pg.used)));
   if (narrow) chapters.style.setProperty('--sp-fullw', chapters.clientWidth + 'px');
@@ -7743,6 +7775,7 @@ function switchTab(name) {
   closeCardEditor();
   auxLoad++;
   $('#editor-view').classList.remove('board-on');
+  updateZoomDisplay(); // the page's own zoom, not the cards' (#336)
   sidePaneForTab(name);
   const scroller = $('#paper-scroll');
   if (book && currentTab && currentTab !== name) {
@@ -8296,6 +8329,27 @@ function applyPageZoom() {
 }
 
 function cardZoom() { return readStoredZoom(CARD_ZOOM_KEY, library.cardZoom || 1, CARD_ZOOM_RANGE); }
+
+// The shelf has a size of its own (#336): bigger covers without the page's
+// type growing. ⌘+ and ⌘− (Ctrl), a pinch or Ctrl-scroll, and ⌘0 on the
+// shelf, in steps of a tenth, kept on this device.
+const SHELF_ZOOM_KEY = 'neo.shelfZoom';
+const SHELF_ZOOM_RANGE = { min: 0.8, max: 2 };
+const shelfZoom = () => readStoredZoom(SHELF_ZOOM_KEY, 1, SHELF_ZOOM_RANGE);
+const shelfShowing = () => !$('#bookshelf-view').hidden;
+function applyShelfZoom() {
+  const z = shelfZoom();
+  document.documentElement.style.setProperty('--shelf-zoom', z);
+}
+function stepShelfZoom(dir) {
+  const now = shelfZoom();
+  const next = dir === 0 ? 1 : Math.min(SHELF_ZOOM_RANGE.max, Math.max(SHELF_ZOOM_RANGE.min, Math.round((now + dir * 0.1) * 10) / 10));
+  if (next === now) return;
+  rememberZoom(SHELF_ZOOM_KEY, next);
+  applyShelfZoom();
+}
+// a page zoom moves in tenths, so it reads 110%, 120%, never 121%
+const tenth = (z) => Math.round(z * 10) / 10;
 const CARD_ZOOMS = [0.55, 0.7, 0.85, 1, 1.15, 1.3, 1.5];
 function stepCardZoom(dir) {
   const now = cardZoom();
@@ -8670,7 +8724,9 @@ function openCard(cell, { fresh = false } = {}) {
     tools.appendChild(more);
   }
   const tip = document.createElement('span');
-  tip.textContent = t('Enter: done · Tab: next card · {key}: new card', { key: K('⌥Enter', 'Alt+Enter') });
+  tip.textContent = fresh && cell.dataset.kind !== 'loose'
+    ? t('Enter: another new card · Enter on an empty card, or Esc: done')
+    : t('Enter: done · Tab: next card · {key}: new card', { key: K('⌥Enter', 'Alt+Enter') });
   tools.appendChild(tip);
   cell.querySelector('.ob-card').appendChild(tools);
   cardEditor = { cell, text, slug, before: note, slugBefore: slug ? slug.textContent : null, fresh };
@@ -8678,7 +8734,11 @@ function openCard(cell, { fresh = false } = {}) {
   text.addEventListener('blur', cardBlur);
   text.addEventListener('paste', (e) => {
     e.preventDefault();
-    document.execCommand('insertText', false, (e.clipboardData.getData('text/plain') || '').replace(/\s+/g, ' '));
+    const raw = e.clipboardData.getData('text/plain') || '';
+    const items = outlineLines(raw);
+    // a list (from Word, Obsidian, a notes app): one card per line (#348)
+    if (items.length > 1) { pasteOutline(items); return; }
+    document.execCommand('insertText', false, raw.replace(/\s+/g, ' '));
   });
   const first = slug && fresh ? slug : text;
   first.focus();
@@ -8826,6 +8886,15 @@ function cardKeys(e) {
     return;
   }
   if (e.isComposing || e.keyCode === 229) return;
+  // Enter on a new card with words on it: on to another new card, so an
+  // outline can be typed straight through; Enter on an empty one stops
+  // there (the way a list's empty bullet does), and so does Esc (#334)
+  if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && ed.fresh &&
+      cell.dataset.kind !== 'loose' && (text.textContent.trim() || (ed.slug && ed.slug.textContent.trim()))) {
+    e.preventDefault();
+    newCardAfter(cell);
+    return;
+  }
   // Enter: the card is done (and stays where the keyboard is)
   if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
     e.preventDefault();
@@ -8878,6 +8947,52 @@ function cardKeys(e) {
       cardEditor = null;
       deleteSectionNote(chId, cell.dataset.sec);
     }
+  }
+}
+
+// A pasted list, one item a line: bullets (-, *, •), numbers (1. 2)) and
+// letters (a.) come off, blank lines go. A line indented more than the
+// list's least indented ones is a level down. (#348)
+function outlineLines(raw) {
+  const items = [];
+  for (const line of String(raw).replace(/\r\n?/g, '\n').split('\n')) {
+    const m = /^([ \t]*)(?:[-*+•◦▪‣·–—]\s+|\d{1,3}[.)]\s+|[a-zA-Z][.)]\s+)?(.*)$/.exec(line);
+    const words = (m ? m[2] : line).replace(/\s+/g, ' ').trim();
+    if (!words) continue;
+    items.push({ indent: (m ? m[1] : '').replace(/\t/g, '    ').length, text: words });
+  }
+  const least = items.length ? Math.min(...items.map((x) => x.indent)) : 0;
+  for (const x of items) x.level = x.indent > least ? 1 : 0;
+  return items;
+}
+
+// The list's first line goes on the open card, and each line after it on a
+// new card of its own, as if typed with Enter. On a chapter card the top
+// lines are chapters and the indented ones their sections; on a section,
+// scene or loose card, every line is another of the same.
+function pasteOutline(items) {
+  const ed = cardEditor;
+  if (!ed) return;
+  const kind = ed.cell.dataset.kind;
+  document.execCommand('insertText', false, items[0].text);
+  for (const it of items.slice(1)) {
+    const cur = cardEditor && cardEditor.cell;
+    if (!cur || !cur.isConnected) break;
+    if (kind === 'loose') { closeCardEditor(); addLooseCard(); }
+    else if (kind === 'chapter' && it.level === 0) {
+      const chId = cur.dataset.ch;
+      closeCardEditor();
+      newChapterCard(book.chapterOrder.indexOf(chId) + 1);
+    } else newCardAfter(cur);
+    const next = cardEditor;
+    if (!next || next.cell === cur) break;
+    next.text.focus();
+    next.text.textContent = it.text;
+    const r = document.createRange();
+    r.selectNodeContents(next.text);
+    r.collapse(false);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(r);
   }
 }
 
@@ -12966,6 +13081,7 @@ function setPageZoom(next, at) {
   updateZoomDisplay();
 }
 let cardWheel = 0;
+let pageWheel = 0;
 $('#editor-view').addEventListener('wheel', (e) => {
   if (!e.ctrlKey) return;
   e.preventDefault();
@@ -12975,12 +13091,24 @@ $('#editor-view').addEventListener('wheel', (e) => {
     if (Math.abs(cardWheel) > 40) { stepCardZoom(cardWheel < 0 ? 1 : -1); cardWheel = 0; }
     return;
   }
-  setPageZoom(activePageZoom() * Math.exp(-e.deltaY * 0.005), { x: e.clientX, y: e.clientY });
+  // …and the page a tenth at a time (#336: a smooth pinch left it at 101%)
+  pageWheel += e.deltaY;
+  if (Math.abs(pageWheel) > 40) {
+    setPageZoom(tenth(activePageZoom() + (pageWheel < 0 ? 0.1 : -0.1)), { x: e.clientX, y: e.clientY });
+    pageWheel = 0;
+  }
+}, { passive: false });
+let shelfWheel = 0;
+$('#bookshelf-view').addEventListener('wheel', (e) => {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  shelfWheel += e.deltaY;
+  if (Math.abs(shelfWheel) > 40) { stepShelfZoom(shelfWheel < 0 ? 1 : -1); shelfWheel = 0; }
 }, { passive: false });
 
 // zoom control in the bottom bar: buttons, click-to-reset, and scroll
-$('#zoom-in').onclick = () => (boardShowing() ? stepCardZoom(1) : setPageZoom(activePageZoom() + 0.1));
-$('#zoom-out').onclick = () => (boardShowing() ? stepCardZoom(-1) : setPageZoom(activePageZoom() - 0.1));
+$('#zoom-in').onclick = () => (boardShowing() ? stepCardZoom(1) : setPageZoom(tenth(activePageZoom() + 0.1)));
+$('#zoom-out').onclick = () => (boardShowing() ? stepCardZoom(-1) : setPageZoom(tenth(activePageZoom() - 0.1)));
 $('#zoom-level').onclick = () => (boardShowing() ? stepCardZoom(0) : setPageZoom(1));
 $('#zoom-control').addEventListener('wheel', (e) => {
   e.preventDefault();
@@ -14972,11 +15100,13 @@ async function showAbout() {
 // Text size and the reset travel with page zoom; the menu item and the
 // keyboard fallback share this so the two cannot drift.
 async function setEditorFontSize(value) {
-  // ⌘+ and ⌘− on the outline's cards make the cards larger and smaller
+  // ⌘+ and ⌘− on the shelf make the covers larger and smaller
+  if (shelfShowing()) { stepShelfZoom(value); return; }
+  // …on the outline's cards, the cards
   if (boardShowing()) { stepCardZoom(value); return; }
   // a script's type is the page's: larger and smaller zoom the page
   if (book && isScript()) {
-    setPageZoom(value === 0 ? 1 : activePageZoom() * (value > 0 ? 1.1 : 1 / 1.1));
+    setPageZoom(value === 0 ? 1 : tenth(activePageZoom() + (value > 0 ? 0.1 : -0.1)));
     return;
   }
   const cur = library.editorFontSize || 17;
