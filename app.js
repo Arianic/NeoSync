@@ -12218,33 +12218,6 @@ document.addEventListener('contextmenu', async (e) => {
   });
 });
 
-// ---- look up rules:
-// macOS shows the system dictionary for a selected word; the menu only makes sense for one word,
-// never for a phrase or a whole paragraph (#179).
-const LOOK_UP_MAX_WORD = 60;
-function lookUpWord(text) {
-  const word = (text || '').trim();
-  if (!word || word.length > LOOK_UP_MAX_WORD) return null;
-  return /\s/.test(word) ? null : word;
-}
-// ---- end of look up rules ----
-
-// macOS: a selected word in the manuscript or the notes gets the system "Look Up" — the panel
-// Safari and Books show (#179). The listener runs in the bubble phase, after the spellcheck menu,
-// and stands down when any other menu already answered the right-click.
-document.addEventListener('contextmenu', (e) => {
-  if (window.neo.platform !== 'darwin' || e.defaultPrevented) return;
-  const editor = e.target.closest && e.target.closest('.chapter-body, #aux-editor');
-  if (!editor) return;
-  const sel = window.getSelection();
-  const word = sel && sel.rangeCount && !sel.isCollapsed ? lookUpWord(sel.toString()) : null;
-  if (!word) return;
-  e.preventDefault();
-  popMenu(e.clientX, e.clientY, [{ label: t('Look Up “{word}”', { word }), value: 'lookup' }]).then((choice) => {
-    if (choice === 'lookup') window.neo.lookUpText();
-  });
-});
-
 function showSpellMenu(x, y, word, suggestions, actions) {
   document.querySelector('.spell-menu')?.remove();
   const menu = document.createElement('div');
@@ -12284,6 +12257,34 @@ function showSpellMenu(x, y, word, suggestions, actions) {
 }
 
 let typewriterEnabled = false;
+
+// ---- look up rules:
+// macOS shows the system dictionary for a selected word; the menu only makes sense for one word,
+// never for a phrase or a whole paragraph (#179).
+const LOOK_UP_MAX_WORD = 60;
+function lookUpWord(text) {
+  const word = (text || '').trim();
+  if (!word || word.length > LOOK_UP_MAX_WORD) return null;
+  return /\s/.test(word) ? null : word;
+}
+// ---- end of look up rules ----
+
+// macOS: a selected word in the manuscript or the notes gets the system "Look Up" — the panel
+// Safari and Books show (#179). The listener runs in the bubble phase, after the spellcheck menu,
+// and stands down when any other menu already answered the right-click.
+document.addEventListener('contextmenu', (e) => {
+  if (window.neo.platform !== 'darwin' || e.defaultPrevented) return;
+  const editor = e.target.closest && e.target.closest('.chapter-body, #aux-editor');
+  if (!editor) return;
+  const sel = window.getSelection();
+  const word = sel && sel.rangeCount && !sel.isCollapsed ? lookUpWord(sel.toString()) : null;
+  if (!word) return;
+  e.preventDefault();
+  popMenu(e.clientX, e.clientY, [{ label: t('Look Up “{word}”', { word }), value: 'lookup' }]).then((choice) => {
+    if (choice === 'lookup') window.neo.lookUpText();
+  });
+});
+
 // The page needs empty room beneath its last line, or the caret can't be held
 // at the centre once the end of the draft scrolls into view (body.typewriter
 // deepens #paper's bottom margin; see styles.css). Only as much as the last
