@@ -36,6 +36,7 @@ async function press(keyCode, char) {
   if (char) wc.sendInputEvent({ type: 'char', keyCode: char });
   wc.sendInputEvent({ type: 'keyUp', keyCode });
   await tick(300);
+  await js("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
 }
 const enter = () => press('Enter', '\r');
 
@@ -72,11 +73,18 @@ const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
 
 test('a break made at the foot of the window keeps the caret in sight', async () => {
+  await js(`window.caretTrace = []; window.originalRevealCaret = revealCaret;
+    revealCaret = function(...args) { const sc=document.getElementById('paper-scroll');
+      const before={scroll:sc.scrollTop,rect:caretRect()?.toJSON(),node:getSelection().anchorNode?.outerHTML};
+      const result=originalRevealCaret(...args);
+      caretTrace.push({args,before,after:{scroll:sc.scrollTop,rect:caretRect()?.toJSON()}}); return result; };`);
   await caretLow(30, 0.88);
   await enter();
   await enter(); // the empty line becomes ***, and the caret goes below it
   const w = await where();
   if (w.caretBottom > w.bottom) console.log('Caret geometry:', JSON.stringify(w), await js('({rect:caretRect()?.toJSON(),scroll:document.getElementById("paper-scroll").scrollTop,node:getSelection().anchorNode?.outerHTML,offset:getSelection().anchorOffset,typewriter:typewriterEnabled})'));
+  if (w.caretBottom > w.bottom) console.log('Reveal trace:', JSON.stringify(await js('caretTrace')));
+  await js('revealCaret = originalRevealCaret');
   assert.ok(w.caretBottom <= w.bottom, `the caret's line ends ${Math.round(w.caretBottom - w.bottom)}px below the window`);
   assert.ok(w.caretTop >= w.top);
 });
@@ -204,6 +212,7 @@ async function main() {
     })()`);
     await tick(300);
     win.focus();
+    await js("document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))");
     for (const t of tests) {
       try {
         await t.fn();
