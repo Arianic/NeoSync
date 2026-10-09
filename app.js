@@ -3264,7 +3264,7 @@ function keepCaretHeight(was) {
 // The caret never types out of sight: an Enter (or anything else) on the
 // window's bottom line brings the new line into view, with a little room
 // below it. (Typewriter scrolling keeps the line centered on its own.)
-function revealCaret() {
+function revealCaret(settled = false) {
   const sc = $('#paper-scroll');
   const rect = caretRect();
   if (!rect) return;
@@ -3272,6 +3272,16 @@ function revealCaret() {
   const room = Math.min(48, box.height / 6);
   if (rect.bottom > box.bottom - room) sc.scrollTop += rect.bottom - (box.bottom - room);
   else if (rect.top < box.top + 8) sc.scrollTop -= box.top + 8 - rect.top;
+  // Chromium can scroll the selection again after the key handler finishes.
+  // Recheck after layout, but never follow a caret the writer has since moved.
+  if (!settled) {
+    const sel = window.getSelection();
+    const node = sel.anchorNode, offset = sel.anchorOffset;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const now = window.getSelection();
+      if (!typewriterEnabled && node?.isConnected && now.isCollapsed && now.anchorNode === node && now.anchorOffset === offset) revealCaret(true);
+    }));
+  }
 }
 
 // Backspace at the very start of a chapter swallows an empty chapter above it
@@ -3672,7 +3682,6 @@ function handleEnter(e, body, chId) {
       e.preventDefault();
       // a break made by the full double-Enter gesture un-splits on undo too
       snapshotStructure('section break', { rejoin: enterRun >= 2 });
-      caretHeight(); // pause scroll anchoring before the break changes paragraph geometry
       if (prev.textContent.trim() === '') {
         // a break is only a break: no alignment or paragraph kind carried
         // over from the paragraph it was made in (a justified one set it left)
@@ -3696,7 +3705,6 @@ function handleEnter(e, body, chId) {
       // sight here, as typing keeps it: a break near the window's foot pushed
       // the line below it until the next key
       if (!typewriterEnabled) revealCaret();
-      keepCaretHeight(null); // restore anchoring once the manual reveal settles
       breakRun++;
       return true;
     }
@@ -3729,7 +3737,6 @@ function handleEnter(e, body, chId) {
   if (prev) {
     e.preventDefault();
     snapshotStructure('section break', { rejoin: enterRun >= 2 });
-    caretHeight(); // pause scroll anchoring before the break changes paragraph geometry
     block.removeAttribute('style'); // (see above: a break carries nothing over)
     block.className = 'scene-break';
     block.textContent = '***';
@@ -3744,7 +3751,6 @@ function handleEnter(e, body, chId) {
     syncChapter(body, chId);
     resetNativeUndo();
     if (!typewriterEnabled) revealCaret(); // (see the break above)
-    keepCaretHeight(null);
     breakRun++;
     return true;
   }

@@ -76,6 +76,7 @@ test('a break made at the foot of the window keeps the caret in sight', async ()
   await enter();
   await enter(); // the empty line becomes ***, and the caret goes below it
   const w = await where();
+  if (w.caretBottom > w.bottom) console.log('Caret geometry:', JSON.stringify(w), await js('({rect:caretRect()?.toJSON(),scroll:document.getElementById("paper-scroll").scrollTop,node:getSelection().anchorNode?.outerHTML,offset:getSelection().anchorOffset,typewriter:typewriterEnabled})'));
   assert.ok(w.caretBottom <= w.bottom, `the caret's line ends ${Math.round(w.caretBottom - w.bottom)}px below the window`);
   assert.ok(w.caretTop >= w.top);
 });
