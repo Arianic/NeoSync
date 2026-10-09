@@ -1840,12 +1840,15 @@ ipcMain.handle('import:files', async (_e, paths) => {
   return out;
 });
 
-ipcMain.handle('import:pick', async () => {
+// { chapters: true }: files that become chapters of the open book, so
+// no scripts (a script is one chapter of its own kind)
+ipcMain.handle('import:pick', async (_e, opts) => {
   const win = BrowserWindow.getFocusedWindow();
+  const chapters = !!(opts && opts.chapters);
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {
-    title: t('Bring your manuscripts home'),
+    title: chapters ? t('Bring chapters into this book') : t('Bring your manuscripts home'),
     properties: ['openFile', 'multiSelections'],
-    filters: [{ name: t('Manuscripts'), extensions: ['docx', 'txt', 'md', 'fountain', 'fdx'] }]
+    filters: [{ name: t('Manuscripts'), extensions: chapters ? ['docx', 'txt', 'md'] : ['docx', 'txt', 'md', 'fountain', 'fdx'] }]
   });
   if (canceled || !filePaths.length) return [];
   const out = [];
@@ -2212,6 +2215,8 @@ const SCRIPT_ELEMENTS = ['heading', 'action', 'character', 'paren', 'dialogue', 
 // the script line a right-click is on: { pageBreak } (whether it starts a
 // page already), or null when the click wasn't on one
 let scriptContext = null;
+// a book open in the window (File → Import Chapters… needs one to go into)
+let bookOpenState = false;
 ipcMain.on('script:context', (e, st) => {
   scriptContext = st && typeof st === 'object' ? { pageBreak: !!st.pageBreak } : null;
   e.returnValue = true;
@@ -2219,8 +2224,10 @@ ipcMain.on('script:context', (e, st) => {
 ipcMain.on('script:state', (_e, st) => {
   st = st || {};
   const next = { on: !!st.on, element: SCRIPT_ELEMENTS.includes(st.element) ? st.element : null, underline: !!st.underline, contd: st.contd !== false };
-  if (next.on === scriptState.on && next.element === scriptState.element && next.underline === scriptState.underline && next.contd === scriptState.contd) return;
+  const bookOpen = !!st.book;
+  if (bookOpen === bookOpenState && next.on === scriptState.on && next.element === scriptState.element && next.underline === scriptState.underline && next.contd === scriptState.contd) return;
   scriptState = next;
+  bookOpenState = bookOpen;
   try { buildMenu(); } catch (err) { logError('menu', err); }
 });
 let typewriterState = false;
@@ -2380,6 +2387,11 @@ function buildMenu() {
           label: t('Import Manuscripts…'),
           accelerator: 'CmdOrCtrl+Shift+I',
           click: () => sendToWindow({ type: 'import' })
+        },
+        {
+          label: t('Import Chapters…'),
+          enabled: bookOpenState && !scriptState.on,
+          click: () => sendToWindow({ type: 'importChapters' })
         },
         { label: t('Reshelve a Book…'), click: () => sendToWindow({ type: 'reshelve' }) },
         { label: t('Library Folder…'), click: () => { chooseLibraryFolder().catch((err) => logError('library folder', err)); } },
