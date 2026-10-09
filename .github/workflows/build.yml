@@ -33,6 +33,8 @@ jobs:
       - run: npm run test:sync:desktop
       - run: npm run test:sync:restart
       - run: npm run test:sync:ui
+      - run: npm run test:words
+      - run: npm run test:caret
       - run: npm run test:tabs
       - run: npm run test:updates
       - run: npm run package:win

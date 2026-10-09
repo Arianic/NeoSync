@@ -47,6 +47,8 @@ jobs:
             npm run test:sync:desktop -- --password-store=gnome-libsecret
             env -u KDE_SESSION_VERSION -u KDE_FULL_SESSION XDG_CURRENT_DESKTOP=NeoSyncTestWM DESKTOP_SESSION=NeoSyncTestWM npm run test:sync:restart
             npm run test:sync:ui -- --password-store=gnome-libsecret
+            npm run test:words
+            npm run test:caret
             npm run test:tabs -- --password-store=gnome-libsecret
             npm run test:updates
           '
