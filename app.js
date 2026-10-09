@@ -7494,15 +7494,7 @@ navList.addEventListener('drop', async (e) => {
     let next = ind ? ind.nextElementSibling : null;
     while (next && !next.classList.contains('nav-item')) next = next.nextElementSibling;
     if (ind) ind.remove();
-    const beforeId = next ? next.dataset.id : null;
-    const paths = [...e.dataTransfer.files]
-      .map((f) => { try { return window.neo.pathForFile(f); } catch { return null; } })
-      .filter((p) => p && /\.(docx|txt|md)$/i.test(p));
-    if (!paths.length) { toast(t('No .docx, .txt, or .md files in that drop')); return; }
-    const bookId = book.id;
-    toast(t('Importing…'));
-    const results = await window.neo.importFiles(paths);
-    if (book && book.id === bookId) await importChaptersIntoBook(results, beforeId);
+    await importDroppedChapters(e.dataTransfer.files, next ? next.dataset.id : null);
     return;
   }
   const chId = e.dataTransfer.getData('application/x-neo-chapter');
@@ -9885,6 +9877,20 @@ function dragOver(st) {
   if (edge) st.scroller = setInterval(() => { sc.scrollTop += edge * 14; st.target = dragTarget(st); showDropCaret(st.target); }, 30);
 }
 
+// the card under the pointer, or the nearest one in its line
+function nearestCard(cells, x, y) {
+  let best = null;
+  let bestD = Infinity;
+  for (const c of cells) {
+    const r = c.getBoundingClientRect();
+    const dy = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
+    const dx = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
+    const d = dy * 3 + dx;
+    if (d < bestD) { bestD = d; best = c; }
+  }
+  return best;
+}
+
 // where a card would land: { cell, side } on the board, or the loose pane
 function dragTarget(st) {
   // a loose card holding a whole chapter goes back in as a chapter
@@ -9896,16 +9902,7 @@ function dragTarget(st) {
   if (overPane) return pane.classList.contains('drop-ready') ? { loose: true } : null;
   const cells = [...outlineBoard().querySelectorAll('.ob-cell:not(.ob-lifted):not([data-new])')];
   if (!cells.length) return null;
-  // the card under the pointer, or the nearest one in its line
-  let best = null;
-  let bestD = Infinity;
-  for (const c of cells) {
-    const r = c.getBoundingClientRect();
-    const dy = st.y < r.top ? r.top - st.y : st.y > r.bottom ? st.y - r.bottom : 0;
-    const dx = st.x < r.left ? r.left - st.x : st.x > r.right ? st.x - r.right : 0;
-    const d = dy * 3 + dx;
-    if (d < bestD) { bestD = d; best = c; }
-  }
+  let best = nearestCard(cells, st.x, st.y);
   const r = best.getBoundingClientRect();
   // over the middle of a chapter card: into that chapter (a chapter joins
   // it as a section; a section or loose card goes to its end)
@@ -9959,6 +9956,64 @@ function showDropCaret(target) {
   caret.style.top = (r.top + 6) + 'px';
   caret.style.height = Math.max(10, r.height - 12) + 'px';
 }
+
+// ---- files dropped on the Outline ----
+// A document from Finder or Explorer goes in as chapters between chapters:
+// before a chapter card (or List line) when it's dropped on that card's left
+// half (the line's top half), otherwise after the chapter the card is in.
+// The caret is the card drag's own.
+const chapterAfter = (chId) => book.chapterOrder[book.chapterOrder.indexOf(chId) + 1] || null;
+function outlineFileTarget(x, y) {
+  if (boardShowing()) {
+    const cells = [...outlineBoard().querySelectorAll('.ob-cell:not([data-new])')];
+    if (!cells.length) return { beforeId: null };
+    const best = nearestCard(cells, x, y);
+    const r = best.getBoundingClientRect();
+    if (best.dataset.kind === 'chapter' && x < r.left + r.width / 2) return { cell: best, side: 'before', beforeId: best.dataset.ch };
+    const run = cells.filter((c) => c.dataset.ch === best.dataset.ch);
+    return { cell: run[run.length - 1], side: 'after', beforeId: chapterAfter(best.dataset.ch) };
+  }
+  const lines = $$('#outline-list .ol-line');
+  if (!lines.length) return { beforeId: null };
+  let best = lines[lines.length - 1];
+  for (const l of lines) if (y < l.getBoundingClientRect().bottom) { best = l; break; }
+  const r = best.getBoundingClientRect();
+  if (!best.classList.contains('ol-section') && y < r.top + r.height / 2) return { line: best, side: 'before', beforeId: best.dataset.chId };
+  const run = lines.filter((l) => l.dataset.chId === best.dataset.chId);
+  return { line: run[run.length - 1], side: 'after', beforeId: chapterAfter(best.dataset.chId) };
+}
+function showFileCaret(target) {
+  if (!target || (!target.cell && !target.line)) { $('#ob-caret')?.remove(); return; }
+  if (target.cell) { showDropCaret(target); $('#ob-caret').style.width = ''; return; }
+  // the List: a line across, above or below the chapter's lines
+  showDropCaret(null);
+  const caret = document.createElement('div');
+  caret.id = 'ob-caret';
+  document.body.appendChild(caret);
+  const r = target.line.getBoundingClientRect();
+  caret.style.left = r.left + 'px';
+  caret.style.width = r.width + 'px';
+  caret.style.height = '3px';
+  caret.style.top = (target.side === 'before' ? r.top - 2 : r.bottom - 1) + 'px';
+}
+const outlineFileDrag = (e) => currentTab === 'outline' && navFileDrag(e);
+$('#paper-scroll').addEventListener('dragover', (e) => {
+  if (!outlineFileDrag(e)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+  showFileCaret(outlineFileTarget(e.clientX, e.clientY));
+});
+$('#paper-scroll').addEventListener('dragleave', (e) => {
+  if (e.relatedTarget && $('#paper-scroll').contains(e.relatedTarget)) return;
+  if (outlineFileDrag(e)) showFileCaret(null);
+});
+$('#paper-scroll').addEventListener('drop', async (e) => {
+  if (!outlineFileDrag(e) || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+  e.preventDefault();
+  const target = outlineFileTarget(e.clientX, e.clientY);
+  showFileCaret(null);
+  await importDroppedChapters(e.dataTransfer.files, target.beforeId);
+});
 
 function dropCard(src, target) {
   if (!target || !book) return;
@@ -12995,6 +13050,19 @@ async function importChaptersIntoBook(results, beforeId) {
   updateCounters();
   toast(t('{n} chapters added to “{title}”', { n: ids.length, title: book.title || '' }), 6000);
   return ids.length;
+}
+
+// Files dropped from Finder or Explorer (on the Chapters pane, or the
+// Outline) become chapters before `beforeId`
+async function importDroppedChapters(files, beforeId) {
+  const paths = [...files]
+    .map((f) => { try { return window.neo.pathForFile(f); } catch { return null; } })
+    .filter((p) => p && /\.(docx|txt|md)$/i.test(p));
+  if (!paths.length) { toast(t('No .docx, .txt, or .md files in that drop')); return; }
+  const bookId = book.id;
+  toast(t('Importing…'));
+  const results = await window.neo.importFiles(paths);
+  if (book && book.id === bookId) await importChaptersIntoBook(results, beforeId);
 }
 
 // File → Import Chapters…: after the chapter you're in, or at the end
