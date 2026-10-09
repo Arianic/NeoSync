@@ -54,7 +54,7 @@ console.log('Romanian, Portuguese, Swedish and Hungarian dictionaries, Hunspell,
 // The offline pagination runtime and language patterns carry their licenses.
 function checkPrint(dir = 'print') {
   for (const entry of fs.readdirSync(path.join(root, dir), { withFileTypes: true })) {
-    const name = dir + '/' + entry.name;
+    const name = path.join(dir, entry.name);
     if (entry.isDirectory()) checkPrint(name);
     else if (!name.endsWith('.md')) assert.deepEqual(asar.extractFile(path.join(resources, 'app.asar'), name), fs.readFileSync(path.join(root, name)), name);
   }
