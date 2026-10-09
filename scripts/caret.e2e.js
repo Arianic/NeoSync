@@ -77,14 +77,14 @@ test('a break made at the foot of the window keeps the caret in sight', async ()
     revealCaret = function(...args) { const sc=document.getElementById('paper-scroll');
       const before={scroll:sc.scrollTop,rect:caretRect()?.toJSON(),node:getSelection().anchorNode?.outerHTML};
       const result=originalRevealCaret(...args);
-      caretTrace.push({args,before,after:{scroll:sc.scrollTop,rect:caretRect()?.toJSON()}}); return result; };`);
+      caretTrace.push({args,before,after:{scroll:sc.scrollTop,rect:caretRect()?.toJSON()}}); return result; }; void 0;`);
   await caretLow(30, 0.88);
   await enter();
   await enter(); // the empty line becomes ***, and the caret goes below it
   const w = await where();
   if (w.caretBottom > w.bottom) console.log('Caret geometry:', JSON.stringify(w), await js('({rect:caretRect()?.toJSON(),scroll:document.getElementById("paper-scroll").scrollTop,node:getSelection().anchorNode?.outerHTML,offset:getSelection().anchorOffset,typewriter:typewriterEnabled})'));
   if (w.caretBottom > w.bottom) console.log('Reveal trace:', JSON.stringify(await js('caretTrace')));
-  await js('revealCaret = originalRevealCaret');
+  await js('revealCaret = originalRevealCaret; void 0;');
   assert.ok(w.caretBottom <= w.bottom, `the caret's line ends ${Math.round(w.caretBottom - w.bottom)}px below the window`);
   assert.ok(w.caretTop >= w.top);
 });
