@@ -31,6 +31,15 @@ for (const file of ['NOTICE.txt', 'MPL-2.0.txt', 'upstream-license.txt']) {
   assert.deepEqual(fs.readFileSync(path.join(portuguese, file)),
     fs.readFileSync(path.join(root, 'licenses/dictionary-pt', file)), file);
 }
+const swedish = path.join(resources, 'app.asar.unpacked/node_modules/dictionary-sv');
+for (const file of ['index.aff', 'index.dic', 'license']) {
+  assert.deepEqual(fs.readFileSync(path.join(swedish, file)),
+    fs.readFileSync(path.join(root, 'node_modules/dictionary-sv', file)), file);
+}
+for (const file of ['NOTICE.txt', 'LGPL-3.0.txt', 'GPL-3.0.txt', 'upstream-license.txt']) {
+  assert.deepEqual(fs.readFileSync(path.join(swedish, file)),
+    fs.readFileSync(path.join(root, 'licenses/dictionary-sv', file)), file);
+}
 for (const file of ['NOTICE.txt', 'MPL-1.1.txt']) {
   assert.deepEqual(fs.readFileSync(path.join(resources, 'licenses/hunspell', file)),
     fs.readFileSync(path.join(root, 'licenses/hunspell', file)), file);
@@ -40,4 +49,15 @@ for (const file of ['index.aff', 'index.dic', 'NOTICE.txt', 'MPL-2.0.txt', 'READ
   assert.deepEqual(fs.readFileSync(path.join(hungarian, file)),
     fs.readFileSync(path.join(root, 'dictionaries/hu', file)), file);
 }
-console.log('Romanian, Portuguese and Hungarian dictionaries, Hunspell, license notices, and worker code verified.');
+console.log('Romanian, Portuguese, Swedish and Hungarian dictionaries, Hunspell, license notices, and worker code verified.');
+
+// The offline pagination runtime and language patterns carry their licenses.
+function checkPrint(dir = 'print') {
+  for (const entry of fs.readdirSync(path.join(root, dir), { withFileTypes: true })) {
+    const name = path.join(dir, entry.name);
+    if (entry.isDirectory()) checkPrint(name);
+    else if (!name.endsWith('.md')) assert.deepEqual(asar.extractFile(path.join(resources, 'app.asar'), name), fs.readFileSync(path.join(root, name)), name);
+  }
+}
+checkPrint();
+console.log('Offline paperback runtime, hyphenation patterns and license files verified.');

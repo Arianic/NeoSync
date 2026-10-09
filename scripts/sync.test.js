@@ -90,10 +90,11 @@ test('independent chapter edits and metadata fields merge on both devices', asyn
 test('upstream outline metadata syncs, merges independent cards, and preserves competing notes', async t => {
   const { device } = fixtures(t), a = device('a'), b = device('b');
   const outline = {
-    format: 'screenplay', underlineHeadings: true, contd: false,
+    format: 'screenplay', underlineHeadings: true, contd: false, titleStyle: { b: true },
+    print: { trim: '6x9', paper: 'cream', isbn: 'test-isbn' },
     sectionNotes: { a: [{ id: 'section-a', text: 'A section', dismissed: false }] },
     sceneNotes: { 'scene-a': 'A scene' },
-    looseCards: [{ id: 'loose-a', text: 'An idea' }]
+    looseCards: [{ id: 'loose-a', text: 'An idea', held: 'chapter', html: '<p>Writing held safely</p>', words: 3 }]
   };
   const html = '<p class="sp-heading" data-scene-id="scene-a" data-newpage="1">INT. ROOM - DAY</p><p data-sec-id="section-a">Words</p>';
   a.write(chapter, html); a.write(metadata, meta(outline));
@@ -112,6 +113,9 @@ test('upstream outline metadata syncs, merges independent cards, and preserves c
   const combined = JSON.parse(a.text(metadata));
   assert.equal(combined.sceneNotes['scene-a'], 'Revised scene');
   assert.equal(combined.looseCards[0].text, 'Revised idea');
+  assert.equal(combined.looseCards[0].html, '<p>Writing held safely</p>');
+  assert.deepEqual(combined.print, outline.print);
+  assert.deepEqual(combined.titleStyle, outline.titleStyle);
   assert.equal(combined.sectionNotes.a[0].dismissed, true);
   const competing = JSON.parse(b.text(metadata));
   combined.sceneNotes['scene-a'] = 'Local alternative';

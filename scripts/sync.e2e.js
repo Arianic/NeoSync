@@ -34,7 +34,7 @@ fs.writeFileSync(path.join(root, 'library.json'), JSON.stringify({ firstRunDone:
 require('../main');
 Module._load = originalLoad;
 const tick = () => new Promise(resolve => setTimeout(resolve, 50));
-const timeout = setTimeout(() => { console.error('Desktop smoke test timed out'); app.exit(1); }, 30000);
+const timeout = setTimeout(() => { console.error('Desktop smoke test timed out'); app.exit(1); }, 120000);
 app.whenReady().then(async () => {
   try {
     console.log('Electron ready; profile:', tmp);
@@ -233,6 +233,41 @@ app.whenReady().then(async () => {
     exportRead.release(); await js('window.exportTest'); exportRead.restore();
     await js('updateDialog.close()');
     assert.equal(await js('book === null && !shelfExport'), true);
+    // Duplication waits for queued sidecars, and excludes incoming sync/restarts.
+    const copyNotes = holdWrite('aux:write');
+    await js(`auxPending[${JSON.stringify(ids.book)} + '/notes'] = {bookId:${JSON.stringify(ids.book)},kind:'notes',html:'<p>Latest notes in copy</p>',inFlight:false}; window.copyNoteSave = flushAux(); void 0;`);
+    await copyNotes.began;
+    await js(`window.copyTest = duplicateBook({id:${JSON.stringify(ids.book)},title:'Temporary manuscript'}); void 0;`);
+    await tick();
+    assert.equal(await js('duplicatingBook'), true);
+    assert.equal(await prepareSync('during-copy'), false);
+    await js(readyDialog + 'updateDialog.querySelector(".m-ok").onclick();');
+    assert.equal(installs, 4);
+    copyNotes.release(); await js('window.copyTest'); copyNotes.restore();
+    await js('updateDialog.close()');
+    const copiedId = await js(`library.shelves.flatMap(s => s.bookIds).find(id => id !== ${JSON.stringify(ids.book)})`);
+    assert.ok(copiedId && copiedId !== ids.book);
+    assert.equal(fs.readFileSync(path.join(root, copiedId, 'notes.html'), 'utf8'), '<p>Latest notes in copy</p>');
+    assert.equal(await js('duplicatingBook'), false);
+    // Paperback setup and rendering keep the book open and block restart.
+    await js(`openBook(${JSON.stringify(ids.book)})`);
+    electron.dialog.showSaveDialog = async () => ({ canceled: false, filePath: path.join(tmp, 'paperback.pdf') });
+    await js('window.printTest = printPaperback(); void 0;');
+    for (let i = 0; i < 100 && !(await js('!!document.querySelector(".print-modal")')); i++) await tick();
+    assert.equal(await js('paperbackActive'), true);
+    await js('backToShelf()');
+    assert.equal(await js('!!book'), true);
+    await js(readyDialog + 'updateDialog.querySelector(".m-ok").onclick();');
+    assert.equal(installs, 4);
+    await js('updateDialog.close(); document.querySelector(".print-modal .m-ok").click();');
+    await js('window.printTest');
+    assert.equal(await js('paperbackActive'), false);
+    for (const file of ['paperback.pdf', 'paperback - cover template.pdf']) {
+      const pdf = fs.readFileSync(path.join(tmp, file));
+      assert.ok(pdf.length > 1000, file);
+      assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
+    }
+    await js('backToShelf()');
     assert.ok(app.getPath('userData').startsWith(tmp + path.sep));
     console.log('Desktop smoke passed: identity, queued saves/retries, conflict copies, restart/sync barriers, shelf export, outline-card flush, local zoom and last-tab restore.');
     console.log('Temporary profile retained until Electron exits: ' + tmp);

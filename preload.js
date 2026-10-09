@@ -11,6 +11,9 @@ function invoke(channel, ...args) {
 }
 
 contextBridge.exposeInMainWorld('neo', {
+  platform: process.platform,
+  lookUpText: () => invoke('app:lookUp'),
+  duplicateBook: (bookId, title) => invoke('book:duplicate', bookId, title),
   sync: (action, value) => invoke('sync:action', action, value),
   syncReady: (token, value) => ipcRenderer.send('sync:ready', token, value),
   syncDrain: async () => { while (saves.size) await Promise.all([...saves]); },
@@ -62,6 +65,7 @@ contextBridge.exposeInMainWorld('neo', {
   poetryState: (on) => ipcRenderer.send('poetry:state', on),
   flushState: (on) => ipcRenderer.send('flush:state', on),
   scriptState: (st) => ipcRenderer.send('script:state', st),
+  printPaperback: (job) => ipcRenderer.invoke('print:paperback', job),
   // sent (and waited for) as a script line is right-clicked, so the menu
   // that opens next can offer Page Break Here
   scriptContext: (st) => ipcRenderer.sendSync('script:context', st),
