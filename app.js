@@ -4848,8 +4848,17 @@ function isHelpShortcut(e) {
 
 // Global editor shortcuts
 document.addEventListener('keydown', (e) => {
-  if ($('#editor-view').hidden) return;
   if (document.querySelector('.modal-backdrop:not([hidden])')) return; // visible modals own the keyboard
+  // The text-size pair keeps the menu's own keys on the layouts where they
+  // match, and takes over by character where they do not (`+` is Shift+1 on
+  // Swiss German, so CmdOrCtrl-Plus never fires there). It stands before the
+  // editor check: on the shelf the same keys size the covers (#364).
+  if (isLargerTextShortcut(e) || isSmallerTextShortcut(e)) {
+    e.preventDefault();
+    void setEditorFontSize(isLargerTextShortcut(e) ? 1 : -1);
+    return;
+  }
+  if ($('#editor-view').hidden) return;
   const cmd = e.metaKey || e.ctrlKey;
   if (cmd && e.shiftKey && e.code === 'KeyX') {
     e.preventDefault();
@@ -4867,17 +4876,6 @@ document.addEventListener('keydown', (e) => {
   if (isSpellcheckShortcut(e)) {
     e.preventDefault();
     toggleSpellcheck();
-  }
-  // The text-size pair keeps the menu's own keys on the layouts where they
-  // match, and takes over by character where they do not (`+` is Shift+1 on
-  // Swiss German, so CmdOrCtrl-Plus never fires there).
-  if (isLargerTextShortcut(e)) {
-    e.preventDefault();
-    void setEditorFontSize(1);
-  }
-  if (isSmallerTextShortcut(e)) {
-    e.preventDefault();
-    void setEditorFontSize(-1);
   }
   if (e.key === 'Escape') {
     // an input method's Esc cancels its own composition, nothing more
