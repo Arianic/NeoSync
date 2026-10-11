@@ -2250,10 +2250,11 @@ ipcMain.on('vim:state', (_e, on) => {
   vimState = on;
   try { buildMenu(); } catch (err) { logError('menu', err); }
 });
-// View → Interface Size shows its choice
+// View → Interface Size shows its choice, a tenth between 90% and 300%
 let uiZoomState = 1;
 ipcMain.on('uizoom:state', (_e, z) => {
-  z = [1, 1.25, 1.5, 2, 2.5, 3].includes(z) ? z : 1;
+  z = Number(z);
+  z = Number.isFinite(z) ? Math.round(Math.min(3, Math.max(0.9, z)) * 10) / 10 : 1;
   if (z === uiZoomState) return;
   uiZoomState = z;
   try { buildMenu(); } catch (err) { logError('menu', err); }
@@ -2581,14 +2582,15 @@ function buildMenu() {
           click: () => sendToWindow({ type: 'uiBright' })
         },
         {
-          label: t('Interface Size'),
-          // as far as the page zoom goes: 300%
-          submenu: [1, 1.25, 1.5, 2, 2.5, 3].map((z) => ({
-            label: z === 1 ? t('Normal') : new Intl.NumberFormat(uiLanguage || 'en', { style: 'percent' }).format(z),
-            type: 'radio',
-            checked: uiZoomState === z,
-            click: () => sendToWindow({ type: 'uiZoom', value: z })
-          }))
+          // the size in use rides on the label; the steps are a tenth (#364),
+          // from 90% up to the page zoom's own 300%
+          label: t('Interface Size') + (uiZoomState === 1 ? '' : ' — ' + new Intl.NumberFormat(uiLanguage || 'en', { style: 'percent' }).format(uiZoomState)),
+          submenu: [
+            { label: t('Larger'), click: () => sendToWindow({ type: 'uiZoomStep', value: 1 }) },
+            { label: t('Smaller'), click: () => sendToWindow({ type: 'uiZoomStep', value: -1 }) },
+            { type: 'separator' },
+            { label: t('Reset'), click: () => sendToWindow({ type: 'uiZoomStep', value: 0 }) }
+          ]
         },
         { type: 'separator' },
         {

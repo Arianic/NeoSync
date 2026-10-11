@@ -8434,6 +8434,22 @@ function rememberZoom(key, value) {
   try { localStorage.setItem(key, String(value)); } catch { /* storage can be off */ }
 }
 
+// ---- zoom rules: the interface size steps by a tenth, 90% to 300% ----
+// One rule for every reader: the View menu's commands, the message they send,
+// and a size an older NEO saved between steps (1.25 lands on 1.3). A direction
+// of 0 resets to 100%.
+const UI_ZOOM_RANGE = { min: 0.9, max: 3 };
+function snapZoom(value, fallback = 1) {
+  const n = value === null || value === '' ? NaN : Number(value);
+  const base = Number.isFinite(n) ? n : fallback;
+  return Math.round(Math.min(UI_ZOOM_RANGE.max, Math.max(UI_ZOOM_RANGE.min, base)) * 10) / 10;
+}
+function nextZoomStep(current, direction) {
+  if (direction === 0) return 1;
+  return snapZoom(snapZoom(current) + (direction > 0 ? 0.1 : -0.1));
+}
+// ---- end of zoom rules ----
+
 const activePageZoom = () => readStoredZoom(pageZoomKey(), library.pageZoom || 1, PAGE_ZOOM_RANGE);
 function applyPageZoom() {
   document.documentElement.style.setProperty('--page-zoom', activePageZoom());
@@ -13819,8 +13835,8 @@ function applyFonts() {
   // the system's "Increase contrast" turns it on too, until the writer
   // chooses in the View menu
   applyBright();
-  // View → Interface Size: everything but the page
-  const uiZoom = [1, 1.25, 1.5, 2, 2.5, 3].includes(library.uiZoom) ? library.uiZoom : 1;
+  // View → Interface Size: everything but the page, in tenths (#364)
+  const uiZoom = snapZoom(library.uiZoom);
   document.documentElement.style.setProperty('--ui-zoom', uiZoom);
   document.documentElement.classList.toggle('ui-zoomed', uiZoom > 1);
   if (window.neo.uiZoomState) window.neo.uiZoomState(uiZoom);
@@ -16047,10 +16063,13 @@ window.neo.onMenu(async (msg) => {
     try { if (book && !$('#editor-view').hidden) sessionStorage.setItem('neo-reopen', book.id); } catch { /* a nicety */ }
     setTimeout(() => window.neo.reloadForLanguage(), 400);
   }
-  if (msg.type === 'uiZoom') {
-    library.uiZoom = msg.value;
-    await writeLibrary(library);
-    applyFonts();
+  if (msg.type === 'uiZoomStep') {
+    const next = nextZoomStep(library.uiZoom, msg.value);
+    if (next !== snapZoom(library.uiZoom)) {
+      library.uiZoom = next;
+      await writeLibrary(library);
+      applyFonts();
+    }
   }
   if (msg.type === 'uiBright') {
     // the tab you're on decides which of the two settings this is
