@@ -736,6 +736,45 @@ ipcMain.handle('aux:write', (_e, bookId, name, html) => {
   return true;
 });
 
+// Snapshots of a book (SNAPSHOTS in app.js): book-…/snapshots/<name>/ holds the
+// chapters that changed since the snapshot before it and, written last, its
+// snapshot.json. A snapshot's files are written once and never rewritten, so
+// a sync tool only ever sees new files arrive and two devices have nothing to
+// clash over. The window decides what to keep; this lists, reads, writes a new
+// file and removes a snapshot it has already carried forward.
+function snapshotDir(bookId, name) {
+  if (!/^[A-Za-z0-9-]+$/.test(libName(name))) throw new Error('Invalid snapshot name');
+  return path.join(bookDir(bookId), 'snapshots', name);
+}
+function snapshotFile(bookId, name, file) {
+  if (!/^[\w-][\w.-]*\.(html|json)$/.test(libName(file))) throw new Error('Invalid snapshot file');
+  return path.join(snapshotDir(bookId, name), file);
+}
+ipcMain.handle('snapshot:list', (_e, bookId) => {
+  const root = path.join(bookDir(bookId), 'snapshots');
+  let names = [];
+  try { names = fs.readdirSync(root).filter((n) => /^[A-Za-z0-9-]+$/.test(n)); } catch { return []; }
+  const out = [];
+  for (const name of names) {
+    try { out.push({ name, files: fs.readdirSync(path.join(root, name)).filter((f) => /\.(html|json)$/.test(f)) }); } catch { /* not a folder */ }
+  }
+  return out;
+});
+ipcMain.handle('snapshot:read', (_e, bookId, name, file) => {
+  try { return fs.readFileSync(snapshotFile(bookId, name, file), 'utf8'); } catch { return ''; }
+});
+ipcMain.handle('snapshot:write', (_e, bookId, name, file, text) => {
+  const target = snapshotFile(bookId, name, file);
+  if (fs.existsSync(target)) return false; // written once
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  writeFileDurable(target, text);
+  return true;
+});
+ipcMain.handle('snapshot:remove', (_e, bookId, name) => {
+  try { fs.rmSync(snapshotDir(bookId, name), { recursive: true, force: true }); } catch (err) { logError('snapshot remove', err); }
+  return true;
+});
+
 // macOS only: the system dictionary panel for the word selected in the window (#179). Other
 // platforms have no equivalent, and the renderer only offers the menu item on darwin.
 ipcMain.handle('app:lookUp', (e) => {
@@ -1869,6 +1908,9 @@ async function dailyBackup() {
         // only NEO's own things: a library kept in a busy folder (Dropbox,
         // Documents) doesn't zip everything else in there every day
         if (rel === '' && !(name.startsWith('book-') || name.startsWith('library.json') || name === '_catalog.txt')) continue;
+        // a book's snapshots stay out: the zip stays the size of the books,
+        // and the snapshots are already a history of their own
+        if (name === 'snapshots' && rel.startsWith('book-') && !rel.includes('/')) continue;
         if (name === '.DS_Store' || /^\..+\.icloud$/.test(name)) continue; // Finder litter; iCloud's stand-in for a file not downloaded
         const full = path.join(dir, name);
         const relPath = rel ? rel + '/' + name : name;
@@ -2324,6 +2366,11 @@ function buildMenu() {
           click: () => sendToWindow({ type: 'emailDraft' })
         },
         { label: t('Email Settings…'), click: () => sendToWindow({ type: 'emailSettings' }) },
+        { type: 'separator' },
+        // shown, not registered: the window answers ⌘S itself, so it works the
+        // same in Pocket with a keyboard and never fires twice
+        { label: t('Take Snapshot'), accelerator: 'CmdOrCtrl+S', registerAccelerator: false, click: () => sendToWindow({ type: 'snapshot' }) },
+        { type: 'separator' },
         { label: t('Cover Art…'), click: () => sendToWindow({ type: 'coverArt' }) },
         {
           label: t('Goals…'),

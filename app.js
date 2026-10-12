@@ -528,6 +528,17 @@ document.addEventListener('mousedown', (e) => {
   if (btn) btn.click();
 });
 
+// The open book's title up where the window's buttons are: the system's own
+// title bar on Windows and Linux (and the Window menu everywhere), and on
+// macOS, where that bar is hidden behind the page, the strip beside the buttons
+if (IS_MAC && !IS_POCKET) document.body.classList.add('mac-bar');
+function showWindowTitle() {
+  const title = book ? (book.title || t('Untitled')) : '';
+  document.title = title ? title + ' — NEO' : 'NEO';
+  const strip = IS_MAC && !IS_POCKET && document.querySelector('#dragstrip'); // the desktop's page only
+  if (strip) strip.textContent = title;
+}
+
 function toast(msg, ms = 4000) {
   const h = $('#hint');
   h.textContent = msg;
@@ -2492,6 +2503,10 @@ async function openBook(bookId) {
   if (gen !== openGeneration) return;
   tabPlaces = {}; // a fresh book starts with fresh places
   book = meta;
+  showWindowTitle();
+  snapShown = null;
+  snapCache = null;
+  sideCardsKey = '';
   currentChapterId = null; // never carry a chapter reference across books
   undoStack = [];
   chapterHTML = html;
@@ -3083,7 +3098,7 @@ function focusChapterStart(chId) {
 
 // The caret at the last character of a chapter, inside its last paragraph,
 // with the view kept where the writer is — not thrown to the chapter's top
-function focusChapterEnd(chId) {
+function focusChapterEnd(chId, reveal = true) {
   const nb = document.querySelector(`.chapter[data-id="${chId}"] .chapter-body`);
   if (!nb) return;
   if (!nb.isContentEditable) { showEntry(chId); return; }
@@ -3110,7 +3125,7 @@ function focusChapterEnd(chId) {
   s.addRange(nr);
   currentChapterId = chId;
   highlightNav();
-  revealCaret();
+  if (reveal) revealCaret();
 }
 
 // Backspace in an empty chapter deletes it:
@@ -3214,10 +3229,13 @@ function caretFromEmptyClick(e) {
   const chId = sec.dataset.id;
   e.preventDefault();
   if (e.clientY < box.top) { focusChapterStart(chId); return; }
-  if (e.clientY > box.bottom) { focusChapter(chId); return; }
+  // below the text: the caret at its end, and the page stays where it is
+  // (focusChapter's focus() scrolled up to the chapter's top, a page or two
+  // on a half-empty sheet, #354)
+  if (e.clientY > box.bottom) { focusChapterEnd(chId, false); updateCounters(); return; }
   const x = Math.min(Math.max(e.clientX, box.left + 2), box.right - 2);
   const r = document.caretRangeFromPoint(x, e.clientY);
-  if (!r || !body.contains(r.startContainer)) { focusChapter(chId); return; }
+  if (!r || !body.contains(r.startContainer)) { focusChapterEnd(chId, false); updateCounters(); return; }
   body.focus({ preventScroll: true });
   const s = window.getSelection();
   s.removeAllRanges();
@@ -4643,7 +4661,8 @@ const QUOTE_STYLES = {
   fr: { open: '«\u202f', close: '\u202f»' },             // narrow no-break spaces inside
   es: { open: '«', close: '»' },                          // RAE: « » first
   it: { open: '«', close: '»' },
-  de: { open: '„', close: '“' },
+  de: { open: '»', close: '«' },                          // novels: »…« (#353); a book in „…“ keeps it (bookQuotes)
+  'de-CH': { open: '«', close: '»' },                     // Swiss: «…»
   pl: { open: '„', close: '”' },
   ro: { open: '„', close: '”' },
   ru: { open: '«', close: '»' },
@@ -4680,11 +4699,13 @@ function bookQuotes(el) {
   const opens = (text) => {
     const n = (re) => (text.match(re) || []).length;
     const own = q.open.trim();
-    return { '»': n(/»(?=[\p{L}\p{N}])/gu), '«': own === '«' ? 0 : n(/«(?=[\p{L}\p{N}])/gu), own: n(new RegExp(own + '\\s?(?=[\\p{L}\\p{N}])', 'gu')) };
+    return { '»': own === '»' ? 0 : n(/»(?=[\p{L}\p{N}])/gu), '«': own === '«' ? 0 : n(/«(?=[\p{L}\p{N}])/gu), '„': own === '„' ? 0 : n(/„(?=[\p{L}\p{N}])/gu), own: n(new RegExp(own + '\\s?(?=[\\p{L}\\p{N}])', 'gu')) };
   };
   const body = el && el.closest ? el.closest('.chapter-body') : null;
   let c = opens(body ? body.textContent : '');
-  if (!c['»'] && !c['«'] && !c.own && book) c = opens(book.chapterOrder.map((id) => chapterHTML[id] || '').join(' '));
+  if (!c['»'] && !c['«'] && !c['„'] && !c.own && book) c = opens(book.chapterOrder.map((id) => chapterHTML[id] || '').join(' '));
+  // a German book already written in „…“ keeps its marks
+  if (c['„'] > c.own && c['„'] >= c['»'] && c['„'] >= c['«'] && writingLanguage().toLowerCase().startsWith('de')) return { open: '„', close: '“' };
   if (c['»'] > c.own && c['»'] >= c['«']) return { open: '»', close: writingLanguage().split('-')[0] === 'sv' ? '»' : '«' };
   if (c['«'] > c.own && c['«'] > c['»']) return { open: '«', close: '»' };
   return q;
@@ -4822,6 +4843,7 @@ function showTitleStyle() {
 }
 $('#tp-title').addEventListener('input', () => {
   book.title = $('#tp-title').textContent.trim() || t('Untitled');
+  showWindowTitle();
   scheduleMetaSave();
 });
 $('#tp-subtitle').addEventListener('input', () => {
@@ -4874,6 +4896,11 @@ document.addEventListener('keydown', (e) => {
   if (cmd && e.shiftKey && e.code === 'KeyD') {
     e.preventDefault();
     if (currentTab === 'manuscript') darlingFromKeyboard();
+  }
+  // ⌘S takes a snapshot of the book (SNAPSHOTS)
+  if (cmd && !e.altKey && !e.shiftKey && (e.code === 'KeyS' || e.key === 's')) {
+    e.preventDefault();
+    snapshotNow();
   }
   if (isSpellcheckShortcut(e)) {
     e.preventDefault();
@@ -6118,6 +6145,15 @@ function spTab(p, back, ghost) {
 // speech makes a parenthetical
 function scriptInput(body) {
   const p = caretBlock(body);
+  // the whole script cleared (⌘A, then Delete or ⌘X): the one line left
+  // starts over as action, the way a new script does, not as whatever the
+  // last line deleted was. Left as dialogue, "int." stayed dialogue and
+  // Return kept to the speech's rules (#359)
+  if (p && body.children.length === 1) {
+    const type = spType(p);
+    const text = p.textContent.trim();
+    if ((type === 'dialogue' || type === 'paren') || (type !== 'action' && type !== 'heading' && (!text || SP_HEAD_RE.test(text)))) spSetClass(p, 'action');
+  }
   if (p) {
     const type = spType(p);
     const text = p.textContent;
@@ -6660,8 +6696,14 @@ document.addEventListener('beforeinput', (e) => {
     cut.setEnd(r.endContainer, r.endOffset);
     cut.deleteContents();
   }
+  const upperType = spType(upper);
   for (let n = upper; n && n !== lower;) { const next = n.nextElementSibling; n.remove(); n = next; }
   if (!lower.textContent && !lower.querySelector('br')) lower.appendChild(document.createElement('br'));
+  // nothing of the lower line left: the line is the one the selection began
+  // on, and a script cleared whole (⌘A, Delete) starts over as action, as a
+  // new one does. Kept as the last line's dialogue, Return only changed the
+  // element and "int." never became a heading (#359)
+  if (!lower.textContent.trim()) spSetClass(lower, body.children.length === 1 ? 'action' : upperType);
   placeCaret(lower, 0);
   syncChapter(body, chId);
   breakRun++;
@@ -7053,6 +7095,7 @@ function renderStickies() {
       <div class="s-actions"><button class="s-go">${t('Go to')}</button><span class="s-sep">·</span><button class="s-done">${t('Resolve')}</button></div>`;
     const ta = el.querySelector('textarea');
     ta.value = s.text;
+    ta.addEventListener('focus', () => markCurrentSticky(s.id));
     ta.addEventListener('input', () => {
       s.text = ta.value;
       scheduleStickiesSave();
@@ -7155,10 +7198,21 @@ function resolveSticky(sid) {
   scheduleNavRefresh();
 }
 
+// the note being worked on stands out in the pane (#351): the one whose
+// mark was just clicked in the text, or whose words are being edited
+function markCurrentSticky(sid) {
+  for (const s of document.querySelectorAll('.sticky.current')) if (s.dataset.sid !== sid) s.classList.remove('current');
+  const el = sid && document.querySelector(`.sticky[data-sid="${sid}"]`);
+  if (el) el.classList.add('current');
+}
+
 function focusSticky(sid) {
   $('#side-pane').classList.add('open');
   const el = document.querySelector(`.sticky[data-sid="${sid}"] textarea`);
-  if (el) el.focus();
+  if (!el) return;
+  markCurrentSticky(sid);
+  el.closest('.sticky').scrollIntoView({ block: 'nearest', behavior: scrollBehavior() });
+  el.focus({ preventScroll: true });
 }
 
 /* ================================================================== */
@@ -7506,7 +7560,8 @@ function scheduleNavRefresh() {
 function wireHoverPane(hotzone, pane, isPinnable) {
   // (a menu opened from the Chapters pane keeps it open while it's up)
   const pinned = () => (isPinnable && pane.dataset.pinned === '1') ||
-    (pane.id === 'nav-pane' && (chapterDragActive || !!document.querySelector('.pop-menu')));
+    (pane.id === 'nav-pane' && (chapterDragActive || !!document.querySelector('.pop-menu'))) ||
+    (pane.id === 'side-pane' && $('#editor-view').classList.contains('darlings-tab')); // the snapshots stay
   hotzone.addEventListener('mouseenter', (e) => {
     if (e.buttons) return; // dragging something — stand down
     pane.classList.add('open');
@@ -7528,7 +7583,7 @@ wireHoverPane($('#side-hotzone'), $('#side-pane'), true);
 function closeUnpinnedPanes() {
   // Wayland can blur the window as a native chapter drag begins.
   if (!chapterDragActive && $('#nav-pane').dataset.pinned !== '1') $('#nav-pane').classList.remove('open');
-  if ($('#side-pane').dataset.pinned !== '1') $('#side-pane').classList.remove('open');
+  if ($('#side-pane').dataset.pinned !== '1' && !$('#editor-view').classList.contains('darlings-tab')) $('#side-pane').classList.remove('open');
 }
 document.documentElement.addEventListener('mouseleave', closeUnpinnedPanes);
 window.addEventListener('blur', closeUnpinnedPanes);
@@ -7822,6 +7877,7 @@ function switchTab(name) {
       : { scroll: scroller.scrollTop };
   }
   currentTab = name;
+  queueSideCards();
   applyBright();
   $$('.tab').forEach((t) => {
     t.classList.toggle('active', t.dataset.tab === name);
@@ -7858,10 +7914,14 @@ function switchTab(name) {
   // the outline's cards, their List/Cards switch and their hint belong to the Outline alone
   for (const id of ['#outline-board', '#outline-views', '#outline-board-hint']) { const el = $(id); if (el) el.hidden = true; }
 
+  snapShown = null;
+  if (window.CSS && CSS.highlights) CSS.highlights.delete('neo-snap-gone');
+  if ($('#snap-view')) { $('#snap-view').hidden = true; $('#snap-view').innerHTML = ''; }
   if (name === 'darlings') {
     $('#aux-title').textContent = t('Darlings');
     dList.hidden = false;
     renderDarlings();
+    renderSnapList();
     returnTo();
     findHere();
   } else if (name === 'outline') {
@@ -8031,6 +8091,60 @@ function outlineLine(kind, chId, secId, index, label, text) {
     save();
     if (kind === 'section') syncGhosts(chId);
     renderNav();
+  });
+  // a list pasted (Word, Obsidian, a notes app): a line for each item, as if
+  // typed with Enter and Tab. On a chapter's line the top items are chapters
+  // and the indented ones their sections; on a section's, each is a section (#348)
+  txt.addEventListener('paste', (e) => {
+    const items = pastedOutline(e.clipboardData);
+    if (items.length < 2) {
+      e.preventDefault();
+      document.execCommand('insertText', false, (e.clipboardData.getData('text/plain') || '').replace(/\s+/g, ' '));
+      return;
+    }
+    e.preventDefault();
+    snapshotStructure('outline paste', { outlineFocus: here() });
+    book.sectionNotes = book.sectionNotes || {};
+    book.chapterNotes = book.chapterNotes || {};
+    document.execCommand('insertText', false, items[0].text);
+    save();
+    let focus = here();
+    const touched = new Set([chId]);
+    if (kind === 'section') {
+      const list = book.sectionNotes[chId] || (book.sectionNotes[chId] = []);
+      let at = list.findIndex((x) => x.id === secId) + 1;
+      for (const it of items.slice(1)) {
+        const sec = { id: newSectionId(), text: it.text };
+        list.splice(at++, 0, sec);
+        focus = { secId: sec.id };
+      }
+    } else {
+      let cur = chId; // the chapter the items go after, and their sections into
+      let secAt = 0; // under the line pasted on, ahead of the sections it already has
+      for (const it of items.slice(1)) {
+        if (it.level === 0) {
+          const next = 'ch-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
+          book.chapterOrder.splice(book.chapterOrder.indexOf(cur) + 1, 0, next);
+          cur = next;
+          chapterHTML[cur] = '<p><br></p>';
+          book.chapterNotes[cur] = it.text;
+          persistChapter(cur);
+          secAt = 0;
+          focus = { chId: cur };
+        } else {
+          const list = book.sectionNotes[cur] || (book.sectionNotes[cur] = []);
+          const sec = { id: newSectionId(), text: it.text };
+          list.splice(secAt++, 0, sec);
+          touched.add(cur);
+          focus = { secId: sec.id };
+        }
+      }
+    }
+    scheduleMetaSave();
+    renderChapters();
+    for (const c of touched) syncGhosts(c);
+    updateCounters();
+    renderOutline(focus);
   });
 
   // Enter at the very start of a line that has text makes the new line
@@ -8877,7 +8991,7 @@ function openCard(cell, { fresh = false } = {}) {
   text.addEventListener('paste', (e) => {
     e.preventDefault();
     const raw = e.clipboardData.getData('text/plain') || '';
-    const items = outlineLines(raw);
+    const items = pastedOutline(e.clipboardData);
     // a list (from Word, Obsidian, a notes app): one card per line (#348)
     if (items.length > 1) { pasteOutline(items); return; }
     document.execCommand('insertText', false, raw.replace(/\s+/g, ' '));
@@ -9095,17 +9209,63 @@ function cardKeys(e) {
 // A pasted list, one item a line: bullets (-, *, •), numbers (1. 2)) and
 // letters (a.) come off, blank lines go. A line indented more than the
 // list's least indented ones is a level down. (#348)
+// A list as plain text, one item a line. Its marks go: bullets (Word's
+// second and third levels arrive as "o" and "§" before a tab), numbers and
+// letters, Markdown's headings and checkboxes (Obsidian). An item indented
+// past the least indented, or under one of Word's deeper bullets, is a level
+// down.
 function outlineLines(raw) {
   const items = [];
   for (const line of String(raw).replace(/\r\n?/g, '\n').split('\n')) {
-    const m = /^([ \t]*)(?:[-*+•◦▪‣·–—]\s+|\d{1,3}[.)]\s+|[a-zA-Z][.)]\s+)?(.*)$/.exec(line);
-    const words = (m ? m[2] : line).replace(/\s+/g, ' ').trim();
+    const m = /^([ \t]*)(?:([-*+•◦▪‣·–—])\s+|([o§])\t+|\d{1,3}[.)]\s+|[a-zA-Z][.)]\s+|#{1,6}\s+)?(?:\[[ xX]\]\s+)?(.*)$/.exec(line);
+    const words = (m ? m[4] : line).replace(/\s+/g, ' ').trim();
     if (!words) continue;
-    items.push({ indent: (m ? m[1] : '').replace(/\t/g, '    ').length, text: words });
+    const deep = !!m && (!!m[3] || /^[◦▪]$/.test(m[2] || ''));
+    items.push({ indent: (m ? m[1] : '').replace(/\t/g, '    ').length + (deep ? 1000 : 0), text: words });
   }
+  return outlineLevels(items);
+}
+function outlineLevels(items) {
   const least = items.length ? Math.min(...items.map((x) => x.indent)) : 0;
   for (const x of items) x.level = x.indent > least ? 1 : 0;
   return items;
+}
+// The same list from the HTML a word processor or a web page puts on the
+// clipboard beside the text, where the levels are real: nested <ul>/<ol>, or
+// Word's own list paragraphs (mso-list … level2). Fewer than two items: none.
+function outlineFromHtml(html) {
+  if (!html || !/<li[\s>]|mso-list/i.test(html)) return [];
+  const tpl = document.createElement('template');
+  tpl.innerHTML = html;
+  const root = tpl.content;
+  const items = [];
+  const lis = [...root.querySelectorAll('li')];
+  if (lis.length) {
+    for (const li of lis) {
+      const copy = li.cloneNode(true);
+      copy.querySelectorAll('ul, ol').forEach((x) => x.remove());
+      const text = copy.textContent.replace(/\s+/g, ' ').trim();
+      if (!text) continue;
+      let depth = 0;
+      for (let a = li.parentElement; a; a = a.parentElement) if (a.tagName === 'UL' || a.tagName === 'OL') depth++;
+      items.push({ indent: depth, text });
+    }
+  } else {
+    for (const p of root.querySelectorAll('p')) {
+      const m = /mso-list:\s*\S+\s+level(\d+)/i.exec(p.getAttribute('style') || '');
+      const copy = p.cloneNode(true);
+      copy.querySelectorAll('[style*="mso-list:Ignore" i], [style*="mso-list: Ignore" i]').forEach((x) => x.remove());
+      const text = copy.textContent.replace(/\s+/g, ' ').trim();
+      if (!text) continue;
+      items.push({ indent: m ? +m[1] : 0, text });
+    }
+  }
+  return items.length > 1 ? outlineLevels(items) : [];
+}
+// what was pasted, as a list: the HTML's levels when it has them, else the text's
+function pastedOutline(data) {
+  const fromHtml = outlineFromHtml(data.getData('text/html'));
+  return fromHtml.length > 1 ? fromHtml : outlineLines(data.getData('text/plain') || '');
 }
 
 // The list's first line goes on the open card, and each line after it on a
@@ -10472,6 +10632,12 @@ function sidePaneForTab(name) {
   const outline = name === 'outline' && !!book;
   $('#editor-view').classList.toggle('outline-tab', outline);
   if (outline) renderLooseCards();
+  // on Darlings the pane holds the book's snapshots, and stays open
+  const was = $('#editor-view').classList.contains('darlings-tab');
+  const dar = name === 'darlings' && !!book && snapsCan() && !IS_POCKET; // (Pocket's own list: later)
+  $('#editor-view').classList.toggle('darlings-tab', dar);
+  if (dar) { snapList(); $('#side-pane').classList.add('open'); }
+  else if (was && $('#side-pane').dataset.pinned !== '1') $('#side-pane').classList.remove('open');
 }
 
 // ---- the note walks ahead ----
@@ -10515,6 +10681,130 @@ function hideWalkNote() {
   walkEl = null;
   walkP = null;
 }
+
+// ---- the cards beside the page (#340) ----
+// While writing, the top of the right-hand pane holds the Outline's cards for
+// where the caret is: the chapter's card and its sections' (the one the caret
+// is in marked), or in a script the scene's. They're the same notes the
+// Outline shows, and they stay here after the gray ghost on the page has
+// been written over. Typed on here, they change there too.
+let sideCardsKey = '';
+let sideCardsQueued = false;
+function sideCardsBox() {
+  let box = $('#side-cards');
+  if (box) return box;
+  box = document.createElement('div');
+  box.id = 'side-cards';
+  $('#side-head').before(box);
+  return box;
+}
+// the section (by its note's id) holding p, ghost or written
+function sectionOf(body, p) {
+  const chId = body.closest('.chapter')?.dataset.id;
+  const notes = new Set(((book.sectionNotes || {})[chId] || []).map((s) => s.id));
+  const claimed = new Set();
+  let id = null;
+  for (const el of body.children) {
+    if (el.classList.contains('scene-break')) {
+      if (id) claimed.add(id);
+      id = null;
+      if (el === p) return null;
+      continue;
+    }
+    if (!id && el.dataset && notes.has(el.dataset.secId) && !claimed.has(el.dataset.secId)) id = el.dataset.secId;
+    if (el === p) return id;
+  }
+  return null;
+}
+function queueSideCards() {
+  if (sideCardsQueued) return;
+  sideCardsQueued = true;
+  requestAnimationFrame(() => { sideCardsQueued = false; sideCardsUpdate(); });
+}
+function sideCardsUpdate(force) {
+  const box = sideCardsBox();
+  if (!book || currentTab !== 'manuscript') { if (sideCardsKey) { box.innerHTML = ''; sideCardsKey = ''; } return; }
+  if (box.contains(document.activeElement)) return; // being typed on
+  const sel = window.getSelection();
+  let el = sel.rangeCount ? sel.anchorNode : null;
+  if (el && el.nodeType === Node.TEXT_NODE) el = el.parentElement;
+  const p = el && el.closest ? el.closest('.chapter-body > p') : null;
+  const body = p ? p.parentElement : null;
+  const chId = body ? body.closest('.chapter').dataset.id : currentChapterId;
+  let key = '';
+  let cards = [];
+  if (chId && isScript()) {
+    // the scene: its heading, at or above the caret
+    let h = p;
+    while (h && !h.classList.contains('sp-heading')) h = h.previousElementSibling;
+    if (h) {
+      // (a scene gets its id with its first note, here as on the Outline)
+      const sid = h.dataset.sceneId || '';
+      key = 'scene:' + (sid || [...body.querySelectorAll('p.sp-heading')].indexOf(h)) + ':' + h.textContent;
+      cards = [{ kind: 'scene', id: sid, head: h, label: h.textContent.trim() || t('Scene'), text: (book.sceneNotes || {})[sid] || '', current: false }];
+    }
+  } else if (chId && book.chapterOrder.includes(chId) && isStory(chId)) {
+    const secId = body ? sectionOf(body, p) : null;
+    const secs = (book.sectionNotes || {})[chId] || [];
+    key = 'ch:' + chId + ':' + (secId || '') + ':' + secs.length;
+    cards = [{ kind: 'chapter', id: chId, label: (book.chapterTitles || {})[chId] || chapterName(chId), text: (book.chapterNotes || {})[chId] || '', current: false },
+      ...secs.map((s, i) => ({ kind: 'section', id: s.id, chId, label: t('Section {letter}', { letter: secLetter(i) }), text: s.text || '', current: s.id === secId }))];
+  }
+  if (key === sideCardsKey && !force) return;
+  sideCardsKey = key;
+  box.innerHTML = '';
+  for (const c of cards) {
+    const card = document.createElement('div');
+    card.className = 'side-card side-card-' + c.kind + (c.current ? ' current' : '');
+    const head = document.createElement('div');
+    head.className = 'side-card-head';
+    head.textContent = c.label;
+    const ta = document.createElement('textarea');
+    ta.spellcheck = false;
+    ta.rows = 1;
+    ta.value = c.text;
+    ta.placeholder = c.kind === 'chapter' ? t('What happens in this chapter?') : c.kind === 'scene' ? t('What happens in this scene?') : t('What happens in this section?');
+    ta.setAttribute('aria-label', c.label);
+    const fit = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+    ta.addEventListener('input', () => {
+      const val = ta.value.trim();
+      if (c.kind === 'chapter') book.chapterNotes[c.id] = val;
+      else if (c.kind === 'scene') {
+        book.sceneNotes = book.sceneNotes || {};
+        if (!c.id && val && c.head.isConnected) {
+          c.id = newSceneId();
+          c.head.dataset.sceneId = c.id;
+          syncChapter(spBodyOf(c.head), spChapterOf(c.head));
+        }
+        if (c.id) { if (val) book.sceneNotes[c.id] = val; else delete book.sceneNotes[c.id]; }
+      }
+      else { const s = (book.sectionNotes[c.chId] || []).find((x) => x.id === c.id); if (s) s.text = val; }
+      scheduleMetaSave();
+      fit();
+    });
+    ta.addEventListener('blur', () => {
+      if (c.kind === 'section') syncGhosts(c.chId);
+      if (c.kind === 'scene') spSchedule();
+      renderNav();
+    });
+    ta.addEventListener('keydown', (e) => {
+      // Esc (or Enter without Shift) goes back to the page
+      if (e.key === 'Escape' || (e.key === 'Enter' && !e.shiftKey && !e.isComposing)) {
+        e.preventDefault();
+        e.stopPropagation();
+        ta.blur();
+        focusPage();
+      }
+    });
+    card.append(head, ta);
+    box.appendChild(card);
+    requestAnimationFrame(fit);
+  }
+}
+document.addEventListener('selectionchange', queueSideCards);
+// the pane coming into view shows the cards as they are now (the Outline may
+// have changed them since)
+$('#side-hotzone').addEventListener('mouseenter', () => sideCardsUpdate(true));
 
 function walkNoteUpdate() {
   walkQueued = false;
@@ -11066,6 +11356,7 @@ async function keepOtherDeviceVersion(bookId, chId, disk) {
 }
 
 function scheduleChapterSave(chId) {
+  maybeDailySnapshot(); // SNAPSHOTS: the first change of the day keeps the day's start
   clearTimeout(saveTimers[chId]);
   const bookId = book && book.id;
   saveTimers[chId] = setTimeout(() => {
@@ -11149,6 +11440,580 @@ function flushAllSaves(e) {
   flushSidecars();
   if (moved || metaSig(book) !== savedMetaSig) saveMeta();
 }
+
+/* ================================================================== */
+/*  SNAPSHOTS                                                          */
+/* ================================================================== */
+
+// ⌘S takes a snapshot of the book: the chapters that changed since the last
+// snapshot, plus the book's shape (order, titles, kinds) and a fingerprint of
+// every chapter. NEO takes one on its own before the first change of each
+// writing day. They're listed in the right-hand pane on the Darlings tab;
+// picking one shows the book as it was, read-only, with what has gone since
+// marked, and brings a chapter or the whole book back.
+//
+// book-…/snapshots/<name>/  one folder per snapshot, its files written once
+// (main.js, Pocket's bridge): <chapterId>.html for each chapter that changed,
+// then snapshot.json, last, so a folder without it is still being written.
+// A chapter's text at a snapshot is in the newest snapshot at or before it
+// that holds the file. The name carries what the list shows:
+//   20261009T121400Z-k-3-84210-x7q2   when (UTC) · kind · chapters changed · words
+// k: taken with ⌘S (kept until deleted) · d: the start of a writing day ·
+// r: just before a snapshot was brought back. NEO's own (d, r) go after 30
+// days; a snapshot that goes hands its chapters on to the next one first.
+const SNAP_KEPT = 'k';
+const SNAP_KEEP_DAYS = 30;
+function snapName(ms, kind, changed, words, rand = Math.random().toString(36).slice(2, 6)) {
+  const when = new Date(ms).toISOString().replace(/[-:]/g, '').slice(0, 15);
+  return `${when}Z-${kind}-${Math.max(0, changed | 0)}-${Math.max(0, Math.round(words) || 0)}-${String(rand).replace(/[^a-z0-9]/g, '') || 'x'}`;
+}
+function parseSnapName(name) {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z-([a-z])-(\d+)-(\d+)-[a-z0-9]+$/.exec(name);
+  if (!m) return null;
+  return { name, at: Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]), kind: m[7], changed: +m[8], words: +m[9] };
+}
+// a short fingerprint of a chapter's text (cyrb53): equal text, equal print
+function textHash(str) {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36) + ':' + str.length;
+}
+// NEO's own snapshots older than a month go, by their names alone (so every
+// device picks the same ones); ⌘S snapshots and the newest one stay
+function snapsToThin(snaps, now) {
+  const newest = snaps.reduce((a, s) => (!a || s.at > a.at ? s : a), null);
+  return snaps.filter((s) => s !== newest && s.kind !== SNAP_KEPT && now - s.at > SNAP_KEEP_DAYS * 86400000).map((s) => s.name);
+}
+// where a chapter's text at snapshots[i] is: the newest snapshot at or
+// before it holding the file (snapshots oldest first, each with `files`)
+function snapHolder(snaps, i, chId) {
+  for (let k = i; k >= 0; k--) if (snaps[k].files.has(chId + '.html')) return snaps[k];
+  return null;
+}
+// Which words of an older text the chapter no longer has, paragraph by
+// paragraph. A paragraph still there word for word is left alone; one with
+// no near twin today is gone whole; one rewritten is compared word by word
+// with today's paragraph that shares the most words with it.
+// → for each old paragraph: null (still there), 'all', or its gone words' places
+function wordsGone(oldParas, curParas) {
+  const words = (s) => String(s).split(/\s+/).filter(Boolean);
+  const curWords = curParas.map(words);
+  const here = new Set(curWords.map((w) => w.join(' ')));
+  const curSets = curWords.map((w) => new Set(w));
+  return oldParas.map((text) => {
+    const w = words(text);
+    if (!w.length || here.has(w.join(' '))) return null;
+    const mine = new Set(w);
+    let best = -1;
+    let bestScore = 0;
+    curSets.forEach((set, i) => {
+      let shared = 0;
+      for (const x of mine) if (set.has(x)) shared++;
+      const score = shared / Math.max(mine.size, set.size);
+      if (score > bestScore) { bestScore = score; best = i; }
+    });
+    if (best < 0 || bestScore < 0.4) return 'all';
+    const b = curWords[best];
+    const n = w.length;
+    const m = b.length;
+    if (n * m > 4e6) return 'all';
+    // the longest run of words the two share, in order; the rest is gone
+    const L = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) L[i][j] = w[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    }
+    const gone = [];
+    for (let i = 0, j = 0; i < n;) {
+      if (j < m && w[i] === b[j]) { i++; j++; } else if (j < m && L[i][j + 1] >= L[i + 1][j]) j++;
+      else { gone.push(i); i++; }
+    }
+    return gone.length ? gone : null;
+  });
+}
+// (the rules above are plain functions: scripts/snapshots.test.js)
+
+// a chapter's saved HTML as an inert copy (a <template> loads no images)
+function snapHolderEl(html) {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = html || '';
+  tpl.content.querySelectorAll(UNCOUNTED).forEach((n) => n.remove());
+  return tpl.content;
+}
+const htmlWords = (html) => countWords(plainText(snapHolderEl(html)));
+const htmlParas = (html) => [...snapHolderEl(html).children].map((p) => p.textContent);
+const snapsCan = () => !!(window.neo && window.neo.snapshotWrite);
+const logSnap = (err) => window.neo.logError('snapshot: ' + ((err && err.message) || err));
+
+// The book's snapshots, oldest first: { name, at, kind, changed, words, files: Set }.
+// Only finished ones (snapshot.json written).
+let snapCache = null;
+async function loadSnaps(bookId, fresh) {
+  if (!fresh && snapCache && snapCache.bookId === bookId) return snapCache.snaps;
+  const raw = await window.neo.snapshotList(bookId);
+  const snaps = [];
+  for (const r of raw || []) {
+    const s = parseSnapName(r.name);
+    if (!s || !r.files.includes('snapshot.json')) continue;
+    s.files = new Set(r.files);
+    snaps.push(s);
+  }
+  snaps.sort((a, b) => a.at - b.at || (a.name < b.name ? -1 : 1));
+  snapCache = { bookId, snaps };
+  return snaps;
+}
+async function snapMeta(bookId, s) {
+  if (!s.meta) {
+    try { s.meta = JSON.parse(await window.neo.snapshotRead(bookId, s.name, 'snapshot.json')); } catch { s.meta = null; }
+  }
+  return s.meta;
+}
+
+// Takes a snapshot of the open book. `htmlOf` gives each chapter's text (by
+// default what's on the page). Resolves to { snap, same } — same: nothing
+// had changed since the last snapshot, so none was taken.
+let snapChain = Promise.resolve();
+function takeSnapshot(kind, htmlOf = (c) => chapterHTML[c] || '', { ifNoneToday = false } = {}) {
+  const run = () => takeSnapshotNow(kind, htmlOf, { ifNoneToday });
+  const p = snapChain.catch(() => {}).then(run);
+  snapChain = p;
+  return p;
+}
+async function takeSnapshotNow(kind, htmlOf, { ifNoneToday }) {
+  if (!book || !snapsCan()) return null;
+  const bookId = book.id;
+  const order = [...book.chapterOrder];
+  const titles = { ...(book.chapterTitles || {}) };
+  const kinds = { ...(book.chapterKinds || {}) };
+  const texts = {};
+  for (const c of order) texts[c] = htmlOf(c);
+  const snaps = await loadSnaps(bookId);
+  const now = Date.now();
+  if (ifNoneToday && snaps.some((s) => new Date(s.at).toDateString() === new Date(now).toDateString())) return null;
+  const last = snaps[snaps.length - 1] || null;
+  const lastMeta = last ? await snapMeta(bookId, last) : null;
+  const hashes = {};
+  const words = {};
+  const changed = [];
+  let total = 0;
+  for (const c of order) {
+    hashes[c] = textHash(texts[c]);
+    words[c] = htmlWords(texts[c]);
+    total += words[c];
+    const known = lastMeta && lastMeta.hashes && lastMeta.hashes[c] === hashes[c] && snapHolder(snaps, snaps.length - 1, c);
+    if (!known) changed.push(c);
+  }
+  if (!total && !lastMeta && kind !== SNAP_KEPT) return null; // nothing written yet
+  const sameShape = lastMeta && JSON.stringify(lastMeta.chapterOrder) === JSON.stringify(order) &&
+    order.every((c) => (lastMeta.chapterTitles || {})[c] === titles[c] && (lastMeta.chapterKinds || {})[c] === kinds[c]);
+  if (!changed.length && sameShape && (kind !== SNAP_KEPT || last.kind === SNAP_KEPT)) return { snap: last, same: true };
+  const name = snapName(now, kind, changed.length, total);
+  for (const c of changed) await window.neo.snapshotWrite(bookId, name, c + '.html', texts[c]);
+  const meta = { v: 1, at: new Date(now).toISOString(), kind, title: book.title || '', chapterOrder: order, chapterTitles: titles, chapterKinds: kinds, hashes, words, changed, total };
+  await window.neo.snapshotWrite(bookId, name, 'snapshot.json', JSON.stringify(meta, null, 1));
+  const snap = parseSnapName(name);
+  snap.files = new Set([...changed.map((c) => c + '.html'), 'snapshot.json']);
+  snap.meta = meta;
+  snaps.push(snap);
+  // NEO's own old ones go, each handing its chapters on to the next first
+  for (const gone of snapsToThin(snaps, now)) {
+    const i = snaps.findIndex((s) => s.name === gone);
+    const next = snaps[i + 1];
+    if (i < 0 || !next) continue;
+    for (const f of snaps[i].files) {
+      if (!f.endsWith('.html') || next.files.has(f)) continue;
+      const text = await window.neo.snapshotRead(bookId, snaps[i].name, f);
+      await window.neo.snapshotWrite(bookId, next.name, f, text);
+      next.files.add(f);
+    }
+    await window.neo.snapshotRemove(bookId, gone);
+    snaps.splice(i, 1);
+  }
+  renderSnapList();
+  return { snap, same: false };
+}
+
+// The first change of a writing day keeps the book as the day found it
+// (what's on disk: savedHTML, before this change reaches it)
+const snapDay = {};
+function maybeDailySnapshot() {
+  if (!book || !snapsCan() || shelfExport) return;
+  const today = new Date().toDateString();
+  if (snapDay[book.id] === today) return;
+  snapDay[book.id] = today;
+  takeSnapshot('d', (c) => (typeof savedHTML[c] === 'string' ? savedHTML[c] : chapterHTML[c] || ''), { ifNoneToday: true }).catch(logSnap);
+}
+
+// ⌘S
+async function snapshotNow() {
+  if (!book || !snapsCan()) return;
+  try {
+    const r = await takeSnapshot(SNAP_KEPT);
+    if (!r) return;
+    const time = snapTime(r.snap.at);
+    if (r.same) { toast(t('Nothing has changed since your last snapshot ({time}).', { time }), 3500); return; }
+    const first = (await loadSnaps(book.id)).length === 1;
+    toast(first ? t('Snapshot taken, {time}: the whole book. It’s on the Darlings tab.', { time })
+      : t('Snapshot taken, {time}: {n} chapters changed. It’s on the Darlings tab.', { time, n: r.snap.changed }), 4000);
+  } catch (err) {
+    logSnap(err);
+    toast(t('NEO couldn’t take a snapshot. Your book itself is saved as usual.'), 6000);
+  }
+}
+
+const snapTime = (at) => new Date(at).toLocaleTimeString(NeoI18n.getLocale(), { hour: 'numeric', minute: '2-digit' });
+function snapWhen(at) {
+  const d = new Date(at);
+  const today = new Date();
+  const time = snapTime(at);
+  if (d.toDateString() === today.toDateString()) return t('today at {time}', { time });
+  if (d.toDateString() === new Date(today.getTime() - 86400000).toDateString()) return t('yesterday at {time}', { time });
+  return d.toLocaleDateString(NeoI18n.getLocale(), { weekday: 'short', month: 'short', day: 'numeric', year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric' }) + ', ' + time;
+}
+function snapWhy(kind) {
+  if (kind === SNAP_KEPT) return t('Taken by you');
+  if (kind === 'd') return t('Start of the day');
+  if (kind === 'r') return t('Before a restore');
+  return '';
+}
+
+// ---- the list: the right-hand pane, while Darlings is up ----
+let snapShown = null; // the snapshot on the page, or null for the darlings
+function snapList() {
+  let list = $('#snap-list');
+  if (list) return list;
+  const head = $('#side-head > span');
+  if (head && !$('#side-head .side-title-snaps')) {
+    head.classList.add('side-title-notes');
+    const alt = document.createElement('span');
+    alt.className = 'side-title-snaps';
+    alt.textContent = t('Snapshots');
+    head.after(alt);
+  }
+  list = document.createElement('div');
+  list.id = 'snap-list';
+  list.setAttribute('role', 'listbox');
+  $('#sticky-list').after(list);
+  return list;
+}
+async function renderSnapList() {
+  if (!book || currentTab !== 'darlings') return;
+  const list = snapList();
+  const bookId = book.id;
+  let snaps = [];
+  try { snaps = await loadSnaps(bookId); } catch (err) { logSnap(err); }
+  if (!book || book.id !== bookId) return;
+  list.innerHTML = '';
+  const item = (cls, title, sub, on, onClick) => {
+    const b = document.createElement('button');
+    b.className = 'snap-item ' + cls + (on ? ' on' : '');
+    b.setAttribute('role', 'option');
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+    b.innerHTML = '<span class="snap-dot" aria-hidden="true"></span><span class="snap-line"><span class="snap-t"></span><span class="snap-s"></span></span>';
+    b.querySelector('.snap-t').textContent = title;
+    b.querySelector('.snap-s').textContent = sub;
+    b.onclick = onClick;
+    list.appendChild(b);
+    return b;
+  };
+  item('snap-darlings', t('Darlings'), t('{n} darlings', { n: darlings.length }), !snapShown, () => showDarlingsAgain());
+  if (!snaps.length) {
+    const p = document.createElement('p');
+    p.className = 'snap-empty';
+    p.textContent = IS_MAC ? t('Press ⌘S to take a snapshot of your book. It costs only the chapters that changed.')
+      : t('Press Ctrl+S to take a snapshot of your book. It costs only the chapters that changed.');
+    list.appendChild(p);
+    return;
+  }
+  let lastGroup = '';
+  const today = new Date().toDateString();
+  const yest = new Date(Date.now() - 86400000).toDateString();
+  for (let i = snaps.length - 1; i >= 0; i--) {
+    const s = snaps[i];
+    const d = new Date(s.at).toDateString();
+    const group = d === today ? t('Today') : d === yest ? t('Yesterday') : t('Earlier');
+    if (group !== lastGroup) {
+      const g = document.createElement('div');
+      g.className = 'snap-group';
+      g.textContent = group;
+      list.appendChild(g);
+      lastGroup = group;
+    }
+    const when = group === t('Earlier') ? new Date(s.at).toLocaleDateString(NeoI18n.getLocale(), { month: 'short', day: 'numeric' }) + ', ' + snapTime(s.at) : snapTime(s.at);
+    const what = i === 0 ? t('The whole book') : s.changed ? t('{n} chapters changed', { n: s.changed }) : t('No chapters changed');
+    const on = snapShown && snapShown.name === s.name;
+    const b = item(s.kind === SNAP_KEPT ? 'snap-k' : 'snap-a', when, snapWhy(s.kind) + ' · ' + what, on, () => showSnapshot(s.name));
+    b.title = t('{n} words', { n: s.words });
+    if (on && snapShown.diff && snapShown.diff.length) {
+      // the chapters that differ from today, to jump to
+      const sub = document.createElement('div');
+      sub.className = 'snap-chapters';
+      for (const c of snapShown.diff) {
+        const a = document.createElement('button');
+        a.className = 'snap-ch';
+        a.textContent = c.label;
+        a.onclick = () => { const el = document.querySelector(`#snap-view .snap-chapter[data-id="${c.chId}"]`); if (el) el.scrollIntoView({ block: 'start', behavior: scrollBehavior() }); };
+        sub.appendChild(a);
+      }
+      list.appendChild(sub);
+    }
+  }
+}
+
+// ---- the page: the book as it was ----
+function snapView() {
+  let v = $('#snap-view');
+  if (v) return v;
+  v = document.createElement('div');
+  v.id = 'snap-view';
+  v.hidden = true;
+  $('#darlings-list').after(v);
+  // a passage picked from an old snapshot can go to Darlings
+  v.addEventListener('contextmenu', async (e) => {
+    const sel = window.getSelection();
+    const text = sel && !sel.isCollapsed && v.contains(sel.anchorNode) ? sel.toString().trim() : '';
+    if (!text) return;
+    e.preventDefault();
+    const range = sel.getRangeAt(0).cloneRange();
+    const choice = await popMenu(e.clientX, e.clientY, [
+      { label: t('Copy'), value: 'copy' },
+      { label: t('Set Aside as a Darling'), value: 'darling' }
+    ]);
+    if (choice === 'copy') document.execCommand('copy');
+    if (choice === 'darling') snapToDarling(range, text);
+  });
+  return v;
+}
+
+async function snapToDarling(range, text) {
+  if (!book) return;
+  const holder = document.createElement('div');
+  holder.appendChild(range.cloneContents());
+  const chEl = range.startContainer.parentElement && range.startContainer.parentElement.closest('.snap-chapter');
+  const html = [...holder.querySelectorAll('p')].length ? holder.innerHTML : '<p>' + escHtml(text) + '</p>';
+  darlings.unshift({
+    id: 'd-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+    html,
+    text: text.slice(0, 2000),
+    chapterId: chEl ? chEl.dataset.id : '',
+    chapterLabel: chEl ? chEl.dataset.label : t('a snapshot'),
+    date: new Date().toISOString()
+  });
+  await writeSidecar(book.id, 'darlings', darlings);
+  renderSnapList();
+  toast(t('Set aside in Darlings.'), 2500);
+}
+
+function showDarlingsAgain() {
+  snapShown = null;
+  if (window.CSS && CSS.highlights) CSS.highlights.delete('neo-snap-gone');
+  const v = $('#snap-view');
+  if (v) { v.hidden = true; v.innerHTML = ''; }
+  if (currentTab !== 'darlings') return;
+  $('#aux-title').textContent = t('Darlings');
+  $('#darlings-list').hidden = false;
+  renderDarlings();
+  renderSnapList();
+  $('#paper-scroll').scrollTop = 0;
+}
+
+// the snapshot's book, chapter by chapter: [{ chId, html }] in its order
+async function snapshotBook(bookId, name) {
+  const snaps = await loadSnaps(bookId, true);
+  const i = snaps.findIndex((s) => s.name === name);
+  if (i < 0) return null;
+  const meta = await snapMeta(bookId, snaps[i]);
+  if (!meta) return null;
+  const chapters = [];
+  for (const chId of meta.chapterOrder) {
+    const at = snapHolder(snaps, i, chId);
+    chapters.push({ chId, html: at ? await window.neo.snapshotRead(bookId, at.name, chId + '.html') : '' });
+  }
+  return { snap: snaps[i], meta, chapters };
+}
+
+async function showSnapshot(name) {
+  if (!book) return;
+  const bookId = book.id;
+  const got = await snapshotBook(bookId, name).catch((err) => { logSnap(err); return null; });
+  if (!book || book.id !== bookId || currentTab !== 'darlings') return;
+  if (!got) { toast(t('NEO couldn’t read that snapshot.')); return; }
+  const { snap, meta, chapters } = got;
+  const shape = { ...book, chapterOrder: meta.chapterOrder, chapterTitles: meta.chapterTitles || {}, chapterKinds: meta.chapterKinds || {} };
+  const label = (chId) => chapterHeading(chId, shape) || chapterName(chId, shape);
+  const v = snapView();
+  $('#darlings-list').hidden = true;
+  $('#aux-title').textContent = t('Your book as it was');
+  v.hidden = false;
+  v.innerHTML = '';
+  if (window.CSS && CSS.highlights) CSS.highlights.delete('neo-snap-gone');
+  // which chapters differ from the book today
+  const diff = [];
+  for (const ch of chapters) {
+    const now = book.chapterOrder.includes(ch.chId) ? (chapterHTML[ch.chId] || '') : null;
+    ch.now = now;
+    ch.same = now !== null && textHash(now) === textHash(ch.html);
+    if (!ch.same) diff.push({ chId: ch.chId, label: label(ch.chId) });
+  }
+  const extra = book.chapterOrder.filter((c) => !meta.chapterOrder.includes(c)).length;
+  snapShown = { name, snap, meta, chapters, diff };
+
+  const band = document.createElement('div');
+  band.className = 'snap-band';
+  band.innerHTML = '<div class="snap-band-what"><span class="snap-band-when"></span><span class="snap-band-sub"></span></div><div class="snap-band-do"><button class="snap-back"></button><button class="snap-all"></button></div>';
+  band.querySelector('.snap-band-when').textContent = t('Your book {when}', { when: snapWhen(snap.at) });
+  band.querySelector('.snap-band-sub').textContent = (diff.length ? t('{n} chapters differ from now', { n: diff.length }) : t('Every chapter is the same as now'))
+    + (extra ? ' · ' + t('{n} chapters added since', { n: extra }) : '');
+  band.querySelector('.snap-back').textContent = t('Back to Darlings');
+  band.querySelector('.snap-back').onclick = showDarlingsAgain;
+  const all = band.querySelector('.snap-all');
+  all.textContent = t('Restore Whole Book');
+  all.disabled = !diff.length && !extra && JSON.stringify(meta.chapterOrder) === JSON.stringify(book.chapterOrder);
+  all.onclick = () => restoreSnapshot(null);
+  v.appendChild(band);
+
+  const ranges = [];
+  for (const ch of chapters) {
+    const sec = document.createElement('section');
+    sec.className = 'snap-chapter' + (ch.same ? ' same' : '');
+    sec.dataset.id = ch.chId;
+    sec.dataset.label = label(ch.chId);
+    const head = document.createElement('div');
+    head.className = 'snap-head';
+    const h = document.createElement('h3');
+    h.textContent = label(ch.chId);
+    head.appendChild(h);
+    const tag = document.createElement('span');
+    tag.className = 'snap-tag';
+    tag.textContent = ch.same ? t('Same as now') : ch.now === null ? t('No longer in the book') : t('Differs from now');
+    head.appendChild(tag);
+    if (!ch.same) {
+      const b = document.createElement('button');
+      b.className = 'snap-one';
+      b.textContent = t('Restore This Chapter');
+      b.onclick = () => restoreSnapshot(ch.chId);
+      head.appendChild(b);
+    }
+    sec.appendChild(head);
+    const body = document.createElement('div');
+    body.className = 'chapter-body snap-body';
+    if (isScript()) body.classList.add('sp-geom');
+    body.appendChild(snapHolderEl(ch.html));
+    sec.appendChild(body);
+    v.appendChild(sec);
+    if (ch.same) continue;
+    const paras = [...body.children];
+    if (ch.now === null) { paras.forEach((p) => p.classList.add('snap-gone')); continue; }
+    const gone = wordsGone(paras.map((p) => p.textContent), htmlParas(ch.now));
+    paras.forEach((p, k) => {
+      const g = gone[k];
+      if (!g) return;
+      if (g === 'all') { p.classList.add('snap-gone'); return; }
+      ranges.push(...wordRanges(p, new Set(g)));
+    });
+  }
+  if (ranges.length && window.CSS && CSS.highlights && window.Highlight) CSS.highlights.set('neo-snap-gone', new Highlight(...ranges));
+  renderSnapList();
+  // to the first chapter that differs
+  const first = diff.length && v.querySelector(`.snap-chapter[data-id="${diff[0].chId}"]`);
+  if (first) first.scrollIntoView({ block: 'start' });
+  else $('#paper-scroll').scrollTop = 0;
+}
+
+// ranges over the words of p at the given places (its text nodes end to end)
+function wordRanges(p, at) {
+  const nodes = [];
+  let full = '';
+  const walk = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) { nodes.push({ n, from: full.length }); full += n.data; }
+  const spot = (pos) => {
+    let k = nodes.length - 1;
+    while (k > 0 && nodes[k].from > pos) k--;
+    return [nodes[k].n, Math.min(pos - nodes[k].from, nodes[k].n.data.length)];
+  };
+  const out = [];
+  let w = 0;
+  for (const m of full.matchAll(/\S+/g)) {
+    if (at.has(w)) {
+      const r = document.createRange();
+      r.setStart(...spot(m.index));
+      r.setEnd(...spot(m.index + m[0].length));
+      out.push(r);
+    }
+    w++;
+  }
+  return out;
+}
+
+// A chapter (chId) or the whole book (null) as the shown snapshot had it.
+// The book as it stands is snapshotted first, and ⌘Z undoes the restore.
+async function restoreSnapshot(chId) {
+  const shown = snapShown;
+  if (!book || !shown) return;
+  try {
+    await takeSnapshot('r');
+  } catch (err) {
+    logSnap(err); // never replace words that couldn't be kept
+    toast(t('NEO couldn’t snapshot the book as it is now, so nothing was changed.'), 6000);
+    return;
+  }
+  const { meta, chapters, snap } = shown;
+  const byId = Object.fromEntries(chapters.map((c) => [c.chId, c.html]));
+  snapshotStructure('snapshot');
+  book.chapterTitles = book.chapterTitles || {};
+  book.chapterKinds = book.chapterKinds || {};
+  let gone = [];
+  if (chId) {
+    if (!book.chapterOrder.includes(chId)) {
+      // back where it stood: after the nearest chapter before it that's still here
+      const before = meta.chapterOrder.slice(0, meta.chapterOrder.indexOf(chId)).reverse().find((c) => book.chapterOrder.includes(c));
+      book.chapterOrder.splice(before ? book.chapterOrder.indexOf(before) + 1 : 0, 0, chId);
+      if ((meta.chapterTitles || {})[chId]) book.chapterTitles[chId] = meta.chapterTitles[chId];
+      if ((meta.chapterKinds || {})[chId]) book.chapterKinds[chId] = meta.chapterKinds[chId];
+    }
+    chapterHTML[chId] = byId[chId];
+  } else {
+    gone = book.chapterOrder.filter((c) => !meta.chapterOrder.includes(c));
+    book.chapterOrder = [...meta.chapterOrder];
+    for (const c of book.chapterOrder) {
+      chapterHTML[c] = byId[c];
+      if ((meta.chapterTitles || {})[c] !== undefined) book.chapterTitles[c] = meta.chapterTitles[c]; else delete book.chapterTitles[c];
+      if ((meta.chapterKinds || {})[c] !== undefined) book.chapterKinds[c] = meta.chapterKinds[c]; else delete book.chapterKinds[c];
+    }
+  }
+  wordCache = {};
+  for (const c of chId ? [chId] : book.chapterOrder) await persistChapter(c);
+  await saveMeta();
+  // chapters added since: out of the book, their words in the snapshot just taken
+  for (const c of gone) { delete chapterHTML[c]; await window.neo.deleteChapter(book.id, c); }
+  showDarlingsAgain();
+  switchTab('manuscript');
+  renderChapters();
+  const el = chId && document.querySelector(`.chapter[data-id="${chId}"]`);
+  if (el) { el.scrollIntoView({ block: 'start' }); focusChapterStart(chId); breakRun = 1; } // ⌘Z, before any typing, undoes it
+  else $('#paper-scroll').scrollTop = 0;
+  updateCounters();
+  scheduleNavRefresh();
+  const undo = IS_MAC ? '⌘Z' : 'Ctrl+Z';
+  toast(chId ? t('Chapter restored from {when}. {undo} undoes it; the text it replaced is in a snapshot too.', { when: snapWhen(snap.at), undo })
+    : t('Book restored from {when}. {undo} undoes it; the book as it was is in a snapshot too.', { when: snapWhen(snap.at), undo }), 7000);
+}
+
+// Esc on a snapshot goes back to the darlings (first, before the editor's
+// own Esc, which would close the book)
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || e.isComposing || !snapShown || currentTab !== 'darlings') return;
+  if (document.querySelector('.modal-backdrop:not([hidden]), .pop-menu') || !$('#searchbar').hidden) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  showDarlingsAgain();
+}, true);
 
 /* ================================================================== */
 /*  REFRESH — picking up what another device wrote                     */
@@ -11433,6 +12298,11 @@ async function backToShelf() {
   flushAllSaves();
   tabPlaces = {};
   book = null;
+  showWindowTitle();
+  snapShown = null;
+  snapCache = null;
+  sideCardsKey = '';
+  if ($('#side-cards')) $('#side-cards').innerHTML = '';
   currentChapterId = null;
   undoStack = [];
   $('#editor-view').hidden = true;
@@ -11581,6 +12451,7 @@ function sealUndoOnEdit() {
 }
 function snapshotStructure(label, opts) {
   if (!book) return;
+  maybeDailySnapshot();
   sealUndo(undoStack[undoStack.length - 1]);
   const snap = {
     armed: false, // the action's own edits, in this same moment, don't seal it
@@ -13348,6 +14219,7 @@ function bookShortcutSections() {
     ] },
     { title: tk('App & files'), rows: [
       [KHELP, tk('Keyboard shortcuts')],
+      [K('⌘S', 'Ctrl+S'), tk('Take a snapshot of the book'), tk('NEO saves as you type; a snapshot keeps the book as it stands now. They’re on the Darlings tab.')],
       [K('⌘,', 'Ctrl+,'), tk('Goals and writing sprints')],
       [K('⌘⇧I', 'Ctrl+Shift+I'), tk('Import manuscripts')],
       [K('⌘E', 'Ctrl+E'), tk('Email a draft to yourself')]
@@ -15298,6 +16170,7 @@ window.neo.onMenu(async (msg) => {
     await writeLibrary(library);
   }
   if (msg.type === 'emailDraft') doEmailDraft();
+  if (msg.type === 'snapshot' && book && !$('#editor-view').hidden) snapshotNow();
   if (msg.type === 'emailSettings') emailSettings();
   if (msg.type === 'find') openSearch();
   if (msg.type === 'spellcheck') toggleSpellcheck();

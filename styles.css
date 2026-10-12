@@ -995,7 +995,7 @@ body.night #outline-board { --card: #e2ddd1; --card-head: #ebe7dd; }
   font-size: calc(13px * var(--cz));
 }
 body.light .ob-card { box-shadow: 0 0 0 1px #d9d3c4, 0 3px 8px rgba(60,50,30,0.12); }
-.ob-cell:focus-visible .ob-card { box-shadow: 0 0 0 2px var(--accent), 0 5px 12px rgba(0,0,0,0.3); }
+.ob-cell:focus-visible .ob-card { box-shadow: 0 0 0 3px var(--red), 0 5px 12px rgba(0,0,0,0.3); }
 .ob-chapter { background: var(--card-head); }
 .ob-head { display: flex; align-items: baseline; gap: 7px; min-height: 0; }
 .ob-chapter .ob-head { align-items: flex-end; border-bottom: 1px solid #e3b4ae; padding-bottom: 2px; }
@@ -2028,8 +2028,10 @@ body.light #nav-pane.script .nav-item.sp-scene .n-num { color: #8f8a80; }
 .ob-held { margin-top: 6px; font-size: 11px; letter-spacing: 0.04em; color: var(--muted); }
 
 /* cards picked together (⌘-click, Shift-click, or a sweep across the board) */
-.ob-cell.ob-sel .ob-card { box-shadow: 0 0 0 2px var(--accent), 0 2px 10px rgba(0, 0, 0, 0.25); }
-.ob-lasso { position: fixed; z-index: 50; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 3px; pointer-events: none; }
+/* red, not the accent's gold: gold on a cream card can't be told from no
+   border at all (#351) */
+.ob-cell.ob-sel .ob-card { box-shadow: 0 0 0 3px var(--red), 0 2px 10px rgba(0, 0, 0, 0.25); }
+.ob-lasso { position: fixed; z-index: 50; border: 1px solid var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); border-radius: 3px; pointer-events: none; }
 .ob-lassoing, .ob-lassoing * { user-select: none !important; -webkit-user-select: none !important; }
 
 /* a scene's card note on its empty first line, until the scene is written (#339) */
@@ -2042,3 +2044,100 @@ body.light #nav-pane.script .nav-item.sp-scene .n-num { color: #8f8a80; }
 
 /* the shelf's own size (#336), kept on this device */
 #shelves { zoom: var(--shelf-zoom, 1); }
+
+/* the note being worked on, plain to see among the others (#351): red, like
+   the picked cards on the Outline */
+.sticky.current { box-shadow: 0 0 0 2px var(--red); }
+body.light .sticky.current { box-shadow: 0 0 0 2px var(--red); }
+
+/* the open book's title beside the window's buttons (macOS, where the system's
+   own bar is hidden behind the page; elsewhere the system's bar shows it) */
+body.mac-bar #dragstrip {
+  padding-left: 84px; line-height: 28px; font-size: 12px; color: #6a6a6a;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 84px;
+  pointer-events: auto; user-select: none;
+}
+body.light.mac-bar #dragstrip { color: #8a857c; }
+body.full-screen #dragstrip, body.focus-mode #dragstrip { color: transparent; }
+
+/* ---------- snapshots (SNAPSHOTS in app.js): the right-hand pane on the Darlings tab ---------- */
+.side-title-snaps, #snap-list { display: none; }
+#editor-view.darlings-tab .side-title-notes, #editor-view.darlings-tab #sticky-list { display: none; }
+#editor-view.darlings-tab .side-title-snaps { display: inline; }
+#editor-view.darlings-tab #snap-list { display: block; }
+/* the pane stays open there, so the page moves over to clear it */
+#editor-view.darlings-tab #paper-scroll { left: calc(50% - 125px * var(--ui-zoom)); }
+#editor-view.darlings-tab.nav-pinned #paper-scroll { left: calc(50% - 1px * var(--ui-zoom)); }
+#snap-list { padding-bottom: 12px; }
+.snap-item {
+  display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left;
+  background: none; border: none; border-left: 2px solid transparent; padding: 8px 14px; color: #ccc; min-height: 44px;
+}
+.snap-item:hover { background: rgba(255,255,255,0.04); }
+.snap-item.on { background: rgba(255,255,255,0.07); border-left-color: var(--red); }
+.snap-item:focus-visible { outline: 1px solid #666; outline-offset: -1px; }
+.snap-dot { flex: none; width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; box-sizing: border-box; border: 1.5px solid var(--muted); }
+.snap-item.snap-k .snap-dot { background: var(--red); border-color: var(--red); }
+.snap-item.snap-darlings .snap-dot { border-radius: 2px; background: var(--accent); border-color: var(--accent); }
+.snap-line { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.snap-t { font-size: 13px; color: #eee; }
+.snap-s { font-size: 11px; color: var(--muted); }
+.snap-group { padding: 12px 16px 4px; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: #666; }
+.snap-empty { padding: 10px 16px; font-size: 12px; line-height: 1.5; color: #777; }
+.snap-chapters { display: flex; flex-direction: column; padding: 0 0 6px 36px; }
+.snap-ch { background: none; border: none; text-align: left; font-size: 12px; color: #b9b4aa; padding: 4px 14px 4px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.snap-ch:hover { color: #fff; text-decoration: underline; }
+body.light .snap-item { color: #3a362f; }
+body.light .snap-item:hover { background: rgba(0,0,0,0.04); }
+body.light .snap-item.on { background: rgba(0,0,0,0.06); }
+body.light .snap-t { color: #1c1a17; }
+body.light .snap-group, body.light .snap-empty { color: #857f73; }
+body.light .snap-ch { color: #5a554c; }
+body.light .snap-ch:hover { color: #1c1a17; }
+/* the book as it was, on the Darlings page */
+#snap-view { font-family: var(--body-font); }
+.snap-band {
+  position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px;
+  margin: 0 -8px 28px; padding: 12px 8px; background: var(--paper); border-bottom: 1px solid color-mix(in srgb, var(--ink) 14%, var(--paper));
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+}
+.snap-band-what { display: flex; flex-direction: column; gap: 2px; }
+.snap-band-when { font-size: 15px; color: var(--ink); }
+.snap-band-sub { font-size: 12px; color: color-mix(in srgb, var(--ink) 55%, var(--paper)); }
+.snap-band-do { display: flex; gap: 8px; }
+.snap-band button, .snap-one {
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; font-size: 12px;
+  height: 30px; padding: 0 12px; border-radius: 6px; background: none;
+  color: var(--ink); border: 1px solid color-mix(in srgb, var(--ink) 25%, var(--paper));
+}
+.snap-band button:hover, .snap-one:hover { border-color: var(--ink); }
+.snap-band .snap-all { background: var(--red); border-color: var(--red); color: #fff; }
+.snap-band .snap-all:hover { background: #a93226; }
+.snap-band .snap-all:disabled { opacity: 0.35; cursor: default; }
+.snap-chapter { margin-bottom: 40px; scroll-margin-top: 84px; }
+.snap-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-bottom: 16px; padding-bottom: 6px; border-bottom: 1px solid color-mix(in srgb, var(--ink) 10%, var(--paper)); }
+.snap-head h3 { font-weight: normal; font-size: 18px; color: var(--ink); margin-right: auto; }
+.snap-tag { font: 11px -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; letter-spacing: 0.04em; color: var(--red); }
+.snap-chapter.same .snap-tag { color: color-mix(in srgb, var(--ink) 45%, var(--paper)); }
+.snap-chapter.same .snap-body { opacity: 0.55; }
+.snap-body { user-select: text; cursor: text; }
+.snap-body p.snap-gone { background: rgba(192, 57, 43, 0.14); box-shadow: -6px 0 0 rgba(192, 57, 43, 0.14), 6px 0 0 rgba(192, 57, 43, 0.14); }
+::highlight(neo-snap-gone) { background-color: rgba(192, 57, 43, 0.24); }
+
+/* the Outline's cards for where the caret is, atop the right-hand pane (#340) */
+#side-cards { display: flex; flex-direction: column; gap: 10px; padding: 0 12px; }
+#side-cards:not(:empty) { margin-bottom: 22px; }
+#editor-view.outline-tab #side-cards, #editor-view.darlings-tab #side-cards { display: none; }
+.side-card { background: #2a2a26; border: 1px solid #3a3934; border-radius: 6px; padding: 10px 12px; }
+.side-card.current { box-shadow: 0 0 0 2px var(--red); border-color: transparent; }
+.side-card-head { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #bdb8ad; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-card-section .side-card-head { font-weight: 500; color: #8f8a80; }
+.side-card textarea {
+  width: 100%; background: none; border: none; outline: none; resize: none; overflow: hidden;
+  color: #ddd; font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; padding: 0;
+}
+.side-card textarea::placeholder { color: #6b675f; font-style: italic; }
+body.light .side-card { background: #fbf5e3; border-color: #e6dfcc; }
+body.light .side-card-head { color: #5f5a50; }
+body.light .side-card textarea { color: #2b2926; }
+body.light .side-card textarea::placeholder { color: #a39d90; }
