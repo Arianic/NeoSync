@@ -1461,6 +1461,24 @@ ipcMain.handle('email:draft', async (_e, { to, subject, body, html, defaultName,
     return { ok: true, method: 'gmail', file };
   }
 
+  if (method === 'mailto') {
+    // The computer's own mail program (Thunderbird, Outlook, Mail…). A mailto:
+    // link can't carry an attachment, so the PDF is revealed beside the new
+    // message to attach, as with Gmail. No handler for mailto: is a no, not a crash.
+    const url = 'mailto:' + encodeURIComponent(to)
+      + '?subject=' + encodeURIComponent(subject)
+      + '&body=' + encodeURIComponent(body);
+    try {
+      await shell.openExternal(url);
+    } catch (err) {
+      logError('email draft', err);
+      shell.showItemInFolder(file);
+      return { ok: false, file };
+    }
+    shell.showItemInFolder(file);
+    return { ok: true, method: 'mailto', file };
+  }
+
   const esc = (s) => String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const script = `
     tell application "Mail"

@@ -15930,8 +15930,9 @@ async function doExport(format, chId = null) {
 }
 
 function chooseEmailMethod() {
-  // Apple Mail only exists on Macs; elsewhere Gmail
-  if (!navigator.platform.toLowerCase().includes('mac')) return Promise.resolve('gmail');
+  // Gmail opens in the browser, which is no help to a writer with no Gmail
+  // account (#386): every computer is offered its own mail program too
+  const mac = navigator.platform.toLowerCase().includes('mac');
   return new Promise((resolve) => {
     const bd = document.createElement('div');
     bd.className = 'modal-backdrop';
@@ -15943,9 +15944,13 @@ function chooseEmailMethod() {
             <strong>Gmail</strong>
             <span>${t('Opens a pre-filled compose window in your browser. NEO shows you the PDF to drag into it.')}</span>
           </button>
-          <button class="fr-choice" data-m="mail">
+          ${mac ? `<button class="fr-choice" data-m="mail">
             <strong>Apple Mail</strong>
             <span>${t('Fully automatic — the PDF is attached and addressed. Just hit send.')}</span>
+          </button>` : ''}
+          <button class="fr-choice" data-m="mailto">
+            <strong>${t('Your mail program')}</strong>
+            <span>${t('Opens a new message in the program your computer uses for email. NEO shows you the PDF to attach.')}</span>
           </button>
         </div>
       </div>`;
@@ -15986,7 +15991,7 @@ async function doEmailDraft() {
   const body = t('Draft snapshot of “{title}” — {n} words.', { title: shownTitle(book.title), n: total }) + '\n'
     + t('Sent from NEO on {date}.', { date: new Date().toLocaleString(NeoI18n.getLocale()) }) + '\n\n'
     + t('SHA-256 fingerprint of the manuscript text:') + `\n${hash}\n\n`
-    + (library.emailMethod === 'gmail'
+    + (library.emailMethod === 'gmail' || library.emailMethod === 'mailto'
       ? t('The PDF snapshot is in the Finder window NEO just opened — drag it into this email before sending.')
       : t('PDF snapshot attached.'));
   toast(t('Preparing your draft…'));
@@ -16003,6 +16008,7 @@ async function doEmailDraft() {
     method: library.emailMethod
   });
   if (res.method === 'gmail') toast(t('Gmail compose opened — drag in the PDF NEO revealed, then send'), 8000);
+  else if (res.method === 'mailto') toast(t('Your mail program opened — attach the PDF NEO revealed, then send'), 8000);
   else if (res.ok) toast(t('Draft handed to Mail — hit send for your timestamp'));
   else toast(t('Mail unavailable — snapshot saved to your Exports folder instead'));
 }
