@@ -12480,6 +12480,9 @@ async function structuralUndo() {
   restoreCaret(snap.caret); // back to work, no announcement
   if (snap.rejoin) rejoinAtCaret();
   resetNativeUndo();
+  // an undo that sets writing aside says where it went (#377): a chapter that
+  // went back looks, to the writer, like words that vanished
+  if (displaced.length) toast(t('Words you wrote since went to Darlings, so nothing is lost'), 8000);
 }
 
 // after undoing a double-Enter break, close the split the gesture made:
