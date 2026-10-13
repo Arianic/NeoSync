@@ -15732,10 +15732,11 @@ function healStrayNbsp(root) {
   return changed;
 }
 // ---- non-breaking marks: the characters a wrap must not break at, and the
-// ranges the Format menu's Non-Breaking Marks option tints. The three are
+// range rule behind the Format menu's Non-Breaking Marks option. The three are
 // U+00A0 no-break space, U+202F narrow no-break space and U+2011 no-break
-// hyphen. A streak of the same character is one run: a row of no-break spaces
-// reads as one mark.
+// hyphen; all get the same unobtrusive light gray, the way Word and
+// LibreOffice show them — one "this character is special", not a colour code.
+// A streak of the same character is one run.
 const NB_CHARS = { '\u00a0': 'space', '\u202f': 'narrow', '\u2011': 'hyphen' };
 function nonBreakingRuns(text) {
   const runs = [];
@@ -15754,12 +15755,12 @@ function nonBreakingRuns(text) {
 // Paints those characters in every open chapter with the CSS Highlight API,
 // so the marks never enter the chapter HTML — the same door search,
 // spellcheck and focus use. Off means nothing is painted at all.
-const NB_MARK_NAMES = { space: 'neo-nb-space', narrow: 'neo-nb-narrow', hyphen: 'neo-nb-hyphen' };
+const NB_MARK_NAME = 'neo-nb-mark';
 function paintNonBreakingMarks() {
   if (!(window.CSS && CSS.highlights && window.Highlight)) return;
-  for (const name of Object.values(NB_MARK_NAMES)) CSS.highlights.delete(name);
+  CSS.highlights.delete(NB_MARK_NAME);
   if (!nbspMarksEnabled) return;
-  const byKind = { space: new Highlight(), narrow: new Highlight(), hyphen: new Highlight() };
+  const marks = new Highlight();
   for (const body of $$('#chapters .chapter-body')) {
     const walk = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
     let node;
@@ -15768,11 +15769,11 @@ function paintNonBreakingMarks() {
         const range = document.createRange();
         range.setStart(node, run.start);
         range.setEnd(node, run.end);
-        byKind[run.kind].add(range);
+        marks.add(range);
       }
     }
   }
-  for (const kind of Object.keys(byKind)) CSS.highlights.set(NB_MARK_NAMES[kind], byKind[kind]);
+  CSS.highlights.set(NB_MARK_NAME, marks);
 }
 // ---- end of non-breaking marks ----
 function paraRuns(pHtml, flip) {
