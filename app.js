@@ -6591,7 +6591,7 @@ function spPaste(e, body, chId) {
   let lines = null;
   if (html && /class="[^"]*\bsp-|script-body/.test(html)) {
     const doc = new DOMParser().parseFromString(html, 'text/html');
-    lines = [...doc.body.querySelectorAll('p')].map((p) => ({ type: spType(p), html: paraRuns(p.innerHTML, false).filter((r) => r.text).map(runHtml).join('') }));
+    lines = [...doc.body.querySelectorAll('p')].map((p) => ({ type: spType(p), html: paraRuns(p.innerHTML, false).filter((r) => r.text).map((r) => runHtml(r)).join('') }));
   } else if (text && /\n/.test(text.trim())) {
     lines = spFromFountain(text).map((l) => ({ type: l.type, newPage: l.newPage, html: spRunsFromFountain(l.text).map((x) => runHtml(x)).join('') }));
   }
