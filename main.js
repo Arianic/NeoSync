@@ -2525,17 +2525,6 @@ ipcMain.on('style:state', (_e, style) => {
   try { buildMenu(); } catch (err) { logError('menu', err); }
 });
 
-// A key the editor answers itself (they split or continue a paragraph, which a
-// menu item can't), shown in the menu. On macOS and Linux it is shown the way
-// the system shows a shortcut, aligned with its symbols, without being
-// registered (#372). Windows can't show a key without registering it, so its
-// menu spells the key out after a tab.
-function keyShown(label, accelerator, windowsText) {
-  return process.platform === 'win32'
-    ? { label: label + '\t' + windowsText }
-    : { label, accelerator, registerAccelerator: false };
-}
-
 function buildMenu() {
   const isMac = process.platform === 'darwin';
   const isWin = process.platform === 'win32';
@@ -2774,7 +2763,7 @@ function buildMenu() {
           [t('Scene Heading'), 'heading'], [t('Action'), 'action'], [t('Character'), 'character'], [t('Parenthetical'), 'paren'],
           [t('Dialogue'), 'dialogue'], [t('Transition'), 'transition'], [t('Shot'), 'shot']
         ].map(([label, value], i) => ({
-          ...keyShown(label, 'CmdOrCtrl+' + (i + 1), 'Ctrl+' + (i + 1)),
+          label: label + '\t' + (isMac ? '⌘' : 'Ctrl+') + (i + 1),
           type: 'radio',
           checked: scriptState.element === value,
           click: () => sendToWindow({ type: 'scriptElement', value })
@@ -2787,14 +2776,14 @@ function buildMenu() {
         ] : []),
         {
           visible: !scriptState.on,
-          ...keyShown(t('Flush Paragraph'), 'Shift+Enter', 'Shift+Enter'),
+          label: t('Flush Paragraph') + '\t' + (isMac ? '⇧Enter' : 'Shift+Enter'),
           type: 'checkbox',
           checked: flushState,
           click: () => sendToWindow({ type: 'flush' })
         },
         {
           visible: !scriptState.on,
-          ...keyShown(t('Poetry Paragraph'), 'CmdOrCtrl+Shift+Enter', 'Ctrl+Shift+Enter'),
+          label: t('Poetry Paragraph') + '\t' + (isMac ? '⇧⌘Enter' : 'Ctrl+Shift+Enter'),
           type: 'checkbox',
           checked: poetryState,
           click: () => sendToWindow({ type: 'poetry' })
