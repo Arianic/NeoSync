@@ -15002,17 +15002,20 @@ ${o.fonts || ''}
 @page :left {
   margin-left: ${trim.outside}in; margin-right: __NEO_GUTTER__;
   @top-center { content: ${cssString(d.author)}; }
-  @bottom-center { content: counter(page); }
+  @bottom-left { content: counter(page); }
 }
 @page :right {
   margin-left: __NEO_GUTTER__; margin-right: ${trim.outside}in;
   @top-center { content: ${cssString(d.title)}; }
-  @bottom-center { content: counter(page); }
+  @bottom-right { content: counter(page); }
 }
+/* a printed book's page numbers sit at the outside corners (left pages at
+   the left, right pages at the right), where a thumb flipping through finds them (#392) */
 @page { @top-center { font-family: ${exportBodyFont()}; font-size: ${(sz * 0.7).toFixed(2)}pt; letter-spacing: 0.16em; text-transform: uppercase; color: #333; vertical-align: bottom; padding-bottom: 0.18in; }
-        @bottom-center { font-family: ${exportBodyFont()}; font-size: ${(sz * 0.82).toFixed(2)}pt; color: #333; vertical-align: top; padding-top: 0.2in; } }
-@page :blank { @top-center { content: none; } @bottom-center { content: none; } }
-@page front { @top-center { content: none; } @bottom-center { content: none; } }
+        @bottom-left { font-family: ${exportBodyFont()}; font-size: ${(sz * 0.82).toFixed(2)}pt; color: #333; vertical-align: top; padding-top: 0.2in; text-align: left; }
+        @bottom-right { font-family: ${exportBodyFont()}; font-size: ${(sz * 0.82).toFixed(2)}pt; color: #333; vertical-align: top; padding-top: 0.2in; text-align: right; } }
+@page :blank { @top-center { content: none; } @bottom-left { content: none; } @bottom-right { content: none; } }
+@page front { @top-center { content: none; } @bottom-left { content: none; } @bottom-right { content: none; } }
 @page chapter:first { @top-center { content: none; } }
 @page back { @top-center { content: none; } }
 html, body { margin: 0; padding: 0; }
