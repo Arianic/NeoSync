@@ -2131,8 +2131,11 @@ function paintable(meta) {
   return false; // done, shelved, or failed: the ↻ on the tile is the way back in
 }
 
+// What a painting reads: the story alone (its chapters, prologue and
+// epilogue). The copyright, dedication, acknowledgments and about pages
+// carry the writer's name and the book's, and stay on this computer.
 function bookPlainText() {
-  return book.chapterOrder.map((id) => chapterText(id)).join('\n\n');
+  return book.chapterOrder.filter((id) => isStory(id)).map((id) => chapterText(id)).join('\n\n');
 }
 
 // Paint the open book, or a book on the shelf (text is read from disk then).
@@ -2154,9 +2157,10 @@ async function requestPaint(meta, text) {
     const m = await window.neo.readBookMeta(meta.id);
     const parts = [];
     for (const chId of (m && m.chapterOrder) || []) {
+      if (!isStory(chId, m)) continue; // (the story alone, as bookPlainText)
       const holder = document.createElement('div');
       holder.innerHTML = await window.neo.readChapter(meta.id, chId);
-      holder.querySelectorAll('.darling-anchor, .ph-mark, .ghost').forEach((n) => n.remove());
+      holder.querySelectorAll(UNCOUNTED).forEach((n) => n.remove());
       parts.push(holder.innerText);
     }
     text = parts.join('\n\n');
