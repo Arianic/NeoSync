@@ -1299,7 +1299,9 @@ body.focus-mode .walk-note { opacity: 0.6; }
   padding: 0 16px 14px; font-size: 12px; text-transform: uppercase;
   letter-spacing: 2px; color: var(--muted);
 }
+/* the pin sits in the pane's top corner, above the cards, where it stays as the pane scrolls */
 #side-pin {
+  position: fixed; top: 8px; right: 10px;
   background: none; border: none; color: #555; font-size: 15px;
 }
 #side-pin.pinned { color: var(--accent); }
@@ -2154,6 +2156,9 @@ body.light .snap-ch:hover { color: #1c1a17; }
 #editor-view.outline-tab #side-cards, #editor-view.darlings-tab #side-cards { display: none; }
 .side-card { background: #2a2a26; border: 1px solid #3a3934; border-radius: 6px; padding: 10px 12px; }
 .side-card.current { box-shadow: 0 0 0 2px var(--red); border-color: transparent; }
+.side-cards-title { font-size: 12px; text-transform: uppercase; letter-spacing: 2px; color: var(--muted); padding: 0 4px; }
+.side-card-head { cursor: pointer; }
+.side-card-head:hover { color: var(--accent); }
 .side-card-head { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #bdb8ad; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-card-section .side-card-head { font-weight: 500; color: #8f8a80; }
 .side-card textarea {
