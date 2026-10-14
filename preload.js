@@ -65,6 +65,7 @@ contextBridge.exposeInMainWorld('neo', {
   scriptContext: (st) => ipcRenderer.sendSync('script:context', st),
   typewriterState: (st) => ipcRenderer.send('typewriter:state', st),
   nbspMarksState: (on) => ipcRenderer.send('nbspmarks:state', on),
+  pagesState: (st) => ipcRenderer.send('pages:state', st),
   vimState: (on) => ipcRenderer.send('vim:state', on),
   uiZoomState: (z) => ipcRenderer.send('uizoom:state', z),
   // interface language, fetched once before the page's scripts run
