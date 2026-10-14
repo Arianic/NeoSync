@@ -2841,7 +2841,7 @@ function wireChapterBody(body, chId) {
     chapterHTML[chId] = captureBody(body);
     wordCache[chId] = null;
     scheduleChapterSave(chId);
-    if (nbspMarksEnabled) paintNonBreakingMarks();
+    if (nbspMarksEnabled) paintNonBreakingMarks(body);
     if (spellOn) scheduleSpellRescan(chId, body);
     updateCounters();
     scheduleNavRefresh();
@@ -15569,31 +15569,36 @@ function healStrayNbsp(root) {
 // U+00A0 no-break space, U+202F narrow no-break space and U+2011 no-break
 // hyphen. A streak of the same character is one run: a row of no-break spaces
 // reads as one mark.
-const NB_CHARS = { '\u00a0': 'space', '\u202f': 'narrow', '\u2011': 'hyphen' };
+const NB_CHARS = new Set(['\u00a0', '\u202f', '\u2011']);
 function nonBreakingRuns(text) {
   const runs = [];
   let i = 0;
   while (i < text.length) {
-    const kind = NB_CHARS[text[i]];
-    if (!kind) { i += 1; continue; }
+    if (!NB_CHARS.has(text[i])) { i += 1; continue; }
     let j = i + 1;
     while (j < text.length && text[j] === text[i]) j += 1;
-    runs.push({ start: i, end: j, kind });
+    runs.push({ start: i, end: j });
     i = j;
   }
   return runs;
 }
 
-// Paints those characters in every open chapter with the CSS Highlight API,
-// so the marks never enter the chapter HTML — the same door search,
-// spellcheck and focus use. Off means nothing is painted at all.
-const NB_MARK_NAMES = { space: 'neo-nb-space', narrow: 'neo-nb-narrow', hyphen: 'neo-nb-hyphen' };
-function paintNonBreakingMarks() {
+// Paints those characters with the CSS Highlight API, so the marks never enter
+// the chapter HTML: the same door search, spellcheck and focus use. One quiet
+// tint for all three, only to say "this is a special character". A chapter
+// being typed in is repainted alone, not the book. Off means nothing is painted.
+let nbHighlight = null;
+const nbRanges = new WeakMap(); // a chapter's text → its ranges in the highlight
+function paintNonBreakingMarks(only) {
   if (!(window.CSS && CSS.highlights && window.Highlight)) return;
-  for (const name of Object.values(NB_MARK_NAMES)) CSS.highlights.delete(name);
-  if (!nbspMarksEnabled) return;
-  const byKind = { space: new Highlight(), narrow: new Highlight(), hyphen: new Highlight() };
-  for (const body of $$('#chapters .chapter-body')) {
+  if (!nbspMarksEnabled) { CSS.highlights.delete('neo-nb'); nbHighlight = null; return; }
+  if (!nbHighlight || !only) {
+    nbHighlight = new Highlight();
+    CSS.highlights.set('neo-nb', nbHighlight);
+  }
+  for (const body of only ? [only] : $$('#chapters .chapter-body')) {
+    for (const old of nbRanges.get(body) || []) nbHighlight.delete(old);
+    const fresh = [];
     const walk = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
     let node;
     while ((node = walk.nextNode())) {
@@ -15601,11 +15606,12 @@ function paintNonBreakingMarks() {
         const range = document.createRange();
         range.setStart(node, run.start);
         range.setEnd(node, run.end);
-        byKind[run.kind].add(range);
+        nbHighlight.add(range);
+        fresh.push(range);
       }
     }
+    nbRanges.set(body, fresh);
   }
-  for (const kind of Object.keys(byKind)) CSS.highlights.set(NB_MARK_NAMES[kind], byKind[kind]);
 }
 // ---- end of non-breaking marks ----
 function paraRuns(pHtml, flip) {
