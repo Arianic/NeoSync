@@ -28,11 +28,12 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before adding a feature. The product is 
 | `i18n.js` | `t()` / `tk()`, shared by main and the window. English source text is the key |
 | `spell-worker.js` | Hunspell WASM, forked with `utilityProcess`. Messages: `load`, `check`, `suggest`, `add` |
 | `spell-ro.js` | Romanian diacritics, used by the worker. Does not alter the manuscript |
+| `manuscript.js` | Standard manuscript format: the word count's rounding, the header's surname, the `.docx`'s parts and the PDF's page, from a model the window hands it. Plain JavaScript that also runs in Node (`window.NeoManuscript`, loaded by `index.html`) |
 | `locales/<code>.json` | One language. Regional files (`fr-CA.json`) hold only the strings that differ |
 | `pocket/` | Capacitor shell. It does not contain its own editor |
 | `print/` | Vendored Paged.js and hyphenation patterns for paperback PDFs |
 
-`app.js` section banners look like `/*  SAVING  */`. Start there: bookshelf, bound shelves, editor open, typing, poetry, screenplays, placeholders, nav, tabs, outline, outline cards, darlings, counters, saving, refresh, structural undo, find, import, spellcheck, focus, goals, export.
+`app.js` section banners look like `/*  SAVING  */`. Start there: bookshelf, bound shelves, editor open, typing, poetry, screenplays, placeholders, nav, tabs, outline, outline cards, darlings, counters, saving, refresh, structural undo, find, import, spellcheck, focus, goals, export, manuscript format.
 
 Menus are built in `buildMenu()` in `main.js`. A menu click sends `{ type, ... }` to the window; `app.js` handles it on `window.neo.onMenu`.
 
@@ -66,6 +67,15 @@ A book whose `book.json` says `"format": "screenplay"` is a script. Right-click 
 - A script's style lives in its `book.json`: `underlineHeadings: true` (Format → Underline Scene Headings) and `contd: false` ((CONT'D) turned off).
 - A script exports as a PDF (letter, printed with `print: 'screenplay'`), Fountain or Final Draft (`.fdx`). The book formats don't apply.
 - A `.fountain` or `.fdx` file dropped on a shelf or picked with Import becomes a new script. `importFile` in `main.js` only reads the file; `spFromFountain` and `spFromFdx` in `app.js` sort it into elements. Both readers are plain string functions, so the tests cover them (`scripts/fixtures/` holds a Final Draft file written by screenplain, an outside tool).
+
+## Manuscript format
+
+File → Export → Manuscript Format… (MANUSCRIPT FORMAT in `app.js`, the pages in `manuscript.js`) writes the open book the way agents and editors ask for it (William Shunn's novel format): a title page with the writer's contact block, "about 90,000 words" (`roundWords`: to the thousand from 10,000 up, else the hundred) and the title and byline halfway down, no header; then the story numbered from 1 under "Surname / TITLE / page", double-spaced 12 point Times New Roman (or Courier), one-inch margins, every paragraph indented half an inch, each chapter on a new page a third of the way down, `#` for scene breaks, parts on their own page, an epigraph kept, END at the close. The copyright, dedication, contents, acknowledgments and about pages stay out. One story with no chapters gets the short-story layout (title halfway down page 1, the text under it, the header from page 2).
+
+- **.docx** (`docxEntries`): the title page is its own section with no header, the story the next one with `pgNumType start=1` and a PAGE field in `header1.xml`; a short story is one section with `titlePg` and an empty first-page header. A `settings.xml` keeps Word out of Compatibility Mode. Saved through `export:save`.
+- **PDF** (`html`): one page for Paged.js, the header in `@page`'s `@top-right` margin box, `@page titlepage` without it; `print:manuscript` lays it out with `renderPaged` (the story's first section is `.pg1`, so it's page 1) and saves it. It shares the print window with the paperback, so each refuses while the other runs. Courier Prime (bundled) goes into the PDF; Word gets Courier New.
+- The dialog remembers the contact block for every book (`library.manuscript`: name, address, phone, email, font, end) and the byline and header for this book (`book.manuscript`, only where they differ from NEO's own choice). "Anonymous" is never taken for a byline. Values go into the fields from code, so a quotation mark can't cut one short. It never opens over another dialog or twice. Scripts keep their own PDF; Pocket has no manuscript export (its page doesn't load `manuscript.js`).
+- `scripts/manuscript.test.js`; `npm run test:manuscript` (`scripts/manuscript.e2e.js`: the dialog, both files, the .docx read back by NEO's import, the PDF's pages read back with `pdftotext` where it's installed).
 
 ## Paperbacks for KDP
 
