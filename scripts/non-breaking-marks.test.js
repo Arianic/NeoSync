@@ -18,8 +18,10 @@ const api = context.api;
 // the runs come out of another realm, so they are compared as JSON
 const runs = (text) => JSON.stringify(api.nonBreakingRuns(text));
 
-test('the three characters are the ones a line must not break at', () => {
-  assert.deepEqual([...api.NB_CHARS].sort(), ['\u00a0', '\u2011', '\u202f']);
+test('the three characters map to their own kinds', () => {
+  assert.equal(api.NB_CHARS['\u00a0'], 'space');
+  assert.equal(api.NB_CHARS['\u202f'], 'narrow');
+  assert.equal(api.NB_CHARS['\u2011'], 'hyphen');
 });
 
 test('plain text has no non-breaking runs', () => {
@@ -27,23 +29,23 @@ test('plain text has no non-breaking runs', () => {
 });
 
 test('a no-break space is found, and a streak of them is one run', () => {
-  assert.equal(runs('Dr. Müller'), JSON.stringify([{ start: 3, end: 4 }]));
-  assert.equal(runs('a   b'), JSON.stringify([{ start: 1, end: 4 }]));
+  assert.equal(runs('Dr.\u00a0Müller'), JSON.stringify([{ start: 3, end: 4, kind: 'space' }]));
+  assert.equal(runs('a\u00a0\u00a0\u00a0b'), JSON.stringify([{ start: 1, end: 4, kind: 'space' }]));
 });
 
-test('the narrow no-break space and the no-break hyphen are found too', () => {
-  assert.equal(runs('5 km'), JSON.stringify([{ start: 1, end: 2 }]));
-  assert.equal(runs('n‑th'), JSON.stringify([{ start: 1, end: 2 }]));
+test('the narrow no-break space and the no-break hyphen are their own kinds', () => {
+  assert.equal(runs('5\u202fkm'), JSON.stringify([{ start: 1, end: 2, kind: 'narrow' }]));
+  assert.equal(runs('n\u2011th'), JSON.stringify([{ start: 1, end: 2, kind: 'hyphen' }]));
 });
 
 test('runs keep their order and do not merge across different characters', () => {
   assert.equal(
-    runs('a b c  d'),
+    runs('a\u00a0b\u202fc\u00a0\u202fd'),
     JSON.stringify([
-      { start: 1, end: 2 },
-      { start: 3, end: 4 },
-      { start: 5, end: 6 },
-      { start: 6, end: 7 },
+      { start: 1, end: 2, kind: 'space' },
+      { start: 3, end: 4, kind: 'narrow' },
+      { start: 5, end: 6, kind: 'space' },
+      { start: 6, end: 7, kind: 'narrow' },
     ]),
   );
 });

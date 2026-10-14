@@ -644,9 +644,10 @@ body.night #aux-editor * { color: inherit; }
 /* the sentence Read Aloud is on (⌘⇧U) */
 ::highlight(neo-speak) { background: rgba(201, 168, 106, 0.28); }
 /* Non-Breaking Marks (Format menu): the spaces and hyphens a wrap must not
-   break at (U+00A0, U+202F, U+2011), all in one quiet gray that reads on
-   the light page and the dark one alike */
-::highlight(neo-nb) { background: rgba(128, 128, 128, 0.3); }
+   break at — U+00A0, U+202F and U+2011, each with its own tint */
+::highlight(neo-nb-space) { background: rgba(122, 151, 166, 0.35); }
+::highlight(neo-nb-narrow) { background: rgba(214, 158, 46, 0.40); }
+::highlight(neo-nb-hyphen) { background: rgba(88, 166, 141, 0.35); }
 
 /* Each page of the book is its own sheet of paper */
 #paper {
