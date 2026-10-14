@@ -2816,6 +2816,11 @@ document.addEventListener('dragstart', () => { dragFromInside = true; }, true);
 document.addEventListener('dragend', () => { dragFromInside = false; }, true);
 document.addEventListener('drop', () => { setTimeout(() => { dragFromInside = false; }, 0); }, true);
 
+// when a real key last went down (not an input method's 229): the characters
+// that follow it by themselves were typed on a key the page already read
+let lastRealKeyAt = 0;
+if (IS_POCKET) document.addEventListener('keydown', (e) => { if (e.keyCode !== 229 && e.key !== 'Unidentified') lastRealKeyAt = Date.now(); }, true);
+
 function wireChapterBody(body, chId) {
   body.addEventListener('focus', () => { currentChapterId = chId; updateCounters(); highlightNav(); });
 
@@ -2910,6 +2915,24 @@ function wireChapterBody(body, chId) {
   let composing = false;
   body.addEventListener('compositionstart', () => { composing = true; });
   body.addEventListener('compositionend', () => { composing = false; });
+  // An Android keyboard (the phone's own, or a Bluetooth one through it) hands
+  // the page its characters as input, not as keys: keydown says keyCode 229
+  // and no key, so the rules for quotes, dashes and capitals never saw them
+  // (#368). Here the same rules run on the character as it arrives. A real
+  // key, which they already had, is left alone.
+  if (IS_POCKET) {
+    body.addEventListener('beforeinput', (e) => {
+      if (e.inputType !== 'insertText' || !e.cancelable || composing || !e.data || [...e.data].length !== 1) return;
+      if (Date.now() - lastRealKeyAt < 150) return;
+      let stopped = false;
+      smartKeys({
+        key: e.data, code: '', keyCode: 0, isComposing: false, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false,
+        get defaultPrevented() { return stopped; },
+        preventDefault() { stopped = true; e.preventDefault(); },
+        stopPropagation() {}
+      }, body);
+    });
+  }
   body.addEventListener('keydown', (e) => {
     // An input method mid-word owns the keys. Its marker (keyCode 229) also
     // rides on Enter with nothing being composed, as on GNOME (Wayland, IBus),
