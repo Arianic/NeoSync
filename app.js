@@ -226,7 +226,7 @@ function writeLibrary(lib = library) {
 // library's copy is the last device's, so a device opening the library for
 // the first time starts out the way the writer last had it, and from then on
 // keeps its own.
-const DEVICE_LOOK = ['pageTheme', 'uiBright', 'uiBrightAside', 'uiZoom', 'editorFontSize', 'typewriter', 'nbspMarks', 'focus', 'posMode', 'outlineView', 'vimKeys', 'pagedView', 'twoPageView'];
+const DEVICE_LOOK = ['pageTheme', 'uiBright', 'uiBrightAside', 'uiZoom', 'editorFontSize', 'typewriter', 'nbspMarks', 'focus', 'posMode', 'outlineView', 'vimKeys', 'pagedView', 'twoPageView', 'pageWidth'];
 const DEVICE_LOOK_KEY = 'neo-device-look';
 const EDITOR_SIZE_MIN = 8;
 const EDITOR_SIZE_MAX = 22;
@@ -8537,6 +8537,25 @@ function applyPageZoom() {
 // chapter runs to, so that its last page is a whole page too.
 const PAGES_GAP = 28; // px between pages at 100%: styles.css --pg-gap-base
 
+// Format → Page Width: the page's width (and its side margins, which give back
+// their room as it widens), for a writer who wants more words to a line (#375).
+// Per device, like the zoom.
+const PAGE_WIDTHS = { regular: { f: 1, pad: 72 }, wide: { f: 1.25, pad: 56 }, wider: { f: 1.5, pad: 40 } };
+function applyPageWidth() {
+  const key = PAGE_WIDTHS[library.pageWidth] ? library.pageWidth : 'regular';
+  const w = PAGE_WIDTHS[key];
+  document.documentElement.style.setProperty('--page-wf', w.f);
+  document.documentElement.style.setProperty('--page-pad-x', w.pad + 'px');
+  if (window.neo.pageWidthState) window.neo.pageWidthState(key);
+  fitSpread();
+  queuePages(true);
+}
+function setPageWidth(value) {
+  if (!PAGE_WIDTHS[value] || value === (library.pageWidth || 'regular')) return;
+  keepReadingPlace(() => { library.pageWidth = value; applyPageWidth(); });
+  writeLibrary(library);
+}
+
 function applyPaged() {
   fitSpread();
   if (window.neo.pagesState) window.neo.pagesState({ paged: pagedEnabled, twoUp: twoPageEnabled }); // the Format menu's ticks
@@ -16718,6 +16737,7 @@ window.neo.onMenu(async (msg) => {
   if (msg.type === 'typewriter') toggleTypewriter();
   if (msg.type === 'nbspMarks') toggleNbspMarks();
   if (msg.type === 'pagedView') togglePaged();
+  if (msg.type === 'pageWidth') setPageWidth(msg.value);
   if (msg.type === 'twoPageView') toggleTwoPage();
   if (msg.type === 'vim') toggleVim();
   if (msg.type === 'focus') setFocus(msg.value);
@@ -17044,6 +17064,7 @@ loadLibrary().then(() => {
   applyTypewriter();
   nbspMarksEnabled = !!library.nbspMarks;
   applyNbspMarks();
+  applyPageWidth();
   pagedEnabled = !!library.pagedView;
   twoPageEnabled = !!library.twoPageView;
   applyPageZoom(); // the page zoom's range depends on the pages

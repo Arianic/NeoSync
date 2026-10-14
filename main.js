@@ -2310,6 +2310,14 @@ ipcMain.on('pages:state', (_e, st) => {
   pagesState = next;
   try { buildMenu(); } catch (err) { logError('menu', err); }
 });
+// Format → Page Width shows its choice: Regular, Wide or Wider (per device)
+let pageWidthState = 'regular';
+ipcMain.on('pagewidth:state', (_e, v) => {
+  v = ['regular', 'wide', 'wider'].includes(v) ? v : 'regular';
+  if (v === pageWidthState) return;
+  pageWidthState = v;
+  try { buildMenu(); } catch (err) { logError('menu', err); }
+});
 // View → Vim Keys shows whether they're on
 let vimState = false;
 ipcMain.on('vim:state', (_e, on) => {
@@ -2362,6 +2370,17 @@ ipcMain.on('style:state', (_e, style) => {
   writingStyle = style;
   try { buildMenu(); } catch (err) { logError('menu', err); }
 });
+
+// A key the editor answers itself (they split or continue a paragraph, which a
+// menu item can't), shown in the menu. On macOS and Linux it is shown the way
+// the system shows a shortcut, aligned with its symbols, without being
+// registered (#372). Windows can't show a key without registering it, so its
+// menu spells the key out after a tab.
+function keyShown(label, accelerator, windowsText) {
+  return process.platform === 'win32'
+    ? { label: label + '\t' + windowsText }
+    : { label, accelerator, registerAccelerator: false };
+}
 
 function buildMenu() {
   const isMac = process.platform === 'darwin';
@@ -2568,6 +2587,16 @@ function buildMenu() {
           enabled: pagesState.paged, // greyed out until the pages are shown
           click: () => sendToWindow({ type: 'twoPageView' })
         },
+        {
+          visible: !scriptState.on, // a script is set to its own page
+          label: t('Page Width'),
+          submenu: [['regular', t('Regular')], ['wide', t('Wide')], ['wider', t('Wider')]].map(([value, label]) => ({
+            label,
+            type: 'radio',
+            checked: pageWidthState === value,
+            click: () => sendToWindow({ type: 'pageWidth', value })
+          }))
+        },
         { type: 'separator' },
         {
           label: t('Typewriter Scrolling'),
@@ -2591,7 +2620,7 @@ function buildMenu() {
           [t('Scene Heading'), 'heading'], [t('Action'), 'action'], [t('Character'), 'character'], [t('Parenthetical'), 'paren'],
           [t('Dialogue'), 'dialogue'], [t('Transition'), 'transition'], [t('Shot'), 'shot']
         ].map(([label, value], i) => ({
-          label: label + '\t' + (isMac ? '⌘' : 'Ctrl+') + (i + 1),
+          ...keyShown(label, 'CmdOrCtrl+' + (i + 1), 'Ctrl+' + (i + 1)),
           type: 'radio',
           checked: scriptState.element === value,
           click: () => sendToWindow({ type: 'scriptElement', value })
@@ -2604,14 +2633,14 @@ function buildMenu() {
         ] : []),
         {
           visible: !scriptState.on,
-          label: t('Flush Paragraph') + '\t' + (isMac ? '⇧Enter' : 'Shift+Enter'),
+          ...keyShown(t('Flush Paragraph'), 'Shift+Enter', 'Shift+Enter'),
           type: 'checkbox',
           checked: flushState,
           click: () => sendToWindow({ type: 'flush' })
         },
         {
           visible: !scriptState.on,
-          label: t('Poetry Paragraph') + '\t' + (isMac ? '⇧⌘Enter' : 'Ctrl+Shift+Enter'),
+          ...keyShown(t('Poetry Paragraph'), 'CmdOrCtrl+Shift+Enter', 'Ctrl+Shift+Enter'),
           type: 'checkbox',
           checked: poetryState,
           click: () => sendToWindow({ type: 'poetry' })

@@ -14,7 +14,9 @@
   --dropcap-font: "Didot", "Bodoni 72", Georgia, serif;
   /* the page: a book page's width, which in a window wide enough to leave
      room on both sides grows a little (never past a comfortable line) */
-  --page-w: clamp(680px, 44vw, 760px);
+  --page-wf: 1;      /* Format → Page Width: Regular 1, Wide, Wider (app.js) */
+  --page-pad-x: 72px; /* the page's side margins at that width */
+  --page-w: calc(clamp(680px, 44vw, 760px) * var(--page-wf));
   /* the room the scrollbar and the page's own shadow need beside it */
   --page-gutter: 80px;
   /* how wide everything laid out as the manuscript is: one page, or, in the
@@ -670,7 +672,7 @@ body.focus-mode.night .sheet ::selection { color: #d6d2c6; }
 body.focus-mode:not(.no-dropcap) .chapter-body.focus-cap:not(.cap-off):not(.no-cap):not(.opens-dialogue) p[data-first]::first-letter { color: var(--ink); }
 .sheet {
   background: var(--paper); color: var(--ink);
-  padding: 70px 72px 90px;
+  padding: 70px var(--page-pad-x) 90px;
   box-shadow: 0 4px 30px rgba(0,0,0,0.5);
   min-height: 88vh;
   margin-bottom: 44px;
@@ -679,7 +681,7 @@ body.focus-mode:not(.no-dropcap) .chapter-body.focus-cap:not(.cap-off):not(.no-c
   width: calc(var(--page-w) * var(--page-zoom, 1)); max-width: 92%;
   background: var(--paper); color: var(--ink);
   margin: 40px auto 120px;
-  padding: 70px 72px 90px;
+  padding: 70px var(--page-pad-x) 90px;
   box-shadow: 0 4px 30px rgba(0,0,0,0.5);
   min-height: 85vh;
 }
