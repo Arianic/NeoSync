@@ -80,7 +80,7 @@ Imports recognize chapter headings in all these languages (`CHAPTER_WORDS` in `m
 
 ## Fonts in other alphabets
 
-Most fonts NEO bundles (the body fonts on Linux, the drop caps and the cover titles, in `fonts/`) have Latin letters only. For Russian, each has a companion under the same font name in `styles.css` that supplies the Cyrillic letters, so Latin text looks exactly as before. A language with letters of its own needs the same check: every bundled font, companions included, must carry them. Korean has no companions yet: Hangul comes from the system's own fonts, so it looks right but not the same on every computer.
+Most fonts NEO bundles (the body fonts on Linux, the drop caps and the cover titles, in `fonts/`) have Latin letters only. For Russian, each has a companion under the same font name in `styles.css` that supplies the Cyrillic letters, so Latin text looks exactly as before. A language with letters of its own needs the same check: every bundled font, companions included, must carry them. Korean has them too: Noto Serif KR for the serif faces, Noto Sans KR for the sans ones, each cut down to Hangul (the syllables, the jamo and CJK punctuation) as one variable file, so every weight comes from it. Hanja still come from the system's fonts.
 
 Korean also changes how the interface sets its labels (the end of `styles.css`): words are kept whole when a line wraps, the wide letter-spacing of the small labels is narrowed, and Hangul is never slanted into a fake italic.
 
