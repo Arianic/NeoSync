@@ -25,7 +25,7 @@
 //     short: true when it's one story with no chapters,
 //     sections: [{ kind: 'chapter' | 'part' | 'epigraph', heading, partTitle,
 //                  paras: [{ sceneBreak, poetry, flush, align,
-//                            runs: [{ text, b, i, u, s, br }] }] }]
+//                            runs: [{ text, b, i, u, s, br } | { fn: note }] }] }]
 //   }
 
 (function (root) {
@@ -70,9 +70,16 @@
   const TWIP = 1440; // to the inch
   const DOUBLE = 480; // 240ths of a line
 
+  // the footnotes met while the story is set (docxEntries), numbered in order
+  let notes = null;
   function runsXml(runs) {
     return (runs || []).map((r) => {
       if (r.br) return '<w:r><w:br/></w:r>';
+      if (r.fn !== undefined) {
+        if (!notes) return '';
+        notes.push(r.fn);
+        return `<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="${notes.length}"/></w:r>`;
+      }
       if (r.tab) return '<w:r><w:tab/></w:r>';
       const style = r.b && r.i ? 'StrongEmphasis' : r.b ? 'Strong' : r.i ? 'Emphasis' : '';
       const rPr = (style ? `<w:rStyle w:val="${style}"/>` : '') + (r.s ? '<w:strike/>' : '') + (r.u ? '<w:u w:val="single"/>' : '');
@@ -201,6 +208,8 @@ ${para('Header', 'Header', single, '', 'Header')}
 ${chr('Emphasis', 'Emphasis', '<w:i/>')}
 ${chr('Strong', 'Strong', '<w:b/>')}
 ${chr('StrongEmphasis', 'Strong Emphasis', '<w:b/><w:i/>')}
+${para('FootnoteText', 'footnote text', single, '', 'FootnoteText')}
+${chr('FootnoteReference', 'footnote reference', '<w:vertAlign w:val="superscript"/>')}
 </w:styles>`;
   }
 
@@ -211,7 +220,18 @@ ${chr('StrongEmphasis', 'Strong Emphasis', '<w:b/><w:i/>')}
   // The .docx's parts, for export:save's zip. A novel: the title page is
   // its own section with no header, the story the next one, numbered from
   // 1 under the header. A short story: one section, the header from page 2.
+  // Word's footnotes part: the two separators Word expects, then the notes
+  function footnotesXml(list) {
+    const sep = (id, type) => `<w:footnote w:type="${type}" w:id="${id}"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:${type}/></w:r></w:p></w:footnote>`;
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${sep(-1, 'separator')}${sep(0, 'continuationSeparator')}${list.map((n, i) => `<w:footnote w:id="${i + 1}"><w:p><w:pPr><w:pStyle w:val="FootnoteText"/></w:pPr><w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> ${escXml(n)}</w:t></w:r></w:p></w:footnote>`).join('')}</w:footnotes>`;
+  }
+
   function docxEntries(m) {
+    notes = [];
+    try { return docxParts(m); } finally { notes = null; }
+  }
+  function docxParts(m) {
     const NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
     let body;
     if (m.short) {
@@ -224,6 +244,7 @@ ${chr('StrongEmphasis', 'Strong Emphasis', '<w:b/><w:i/>')}
     const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document ${NS}><w:body>${body}</w:body></w:document>`;
     const headers = [{ id: 'rId2', file: 'header1.xml', empty: false }, ...(m.short ? [{ id: 'rId3', file: 'header2.xml', empty: true }] : [])];
+    const noted = notes.length ? notes.slice() : null;
     return [
       { path: '[Content_Types].xml', content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -232,7 +253,8 @@ ${chr('StrongEmphasis', 'Strong Emphasis', '<w:b/><w:i/>')}
 <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
 <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
 <Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>
-${headers.map((h) => `<Override PartName="/word/${h.file}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>`).join('\n')}
+${headers.map((h) => `<Override PartName="/word/${h.file}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>`).join('\n')}${noted ? `
+<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/>` : ''}
 </Types>` },
       { path: '_rels/.rels', content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
@@ -242,12 +264,14 @@ ${headers.map((h) => `<Override PartName="/word/${h.file}" ContentType="applicat
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 <Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>
-${headers.map((h) => `<Relationship Id="${h.id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="${h.file}"/>`).join('\n')}
+${headers.map((h) => `<Relationship Id="${h.id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="${h.file}"/>`).join('\n')}${noted ? `
+<Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/>` : ''}
 </Relationships>` },
       { path: 'word/document.xml', content: documentXml },
       { path: 'word/styles.xml', content: stylesXml(m) },
       { path: 'word/settings.xml', content: SETTINGS },
-      ...headers.map((h) => ({ path: 'word/' + h.file, content: headerXml(m, h.empty) }))
+      ...headers.map((h) => ({ path: 'word/' + h.file, content: headerXml(m, h.empty) })),
+      ...(noted ? [{ path: 'word/footnotes.xml', content: footnotesXml(noted) }] : [])
     ];
   }
 
@@ -259,6 +283,8 @@ ${headers.map((h) => `<Relationship Id="${h.id}" Type="http://schemas.openxmlfor
   function runsHtml(runs) {
     return (runs || []).map((r) => {
       if (r.br) return '<br>';
+      // a footnote: Paged.js sets it at the foot of its page
+      if (r.fn !== undefined) return `<span class="footnote">${escHtml(r.fn)}</span>`;
       let t = escHtml(r.text);
       if (r.s) t = '<s>' + t + '</s>';
       if (r.u) t = '<u>' + t + '</u>';
@@ -323,6 +349,10 @@ h2 { font: inherit; font-weight: normal; text-align: center; margin: calc(${pp.i
 .part h2 { margin-bottom: 0; }
 .epigraph { padding-top: calc(${pp.in[1] / 3 - 1}in); }
 b { font-weight: bold; }
+.footnote { float: footnote; font-size: 10pt; line-height: 1.2; text-indent: 0; text-align: left; font-style: normal; font-weight: normal; }
+.footnote::footnote-marker { content: counter(footnote) ". "; }
+::footnote-call { font-size: 0.7em; vertical-align: super; line-height: 0; }
+@page { @footnote { border-top: 0.5pt solid #000; padding-top: 0.5em; margin-top: 1em; } }
 </style></head><body>
 <section class="titlepage${m.short ? ' pg1' : ''}">${contact}<p class="mtitle c">${escHtml(m.title || '')}</p>${m.byText ? `<p class="byline c">${escHtml(m.byText)}</p>` : ''}</section>
 ${story.join('\n')}

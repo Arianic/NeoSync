@@ -133,7 +133,8 @@ NEO Library/
   book-<slug>-<id>/
     book.json           metadata and chapterOrder
     chapters/<id>.html
-    notes.html
+    notes.html          the Notes tab's page for the whole book
+    notes-<chapter id>.html   a chapter's notes page (NOTES PAGES in app.js)
     outline.html
     darlings.json
     stickies.json

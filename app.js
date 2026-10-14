@@ -583,7 +583,7 @@ function countWords(text) {
 // A copy of a chapter without the marks that aren't words. A chapter on the
 // page is copied node for node: writing it out as HTML and reading it back
 // costs twice as much and gives the same tree.
-const UNCOUNTED = '.darling-anchor, .ph-mark, .ghost';
+const UNCOUNTED = '.darling-anchor, .ph-mark, .ghost, .fn';
 function cleanChapterEl(id) {
   const el = document.querySelector(`.chapter[data-id="${id}"] .chapter-body`);
   let holder;
@@ -2706,6 +2706,7 @@ function renderChapters() {
     if (document.fonts) document.fonts.load('1em "Courier Prime"').then(() => spSchedule(0)).catch(() => {});
   }
   applyPaged();
+  renderAllFootnoteLists();
   renderNav();
 }
 
@@ -2727,12 +2728,16 @@ async function deleteChapterToDarlings(chId, quiet = false) {
     });
     await writeSidecar(book.id, 'darlings', darlings);
   }
+  const noted = isStory(chId) && await notesPageToDarlings(chId, kind === 'chapter' ? t('deleted Chapter {n}', { n: chapterNumber(chId) }) : name);
+  if (noted) await writeSidecar(book.id, 'darlings', darlings);
   if (currentChapterId === chId) currentChapterId = null;
   await deleteChapterQuiet(chId);
   if (text && !quiet) {
     toast(kind === 'chapter'
       ? t('Chapter removed — its words are in Darlings, or {key} to undo', { key: KZ })
       : t('{name} removed — its words are in Darlings, or {key} to undo', { name, key: KZ }));
+  } else if (noted && !quiet) {
+    toast(t('Chapter removed — its notes are in Darlings, or {key} to undo', { key: KZ }));
   }
 }
 
@@ -2851,6 +2856,7 @@ function wireChapterBody(body, chId) {
     updateCounters();
     scheduleNavRefresh();
     if (!typewriterEnabled) revealCaret();
+    if (body.querySelector('.fn') || body.parentElement.querySelector(':scope > .fn-list')) queueFootnoteList(null);
     endTypingRunSoon();
   });
   // paste without formatting
@@ -2886,7 +2892,7 @@ function wireChapterBody(body, chId) {
     if (html) {
       document.execCommand('insertHTML', false, cleanPasteHtml(html, { style: dashStyle(), ...edges }));
       // the engine wraps inserted HTML (and its neighbours) in style spans
-      if (body.querySelector('span:not(.ph-mark)')) {
+      if (body.querySelector('span:not(.ph-mark):not(.fn)')) {
         const caret = captureCaret();
         stripJunkSpans(body);
         restoreCaret(caret);
@@ -2991,6 +2997,8 @@ function wireChapterBody(body, chId) {
   body.addEventListener('click', (e) => {
     const mark = e.target.closest('.ph-mark');
     if (mark) focusSticky(mark.dataset.sid);
+    const fn = e.target.closest('.fn');
+    if (fn) openFootnote(fn);
     // clicking a ghost outline note selects it, ready to be replaced with prose
     const ghost = e.target.closest('p.ghost');
     if (ghost) {
@@ -3394,6 +3402,7 @@ function chapterStartBackspace(e, body, chId) {
   writeSidecar(book.id, 'stickies', stickies);
   for (const d of darlings) if (d.chapterId === chId) d.chapterId = prevId;
   writeSidecar(book.id, 'darlings', darlings);
+  foldNotesPage(chId, prevId);
   if (book.sectionNotes && book.sectionNotes[chId]) {
     book.sectionNotes[prevId] = [...(book.sectionNotes[prevId] || []), ...book.sectionNotes[chId]];
     delete book.sectionNotes[chId];
@@ -3557,7 +3566,43 @@ function guardMarkerDelete(e, body, chId) {
   const node = r.startContainer;
   const back = e.key === 'Backspace';
   const isMark = (n) => n && n.nodeType === Node.ELEMENT_NODE &&
-    (n.classList.contains('ph-mark') || n.classList.contains('darling-anchor'));
+    (n.classList.contains('ph-mark') || n.classList.contains('darling-anchor') || n.classList.contains('fn'));
+
+  // Case 0: joining two lines where the upper one ends in a footnote's
+  // number. The engine only drops the line's trailing <br> there and leaves
+  // the lines apart, so NEO joins them itself.
+  const block = (node.nodeType === Node.TEXT_NODE ? node.parentElement : node).closest('.chapter-body > p');
+  if (block && !block.classList.contains('scene-break') && !block.classList.contains('ghost')) {
+    const edge = document.createRange();
+    edge.selectNodeContents(block);
+    if (back) edge.setEnd(r.startContainer, r.startOffset); else edge.setStart(r.startContainer, r.startOffset);
+    const upper = back ? block.previousElementSibling : block;
+    const lower = back ? block : block.nextElementSibling;
+    const endsInNote = (p) => {
+      let last = p && p.lastChild;
+      while (last && ((last.nodeType === Node.TEXT_NODE && !last.textContent) || last.nodeName === 'BR')) last = last.previousSibling;
+      return !!(last && last.classList && last.classList.contains('fn'));
+    };
+    if (edge.toString() === '' && !edge.cloneContents().querySelector('.fn') && upper && lower && upper.tagName === 'P' && lower.tagName === 'P' &&
+        !upper.classList.contains('scene-break') && !lower.classList.contains('scene-break') && endsInNote(upper)) {
+      e.preventDefault();
+      while (upper.lastChild && (upper.lastChild.nodeName === 'BR' || (upper.lastChild.nodeType === Node.TEXT_NODE && !upper.lastChild.textContent))) upper.lastChild.remove();
+      const join = document.createRange();
+      join.setStartAfter(upper.lastChild);
+      join.collapse(true);
+      while (lower.firstChild) {
+        if (lower.firstChild.nodeName === 'BR' && !lower.firstChild.nextSibling) { lower.firstChild.remove(); continue; }
+        upper.appendChild(lower.firstChild);
+      }
+      lower.remove();
+      sel.removeAllRanges();
+      sel.addRange(join);
+      caretOffFootnote(sel);
+      syncChapter(body, chId);
+      renderFootnoteList(body);
+      return true;
+    }
+  }
 
   // Case 1: the deletion would cross INTO a marker (caret at a node boundary,
   // marker on the far side) — delete the marker itself, cleanly.
@@ -3572,6 +3617,11 @@ function guardMarkerDelete(e, body, chId) {
     e.preventDefault();
     if (adjacent.classList.contains('ph-mark') && adjacent.dataset.sid) {
       resolveSticky(adjacent.dataset.sid); // removes mark + its note, syncs
+    } else if (adjacent.classList.contains('fn')) {
+      footnoteToDarlings(adjacent, chId);
+      adjacent.remove();
+      syncChapter(body, chId);
+      renderAllFootnoteLists();
     } else {
       adjacent.remove();
       syncChapter(body, chId);
@@ -3603,7 +3653,7 @@ function guardMarkerDelete(e, body, chId) {
 // ("<span style='text-indent...'>"). They corrupt later edits — unwrap them,
 // keeping only NEO's own marks.
 function stripJunkSpans(el) {
-  for (const s of [...el.querySelectorAll('span:not(.ph-mark)')]) {
+  for (const s of [...el.querySelectorAll('span:not(.ph-mark):not(.fn)')]) {
     while (s.firstChild) s.before(s.firstChild);
     s.remove();
   }
@@ -3674,7 +3724,7 @@ function handleEnter(e, body, chId) {
   if (!isStory(chId) && !block.classList.contains('poetry')) {
     e.preventDefault();
     enterRun = 0;
-    if (block.querySelector('span:not(.ph-mark)')) {
+    if (block.querySelector('span:not(.ph-mark):not(.fn)')) {
       const caret = captureCaret();
       stripJunkSpans(block);
       restoreCaret(caret);
@@ -3766,7 +3816,8 @@ function handleEnter(e, body, chId) {
     // normal Enter — native split so ⌘Z keeps working; junk spans (which
     // make the engine clone whole paragraphs) are stripped first if present
     e.preventDefault();
-    if (block.querySelector('span:not(.ph-mark)')) {
+    caretOffFootnote(sel);
+    if (block.querySelector('span:not(.ph-mark):not(.fn)')) {
       // Unwrapping moves text nodes, so preserve the caret's text position.
       const caret = captureCaret();
       stripJunkSpans(block);
@@ -3880,7 +3931,7 @@ function handlePoetry(e, body, chId) {
 
   if (block.classList.contains('poetry')) {
     // the engine's own split keeps the class on the new line, and ⌘Z sees it
-    if (block.querySelector('span:not(.ph-mark)')) stripJunkSpans(block);
+    if (block.querySelector('span:not(.ph-mark):not(.fn)')) stripJunkSpans(block);
     document.execCommand('insertParagraph');
     const cur = caretBlock(body);
     if (cur) {
@@ -3935,7 +3986,7 @@ function handleFlush(e, body, chId) {
   if (!block) return false;
   e.preventDefault();
   if (block.classList.contains('scene-break')) return true;
-  if (block.querySelector('span:not(.ph-mark)')) stripJunkSpans(block);
+  if (block.querySelector('span:not(.ph-mark):not(.fn)')) stripJunkSpans(block);
   if (block.classList.contains('flush')) {
     // the engine's own split keeps the class on the new line, and ⌘Z sees it
     document.execCommand('insertParagraph');
@@ -4089,7 +4140,7 @@ function captureBody(body) {
   // (a page marks the lines that say who said it, and a chapter the speech
   // after a scene break, for the screen only)
   // (and a script's page breaks, (CONT'D) and suggestions)
-  return dropJunkSpans(body.innerHTML).replace(/<(b|i|em|strong|u|s|strike|sub|sup)\s+style="[^"]*"/g, '<$1').replace(/<p\b[^>]*>/g, (tag) => tag.replace(/ data-(?:attr|speech|first|walk)=""/g, '')
+  return dropJunkSpans(body.innerHTML).replace(/<(b|i|em|strong|u|s|strike|sub|sup)\s+style="[^"]*"/g, '<$1').replace(/<p\b[^>]*>/g, (tag) => tag.replace(/ data-(?:attr|speech|first|walk|fnopen)=""/g, '')
     .replace(/ data-(?:pg|fill|contd|ghost|ghost-empty|sp-paste|scene-note)(?:="[^"]*")?/g, ''));
 }
 
@@ -4105,7 +4156,7 @@ function dropJunkSpans(html) {
   const junk = [];
   return html.replace(/<span\b[^>]*>|<\/span>/g, (tag) => {
     if (tag[1] === '/') return junk.pop() ? '' : tag;
-    const drop = !/\sclass="[^"]*\bph-mark\b/.test(tag);
+    const drop = !/\sclass="[^"]*\b(?:ph-mark|fn)\b/.test(tag);
     junk.push(drop);
     return drop ? '' : tag;
   });
@@ -4258,24 +4309,24 @@ function cleanPasteHtml(html, dashes) {
 
   const paras = [[]];
   for (const r of paraRuns(holder.innerHTML)) {
-    if (r.mark !== undefined) { paras[paras.length - 1].push(r); continue; }
+    if (r.mark !== undefined || r.fn !== undefined) { paras[paras.length - 1].push(r); continue; }
     const pieces = r.text.split(BREAK);
     pieces.forEach((text, i) => {
       if (i > 0) paras.push([]);
       if (text) paras[paras.length - 1].push({ text, b: r.b, i: r.i, u: r.u, s: r.s });
     });
   }
-  const filled = paras.map((runs) => runs.some((r) => r.mark === undefined && r.text.trim()));
+  const filled = paras.map((runs) => runs.some((r) => r.mark === undefined && r.fn === undefined && r.text.trim()));
   const out = paras.map((runs, n) => {
     // whitespace collapses like HTML's, and each paragraph is trimmed
-    runs = runs.map((r) => (r.mark !== undefined ? r : { ...r, text: r.text.replace(/\s+/g, ' ') }));
+    runs = runs.map((r) => (r.mark !== undefined || r.fn !== undefined ? r : { ...r, text: r.text.replace(/\s+/g, ' ') }));
     // (one space is kept where the clipboard's words meet the line's own,
     // mid-line: "the " + "big" + " dog" doesn't fuse into "thebigdog")
-    const first = runs.find((r) => r.mark === undefined);
+    const first = runs.find((r) => r.mark === undefined && r.fn === undefined);
     const keepLead = dashes && n === filled.indexOf(true) && !dashes.start && !dashes.spaced;
     const keepTail = dashes && n === filled.lastIndexOf(true) && !dashes.end && !dashes.spacedAfter;
     if (first) first.text = first.text.replace(/^\s+/, keepLead && /^\s/.test(first.text) ? ' ' : '');
-    const last = [...runs].reverse().find((r) => r.mark === undefined);
+    const last = [...runs].reverse().find((r) => r.mark === undefined && r.fn === undefined);
     if (last) last.text = last.text.replace(/\s+$/, keepTail && /\s$/.test(last.text) ? ' ' : '');
     if (dashes) {
       dashRuns(runs, dashes.style, {
@@ -4285,6 +4336,7 @@ function cleanPasteHtml(html, dashes) {
       });
     }
     const inner = runs.map((r) => {
+      if (r.fn !== undefined) return runHtml(r);
       if (r.mark !== undefined) {
         // placeholder marks travel with their text; reconcileMarks pairs
         // each one back up with a note after the paste lands
@@ -4295,7 +4347,7 @@ function cleanPasteHtml(html, dashes) {
       if (!r.text) return '';
       return runHtml(r);
     }).join('');
-    return inner.replace(/<[^>]+>/g, '').trim() ? '<p>' + inner + '</p>' : '';
+    return inner.replace(/<[^>]+>/g, '').trim() || inner.includes('class="fn"') ? '<p>' + inner + '</p>' : '';
   }).filter(Boolean);
   // single block pastes inline (no forced new paragraph)
   if (out.length === 1) return out[0].slice(3, -4);
@@ -4930,6 +4982,10 @@ document.addEventListener('keydown', (e) => {
   if (cmd && e.shiftKey && e.code === 'KeyD') {
     e.preventDefault();
     if (currentTab === 'manuscript') darlingFromKeyboard();
+  }
+  if (cmd && e.shiftKey && !e.altKey && e.code === 'KeyN') {
+    e.preventDefault();
+    if (currentTab === 'manuscript' && !fnBox) insertFootnote();
   }
   // ⌘S takes a snapshot of the book (SNAPSHOTS)
   if (cmd && !e.altKey && !e.shiftKey && (e.code === 'KeyS' || e.key === 's')) {
@@ -7027,6 +7083,232 @@ function scriptTile(el, meta) {
 }
 
 /* ================================================================== */
+/*  FOOTNOTES                                                          */
+/* ================================================================== */
+// ⌘⇧N (Ctrl+Shift+N) puts a footnote where the caret is: a small number on
+// the page and a box under the line for its words. Enter or Esc goes back
+// to the sentence, just past the number; a click on the number opens it
+// again. The note is kept on its marker in the chapter's own file
+// (<span class="fn" data-note="…">), so it travels with its sentence:
+// cut and paste, undo, sync, Darlings, every export. The numbers are the
+// page's own count (a CSS counter), one series through the whole book as
+// in every export (Paged.js and Word both number that way), and are never
+// saved. Under the chapter's last line its notes are listed, for the
+// screen only. A marker deleted with its words sends them to Darlings.
+const KFN = K('⌘⇧N', 'Ctrl+Shift+N');
+const FN_CHAR = '\u200B';
+let fnBox = null; // the open note: { el, text, mark, body, chId, p }
+
+// A caret just past a footnote's number, held as a place between nodes, is
+// one the engine won't split a line at: it's put at the start of the words
+// that follow (or at the end of the line), the same place to the eye.
+function caretOffFootnote(sel) {
+  if (!sel.rangeCount || !sel.isCollapsed) return;
+  const r = sel.getRangeAt(0);
+  const node = r.startContainer;
+  if (node.nodeType !== Node.ELEMENT_NODE) return;
+  const before = node.childNodes[r.startOffset - 1];
+  if (!before || !before.classList || !before.classList.contains('fn')) return;
+  let next = before.nextSibling;
+  if (!next || next.nodeType !== Node.TEXT_NODE) {
+    next = document.createTextNode('');
+    before.after(next);
+  }
+  const at = document.createRange();
+  at.setStart(next, 0);
+  at.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(at);
+}
+
+function footnoteMark(note) {
+  const span = document.createElement('span');
+  span.className = 'fn';
+  span.contentEditable = 'false';
+  span.dataset.note = note || '';
+  // one invisible character, so the caret has a place on either side of
+  // it (an empty marker slid onto the next line at Enter)
+  span.textContent = FN_CHAR;
+  return span;
+}
+const footnoteNumber = (mark) => [...document.querySelectorAll('#chapters .chapter-body .fn')].indexOf(mark) + 1 || 1;
+
+function insertFootnote() {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  let el = sel.anchorNode;
+  if (el && el.nodeType === Node.TEXT_NODE) el = el.parentElement;
+  const body = el && el.closest ? el.closest('.chapter-body') : null;
+  const p = body && el.closest('.chapter-body > p');
+  if (!body || !p || isScript() || p.classList.contains('ghost') || p.classList.contains('scene-break')) {
+    toast(t('Click into a chapter first, then {key} adds a footnote', { key: KFN }));
+    return;
+  }
+  const chId = body.closest('.chapter').dataset.id;
+  currentChapterId = chId;
+  const range = sel.getRangeAt(0);
+  range.collapse(false);
+  const mark = footnoteMark('');
+  range.insertNode(mark);
+  syncChapter(body, chId);
+  renderAllFootnoteLists();
+  openFootnote(mark);
+}
+
+function openFootnote(mark) {
+  closeFootnote();
+  const body = mark.closest('.chapter-body');
+  const p = mark.closest('.chapter-body > p');
+  if (!body || !p) return;
+  const chId = body.closest('.chapter').dataset.id;
+  // cut into pages, a chapter's sheet is in pieces, and the box sits on the paper instead
+  const host = document.body.classList.contains('paged') ? $('#paper') : body.closest('.chapter');
+  const el = document.createElement('div');
+  el.className = 'fn-box';
+  el.contentEditable = 'false';
+  const num = document.createElement('span');
+  num.className = 'fn-num';
+  num.textContent = footnoteNumber(mark);
+  const text = document.createElement('div');
+  text.className = 'fn-text';
+  text.contentEditable = 'plaintext-only';
+  text.spellcheck = false;
+  text.setAttribute('role', 'textbox');
+  text.setAttribute('aria-label', t('Footnote {n}', { n: num.textContent }));
+  text.dataset.ph = t('Footnote');
+  text.textContent = mark.dataset.note || '';
+  const hint = document.createElement('span');
+  hint.className = 'fn-hint';
+  hint.textContent = t('Enter to go back');
+  el.append(num, text, hint);
+  host.appendChild(el);
+  fnBox = { el, text, mark, body, chId, p };
+  p.setAttribute('data-fnopen', '');
+  placeFootnoteBox();
+  text.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeFootnote(true); }
+  });
+  text.addEventListener('input', () => {
+    mark.dataset.note = text.textContent.replace(/\s*\n\s*/g, ' ');
+    syncChapter(body, chId);
+    queueFootnoteList(body);
+    placeFootnoteBox();
+  });
+  text.addEventListener('blur', () => { setTimeout(() => { if (fnBox && fnBox.el === el && !el.contains(document.activeElement)) closeFootnote(false); }, 0); });
+  text.focus();
+  const r = document.createRange();
+  r.selectNodeContents(text);
+  r.collapse(false);
+  window.getSelection().removeAllRanges();
+  window.getSelection().addRange(r);
+}
+
+function placeFootnoteBox() {
+  if (!fnBox || !fnBox.p.isConnected) return;
+  const { el, p, body } = fnBox;
+  const host = el.parentElement;
+  const c = host.getBoundingClientRect();
+  const pieces = p.getClientRects();
+  const r = pieces.length ? pieces[pieces.length - 1] : p.getBoundingClientRect();
+  const b = [...body.getClientRects()].find((x) => r.left >= x.left - 1 && r.right <= x.right + 1 && r.top >= x.top - 1 && r.bottom <= x.bottom + 1) || body.getBoundingClientRect();
+  el.style.left = (b.left - c.left) + 'px';
+  el.style.width = b.width + 'px';
+  body.closest('.chapter').style.setProperty('--fn-h', (el.offsetHeight + 14) + 'px');
+  el.style.top = (r.bottom - c.top + 6) + 'px';
+}
+window.addEventListener('resize', placeFootnoteBox);
+
+// back: the caret goes back into the sentence, just past the number
+function closeFootnote(back = false) {
+  if (!fnBox) return;
+  const { el, mark, body, chId, p } = fnBox;
+  fnBox = null;
+  el.remove();
+  p.removeAttribute('data-fnopen');
+  if (!mark.isConnected) return;
+  const note = (mark.dataset.note || '').trim();
+  mark.dataset.note = note;
+  let after = null;
+  if (back) {
+    after = document.createRange();
+    after.setStartAfter(mark);
+    after.collapse(true);
+  }
+  // a note left empty takes its number away with it: nothing was written
+  if (!note) {
+    if (back) { after.setStartBefore(mark); after.collapse(true); }
+    mark.remove();
+  }
+  syncChapter(body, chId);
+  renderAllFootnoteLists();
+  if (back) {
+    body.focus({ preventScroll: true });
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(after);
+  }
+}
+
+// the chapter's notes, under its last line (screen only)
+const fnListQueue = new Set();
+function queueFootnoteList(body) {
+  // (null: every chapter's, as numbers further on may have moved)
+  if (!fnListQueue.size) requestAnimationFrame(() => { if (fnListQueue.has(null)) renderAllFootnoteLists(); else for (const b of fnListQueue) renderFootnoteList(b); fnListQueue.clear(); });
+  fnListQueue.add(body);
+}
+function renderFootnoteList(body) {
+  if (!body || !body.isConnected) return;
+  const chapter = body.closest('.chapter');
+  const marks = [...body.querySelectorAll('.fn')];
+  let list = chapter.querySelector(':scope > .fn-list');
+  if (!marks.length) { if (list) list.remove(); return; }
+  if (!list) {
+    list = document.createElement('div');
+    list.className = 'fn-list';
+    list.contentEditable = 'false';
+    list.setAttribute('aria-label', t('Footnotes'));
+    body.after(list);
+  }
+  list.innerHTML = '';
+  const before = footnoteNumber(marks[0]) - 1;
+  marks.forEach((mark, i) => {
+    const row = document.createElement('div');
+    row.className = 'fn-row';
+    row.tabIndex = 0;
+    const n = document.createElement('span');
+    n.className = 'fn-n';
+    n.textContent = before + i + 1;
+    const txt = document.createElement('span');
+    txt.textContent = mark.dataset.note || '';
+    row.append(n, txt);
+    const go = () => { mark.scrollIntoView({ behavior: scrollBehavior(), block: 'center' }); openFootnote(mark); };
+    row.addEventListener('click', go);
+    row.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+    list.appendChild(row);
+  });
+}
+function renderAllFootnoteLists() {
+  for (const body of document.querySelectorAll('.chapter-body')) renderFootnoteList(body);
+}
+
+// a marker deleted with Backspace or Delete: its words go to Darlings
+function footnoteToDarlings(mark, chId) {
+  const note = (mark.dataset.note || '').trim();
+  if (!note) return;
+  darlings.unshift({
+    id: 'd-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+    html: '<p>' + escHtml(note) + '</p>',
+    text: note.slice(0, 2000),
+    chapterId: chId,
+    chapterLabel: t('Footnote'),
+    date: new Date().toISOString()
+  });
+  writeSidecar(book.id, 'darlings', darlings);
+  toast(t('Footnote removed — its words are in Darlings'));
+}
+
+/* ================================================================== */
 /*  PLACEHOLDERS + STICKIES                                            */
 /* ================================================================== */
 
@@ -7100,6 +7382,8 @@ function returnToMark(sid) {
 }
 
 function renderStickies() {
+  // the Notes tab's right-hand pane lists them too (not while it's being typed in)
+  if (currentTab === 'notes' && !(document.activeElement && document.activeElement.closest && document.activeElement.closest('#notes-side'))) renderNotesSide();
   const wrap = $('#sticky-list');
   wrap.innerHTML = '';
   const open = stickies.filter((s) => !s.resolved);
@@ -7670,6 +7954,362 @@ if (!NO_HOVER) {
 }
 
 /* ================================================================== */
+/*  NOTES PAGES — the book's, and one for each chapter                 */
+/* ================================================================== */
+// The Notes tab holds a page for the whole book (notes.html, as it always
+// has) and one for each chapter (notes-<chapter id>.html, on disk once
+// something's written there). It opens on the chapter being written. The
+// left pane lists the pages in the book's order and only turns them; the
+// right one shows what the manuscript already knows about the chapter on
+// the page: its outline note, its open placeholders, the darlings cut from
+// it. Only "Go to" there leaves the tab.
+let notesPage = 'book';
+let notesPeeks = {}; // page → its text, for the left pane
+let notesPeeksBook = '';
+const notesKind = (page) => (page === 'book' ? 'notes' : 'notes-' + page);
+const notesPageOk = (page) => page === 'book' || (!!book && book.chapterOrder.includes(page) && isStory(page));
+
+// what a page holds: the text waiting to be saved, else the file
+function readNotesPage(bookId, page) {
+  const pending = auxPending[bookId + '/' + notesKind(page)];
+  return pending ? Promise.resolve(pending.html) : window.neo.readAux(bookId, notesKind(page));
+}
+const htmlText = (html) => {
+  const d = document.createElement('template');
+  d.innerHTML = html || '';
+  d.content.querySelectorAll('p, div, li, br').forEach((n) => n.after('\n'));
+  return (d.content.textContent || '').split('\n').map((s) => s.trim()).filter(Boolean).join('\n');
+};
+
+// the pane's peeks, read once each time the tab opens (a missing page reads as '')
+function loadNotesPeeks() {
+  if (!book) return;
+  const bookId = book.id;
+  const pages = ['book', ...book.chapterOrder.filter((c) => isStory(c))];
+  Promise.all(pages.map((p) => readNotesPage(bookId, p).then((h) => htmlText(h), () => ''))).then((texts) => {
+    if (!book || book.id !== bookId) return;
+    notesPeeks = {};
+    // the page open now goes by what's on it (it may have been typed on
+    // while the others were read)
+    const ed = $('#aux-editor');
+    const open = currentTab === 'notes' && ed.dataset.kind === notesKind(notesPage) ? htmlText(ed.innerHTML) : null;
+    pages.forEach((p, i) => {
+      const text = p === notesPage && open !== null ? open : texts[i];
+      if (p === 'book') notesPeeksBook = text; else notesPeeks[p] = text;
+    });
+    if (currentTab === 'notes') renderNotesNav();
+  });
+}
+
+function notesLabel(chId) {
+  const chTitle = (book.chapterTitles || {})[chId];
+  if (chId === soloStory()) return book.title ? shownTitle(book.title) : t('The story');
+  return chTitle && chapterKind(chId) !== 'unnumbered' ? `${chapterMark(chId)} · ${chTitle}` : stickyChapterLabel(chId);
+}
+
+function notesNavList() {
+  let list = $('#notes-nav');
+  if (list) return list;
+  const head = $('#nav-head > span');
+  if (head && !$('#nav-head .nav-title-notes')) {
+    head.classList.add('nav-title-chapters');
+    const alt = document.createElement('span');
+    alt.className = 'nav-title-notes';
+    head.after(alt);
+  }
+  list = document.createElement('div');
+  list.id = 'notes-nav';
+  $('#nav-list').after(list);
+  return list;
+}
+
+function renderNotesNav() {
+  if (!book) return;
+  const list = notesNavList();
+  $('#nav-head .nav-title-notes').textContent = tabName('notes');
+  list.innerHTML = '';
+  const words = (s) => (s ? countWords(s) : 0);
+  const row = (page, label, text) => {
+    const item = document.createElement('div');
+    item.className = 'nav-item notes-item' + (page === notesPage ? ' current' : '') + (page === 'book' ? ' notes-book' : '');
+    item.dataset.page = page;
+    item.tabIndex = 0;
+    item.setAttribute('role', 'button');
+    const n = words(text);
+    item.innerHTML = `<div class="n-row"><span class="n-label"></span><span style="display:flex;align-items:center">${n ? `<span class="n-words">${fmtNum(n)}</span>` : ''}</span></div><div class="nav-note nav-note-ro"></div>`;
+    item.querySelector('.n-label').textContent = label;
+    if (page !== 'book' && page === currentChapterId) {
+      const dot = document.createElement('span');
+      dot.className = 'notes-here';
+      dot.title = t('The chapter you’re writing');
+      item.querySelector('.n-label').after(dot);
+    }
+    const peek = item.querySelector('.nav-note');
+    if (text) peek.textContent = text.replace(/\n/g, ' ');
+    else { peek.classList.add('blank'); peek.dataset.ph = t('No notes yet'); }
+    const go = () => {
+      openNotesPage(page);
+      // on a phone the pane steps aside for the page
+      if (IS_POCKET && $('#nav-pane').dataset.pinned !== '1') $('#nav-pane').classList.remove('open');
+    };
+    item.addEventListener('click', go);
+    item.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+    list.appendChild(item);
+  };
+  row('book', t('The Book'), notesPeeksBook);
+  const sep = document.createElement('div');
+  sep.className = 'notes-sep';
+  list.appendChild(sep);
+  let parts = 0;
+  for (const chId of book.chapterOrder) {
+    const kind = chapterKind(chId);
+    if (kind === 'part') {
+      parts += 1;
+      const p = document.createElement('div');
+      p.className = 'notes-part';
+      const title = chapterText(chId).split('\n').map((s) => s.trim()).find(Boolean) || '';
+      p.textContent = title ? `${partLabel(parts)} · ${title}` : partLabel(parts);
+      list.appendChild(p);
+      continue;
+    }
+    if (!isStory(chId)) continue;
+    row(chId, notesLabel(chId), notesPeeks[chId] || '');
+  }
+}
+
+// turn to another page without leaving the tab
+function openNotesPage(page) {
+  if (!book || !notesPageOk(page)) page = 'book';
+  if (currentTab === 'notes' && page === notesPage) return;
+  if (currentTab === 'notes') tabPlaces.notes = { scroll: $('#paper-scroll').scrollTop, page: notesPage };
+  notesPage = page;
+  if (currentTab === 'notes') switchTab('notes');
+}
+
+// the page's heading: the book's page as it always was; a chapter's names
+// the chapter, with a way back up to the book's and its outline note below
+function notesHeading() {
+  const aux = $('#aux-paper');
+  let up = $('#notes-up');
+  let line = $('#notes-outline');
+  if (!up) {
+    up = document.createElement('button');
+    up.id = 'notes-up';
+    up.addEventListener('click', () => openNotesPage('book'));
+    $('#aux-title').before(up);
+    line = document.createElement('p');
+    line.id = 'notes-outline';
+    $('#aux-title').after(line);
+  }
+  const chapter = notesPage !== 'book';
+  up.hidden = !chapter;
+  up.textContent = '‹ ' + t('The Book');
+  $('#aux-title').textContent = chapter ? (notesPage === soloStory() ? notesLabel(notesPage) : chapterHeading(notesPage) || notesLabel(notesPage)) : tabName('notes');
+  aux.classList.toggle('notes-chapter', chapter);
+  notesOutlineLine();
+}
+function notesOutlineLine() {
+  const line = $('#notes-outline');
+  if (!line) return;
+  const note = notesPage !== 'book' && currentTab === 'notes' ? ((book.chapterNotes || {})[notesPage] || '').trim() : '';
+  line.hidden = !note;
+  line.innerHTML = '';
+  if (!note) return;
+  const b = document.createElement('b');
+  b.textContent = tabName('outline');
+  line.append(b, document.createTextNode(note));
+}
+
+function notesSideList() {
+  let list = $('#notes-side');
+  if (list) return list;
+  const head = $('#side-head > span');
+  if (head && !$('#side-head .side-title-chnotes')) {
+    head.classList.add('side-title-notes');
+    const alt = document.createElement('span');
+    alt.className = 'side-title-chnotes';
+    head.after(alt);
+  }
+  list = document.createElement('div');
+  list.id = 'notes-side';
+  $('#sticky-list').after(list);
+  return list;
+}
+
+// a line of text from the manuscript, added to the end of the page
+function copyToNotes(text) {
+  const ed = $('#aux-editor');
+  if (currentTab !== 'notes' || ed.contentEditable !== 'true') return;
+  const p = document.createElement('p');
+  p.textContent = text;
+  const last = ed.lastElementChild;
+  if (last && last.tagName === 'P' && !last.textContent.trim()) last.replaceWith(p);
+  else ed.appendChild(p);
+  auxDirty = true;
+  scheduleAuxSave();
+  notesTyped();
+  p.scrollIntoView({ behavior: scrollBehavior(), block: 'nearest' });
+  toast(t('Added to the end of these notes'));
+}
+
+function renderNotesSide() {
+  if (!book || currentTab !== 'notes') return;
+  const list = notesSideList();
+  const chapter = notesPage !== 'book';
+  $('#side-head .side-title-chnotes').textContent = chapter ? t('From this chapter') : t('Across the book');
+  list.innerHTML = '';
+  const label = (text, count) => {
+    const l = document.createElement('div');
+    l.className = 'ns-label';
+    l.innerHTML = '<span></span><span></span>';
+    l.firstChild.textContent = text;
+    l.lastChild.textContent = count ? String(count) : '';
+    list.appendChild(l);
+  };
+  const empty = (text) => {
+    const e = document.createElement('div');
+    e.className = 'ns-empty';
+    e.textContent = text;
+    list.appendChild(e);
+  };
+  const card = (cls, text, actions, meta) => {
+    const c = document.createElement('div');
+    c.className = 'sticky ns-card ' + cls;
+    if (meta) {
+      const m = document.createElement('div');
+      m.className = 's-ch';
+      m.textContent = meta;
+      c.appendChild(m);
+    }
+    const body = document.createElement('div');
+    body.className = 'ns-text';
+    body.textContent = text;
+    c.appendChild(body);
+    const acts = document.createElement('div');
+    acts.className = 's-actions';
+    actions.forEach(([name, fn], i) => {
+      if (i) { const s = document.createElement('span'); s.className = 's-sep'; s.textContent = '·'; acts.appendChild(s); }
+      const b = document.createElement('button');
+      b.textContent = name;
+      b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+      acts.appendChild(b);
+    });
+    c.appendChild(acts);
+    list.appendChild(c);
+  };
+  const goTo = (sid) => [t('Go to') + ' ↗', () => returnToMark(sid)];
+  const open = stickies.filter((s) => !s.resolved && book.chapterOrder.includes(s.chapterId));
+
+  if (!chapter) {
+    label(t('Open placeholders'), open.length);
+    if (!open.length) empty(t('None open.'));
+    const order = (s) => book.chapterOrder.indexOf(s.chapterId);
+    for (const s of [...open].sort((a, b) => order(a) - order(b))) {
+      const acts = [goTo(s.id)];
+      if (isStory(s.chapterId)) acts.unshift([t('Chapter notes'), () => openNotesPage(s.chapterId)]);
+      card('unresolved', s.text || t('(no words yet)'), acts, stickyChapterLabel(s.chapterId));
+    }
+    return;
+  }
+
+  // the outline note: the same one the Outline and the Chapters pane show
+  label(t('Outline note'));
+  const oc = document.createElement('div');
+  oc.className = 'sticky ns-card';
+  const note = document.createElement('div');
+  note.className = 'ns-outline';
+  note.contentEditable = 'true';
+  note.spellcheck = false;
+  note.setAttribute('role', 'textbox');
+  note.setAttribute('aria-label', t('Outline note'));
+  note.dataset.ph = t('What happens here…');
+  const chId = notesPage;
+  note.textContent = (book.chapterNotes || {})[chId] || '';
+  note.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); note.blur(); }
+    e.stopPropagation();
+  });
+  note.addEventListener('input', () => {
+    book.chapterNotes = book.chapterNotes || {};
+    book.chapterNotes[chId] = note.textContent.trim();
+    if (chId === notesPage) notesOutlineLine();
+  });
+  note.addEventListener('blur', () => {
+    book.chapterNotes = book.chapterNotes || {};
+    book.chapterNotes[chId] = note.textContent.trim();
+    scheduleMetaSave();
+    scheduleNavRefresh();
+  });
+  oc.appendChild(note);
+  list.appendChild(oc);
+
+  const here = open.filter((s) => s.chapterId === chId);
+  label(t('Placeholders'), here.length);
+  if (!here.length) empty(t('None open.'));
+  for (const s of here) {
+    card('unresolved', s.text || t('(no words yet)'), [[t('Copy to notes'), () => copyToNotes(s.text)], goTo(s.id)].filter((a, i) => i || s.text));
+  }
+
+  const cut = darlings.filter((d) => d.chapterId === chId && d.text);
+  label(t('Darlings from here'), cut.length);
+  if (!cut.length) empty(t('Nothing cut from this chapter.'));
+  for (const d of cut) card('ns-darling', d.text, [[t('Copy to notes'), () => copyToNotes(d.text)]]);
+}
+
+// typing on a page keeps its peek in the pane up to date
+let notesTypedQueued = false;
+function notesTyped() {
+  const ed = $('#aux-editor');
+  if (currentTab !== 'notes' || !ed.dataset.kind || !ed.dataset.kind.startsWith('notes')) return;
+  if (notesTypedQueued) return;
+  notesTypedQueued = true;
+  setTimeout(() => {
+    notesTypedQueued = false;
+    if (currentTab !== 'notes') return;
+    const text = htmlText(ed.innerHTML);
+    if (notesPage === 'book') notesPeeksBook = text; else notesPeeks[notesPage] = text;
+    if (!document.activeElement || !document.activeElement.closest('#notes-nav')) renderNotesNav();
+  }, 400);
+}
+
+// a chapter folded into another (merged up, or joined in the Outline)
+// brings its notes page along, at the end of the other's. Its own file
+// stays where it is, so ⌘Z gives the chapter back with its notes.
+async function foldNotesPage(fromId, intoId) {
+  if (!book) return;
+  const bookId = book.id;
+  try {
+    const [from, into] = await Promise.all([readNotesPage(bookId, fromId), readNotesPage(bookId, intoId)]);
+    if (!htmlText(from)) return;
+    const html = (into || '') + from;
+    const key = bookId + '/' + notesKind(intoId);
+    auxPending[key] = { bookId, kind: notesKind(intoId), html, inFlight: false };
+    flushAux();
+    if (book && book.id === bookId) notesPeeks[intoId] = htmlText(html);
+  } catch (err) {
+    window.neo.logError('notes fold: ' + (err && err.message || err));
+  }
+}
+
+// a chapter deleted takes its notes page to Darlings, like its words
+async function notesPageToDarlings(chId, label) {
+  try {
+    const html = await readNotesPage(book.id, chId);
+    const text = htmlText(html);
+    if (!text) return false;
+    darlings.push({
+      id: 'd-' + Date.now().toString(36) + 'n',
+      html,
+      text: text.slice(0, 2000),
+      chapterId: null,
+      chapterLabel: t('notes for {name}', { name: label }),
+      date: new Date().toISOString()
+    });
+    return true;
+  } catch { return false; }
+}
+
+/* ================================================================== */
 /*  TABS — Manuscript / Notes / Outline / Darlings                     */
 /* ================================================================== */
 
@@ -7911,17 +8551,25 @@ let tabPlaces = {};
 let auxLoad = 0; // which Notes read is the current one
 function switchTab(name) {
   closeCardEditor();
+  closeFootnote();
   auxLoad++;
   $('#editor-view').classList.remove('board-on');
   updateZoomDisplay(); // the page's own zoom, not the cards' (#336)
-  sidePaneForTab(name);
   const scroller = $('#paper-scroll');
   if (book && currentTab && currentTab !== name) {
     tabPlaces[currentTab] = currentTab === 'manuscript'
       ? { caret: captureCaret(), scroll: scroller.scrollTop }
-      : { scroll: scroller.scrollTop };
+      : { scroll: scroller.scrollTop, page: currentTab === 'notes' ? notesPage : undefined };
   }
+  // Notes opens on the chapter being written (on the book's page from a
+  // page that isn't a chapter); turning its pages is openNotesPage
+  if (book && name === 'notes' && currentTab !== 'notes') {
+    notesPage = currentChapterId && notesPageOk(currentChapterId) ? currentChapterId : 'book';
+    loadNotesPeeks();
+  }
+  if (book && !notesPageOk(notesPage)) notesPage = 'book';
   currentTab = name;
+  sidePaneForTab(name);
   queueSideCards();
   applyBright();
   $$('.tab').forEach((t) => {
@@ -7934,7 +8582,7 @@ function switchTab(name) {
   const auxEditor = $('#aux-editor');
   const dList = $('#darlings-list');
   const oList = $('#outline-list');
-  const back = tabPlaces[name];
+  const back = name === 'notes' && tabPlaces.notes && tabPlaces.notes.page !== notesPage ? { scroll: 0 } : tabPlaces[name];
   const returnTo = () => { if (back && typeof back.scroll === 'number') scroller.scrollTop = back.scroll; };
 
   // stash whatever aux content was open
@@ -7977,7 +8625,7 @@ function switchTab(name) {
     returnTo();
     findHere();
   } else {
-    $('#aux-title').textContent = tabName(name);
+    notesHeading();
     auxEditor.hidden = false;
     // The page waits for its text: nothing typed into the old contents
     // while the file is read can be overwritten by it, and a read that
@@ -7985,14 +8633,16 @@ function switchTab(name) {
     // lands nowhere.
     const bookId = book.id;
     const load = ++auxLoad;
+    const kind = notesKind(notesPage);
     auxEditor.contentEditable = 'false';
     auxEditor.dataset.kind = '';
     auxEditor.dataset.book = '';
-    const pending = auxPending[bookId + '/' + name];
-    (pending ? Promise.resolve(pending.html) : window.neo.readAux(bookId, name)).then((html) => {
-      if (load !== auxLoad || !book || book.id !== bookId || currentTab !== name) return;
+    auxEditor.dataset.ph = notesPage === 'book' ? '' : t('Notes for this chapter');
+    const pending = auxPending[bookId + '/' + kind];
+    (pending ? Promise.resolve(pending.html) : window.neo.readAux(bookId, kind)).then((html) => {
+      if (load !== auxLoad || !book || book.id !== bookId || currentTab !== name || notesKind(notesPage) !== kind) return;
       auxEditor.innerHTML = html || '';
-      auxEditor.dataset.kind = name;
+      auxEditor.dataset.kind = kind;
       auxEditor.dataset.book = bookId;
       auxEditor.contentEditable = 'true';
       auxEditor.focus({ preventScroll: true });
@@ -9867,6 +10517,7 @@ async function joinChapter(chId, intoCh) {
   // the words are safe in the other chapter before this one's file goes
   try { await persistChapter(intoCh); } catch (err) { window.neo.logError('join: ' + (err && err.message || err)); return null; }
   if (book.chapterTitles) delete book.chapterTitles[chId];
+  await foldNotesPage(chId, intoCh);
   await deleteChapterQuiet(chId);
   updateCounters();
   return sec.id;
@@ -10777,6 +11428,9 @@ function heldSceneBack(card, before) {
 // the right-hand pane holds loose cards while the Outline is up (there are
 // no placeholders to show there)
 function sidePaneForTab(name) {
+  const notes = name === 'notes' && !!book;
+  $('#editor-view').classList.toggle('notes-tab', notes);
+  if (notes) { renderNotesNav(); renderNotesSide(); }
   const outline = name === 'outline' && !!book;
   $('#editor-view').classList.toggle('outline-tab', outline);
   if (outline) renderLooseCards();
@@ -11051,6 +11705,7 @@ $('#aux-editor').addEventListener('keydown', (e) => { if (styleKeepScroll(e)) re
 $('#aux-editor').addEventListener('input', () => {
   auxDirty = true;
   scheduleAuxSave();
+  notesTyped();
   if (spellOn) {
     const key = 'aux-' + ($('#aux-editor').dataset.kind || 'notes');
     scheduleSpellRescan(key, $('#aux-editor'));
@@ -13493,7 +14148,7 @@ function capitalSlips(el) {
     const w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
     let n;
     while ((n = w.nextNode())) {
-      if (n.parentElement && n.parentElement.closest('.ghost, .ph-mark')) continue;
+      if (n.parentElement && n.parentElement.closest('.ghost, .ph-mark, .fn')) continue;
       segs.push({ node: n, at: text.length });
       text += n.data;
     }
@@ -14534,6 +15189,7 @@ function bookShortcutSections() {
       [K('⇧Enter', 'Shift+Enter'), tk('A paragraph with no indent'), tk('Again for another; Enter goes back to prose.')],
       [K('⌘⇧Enter', 'Ctrl+Shift+Enter'), tk('Start or continue a poetry paragraph'), tk('Also works from a chapter heading.')],
       [KPH, tk('Insert a placeholder note')],
+      [KFN, tk('Add a footnote'), tk('Type the note, then Enter to go back to writing. Click its number to change it.')],
       [KDA, tk('Move selected text to Darlings')],
       [K('⌘⇧U', IS_LINUX ? 'Ctrl+Shift+K' : 'Ctrl+Shift+U'), tk('Read aloud from the cursor'), tk('Again, Esc or any key stops it. Uses your computer’s own voice.')]
     ] },
@@ -14691,8 +15347,9 @@ function parasFromHtml(html) {
     const poetry = p.classList.contains('poetry');
     const flush = !poetry && p.classList.contains('flush');
     const align = (p.style && p.style.textAlign) || '';
-    const runs = paraRuns(p.innerHTML, true).filter((r) => r.text);
+    const runs = paraRuns(p.innerHTML, true).filter((r) => r.text || r.fn !== undefined);
     const inner = runs.map((r) => runHtml(r)).join('');
+    p.querySelectorAll('.fn').forEach((f) => f.remove());
     return {
       sceneBreak,
       poetry,
@@ -15022,12 +15679,14 @@ function buildPrintHtml(d, o) {
   const cap = (library.fonts || {}).dropcap === 'none' ? '' : exportDropCapFont();
   const year = String(new Date().getFullYear());
   // paragraphs of prose, hyphenated in main.js (class "hy")
+  // a footnote sits at the foot of its page (Paged.js's float: footnote)
+  const atFoot = (html) => html.replace(FN_HTML, (m, note) => `<span class="footnote">${note}</span>`);
   const prose = (paras, opening) => {
     let first = opening;
     let afterBreak = false;
     return paras.map((p) => {
       if (p.sceneBreak) { afterBreak = true; return '<p class="brk">*&#8195;*&#8195;*</p>'; }
-      const inner = p.html.replace(/^<p[^>]*>|<\/p>$/g, '');
+      const inner = atFoot(p.html.replace(/^<p[^>]*>|<\/p>$/g, ''));
       if (p.poetry) { afterBreak = false; return `<p class="poetry"${p.align ? ` style="text-align:${p.align}"` : ''}>${inner}</p>`; }
       const cls = ['hy'];
       if (first) cls.push('first');
@@ -15041,7 +15700,7 @@ function buildPrintHtml(d, o) {
   const lines = (paras) => paras.map((p) => {
     if (p.sceneBreak) return '<p class="brk">*&#8195;*&#8195;*</p>';
     const cls = [isAttribution(p) ? 'attr' : '', p.poetry ? 'poetry' : ''].filter(Boolean).join(' ');
-    return `<p${cls ? ` class="${cls}"` : ''}>${p.html.replace(/^<p[^>]*>|<\/p>$/g, '')}</p>`;
+    return `<p${cls ? ` class="${cls}"` : ''}>${atFoot(p.html.replace(/^<p[^>]*>|<\/p>$/g, ''))}</p>`;
   }).join('\n');
 
   let body = '';
@@ -15207,6 +15866,10 @@ p.poetry + p.poetry { margin-top: 0; }
 .note .reach { text-align: center; margin-top: 0.35em; }
 .note .reach .k { font-variant-caps: all-small-caps; letter-spacing: 0.08em; }
 .neo-pad { page: front; break-before: page; height: 1px; }
+.footnote { float: footnote; font-size: ${(sz * 0.8).toFixed(2)}pt; line-height: 1.35; text-align: left; text-indent: 0; hyphens: manual; font-style: normal; font-weight: normal; }
+.footnote::footnote-marker { content: counter(footnote) "\\2002"; }
+::footnote-call { font-size: 0.7em; vertical-align: super; line-height: 0; }
+@page { @footnote { border-top: 0.4pt solid #555; padding-top: 0.4em; margin-top: 0.8em; } }
 </style></head><body>
 ${body}
 </body></html>`;
@@ -15391,9 +16054,16 @@ function buildTxt(data) {
   let out = `${d.title.toUpperCase()}\n`;
   if (d.subtitle) out += `${d.subtitle}\n`;
   out += t('by {author}', { author: d.author }) + '\n\n\n';
+  let fnN = 0;
   for (const ch of d.sections) {
     if (ch.heading) out += `${plainHeading(ch).toUpperCase()}\n\n`;
-    for (const p of ch.paras) out += p.sceneBreak ? '\n***\n\n' : (p.poetry ? '    ' : '') + p.text + '\n\n';
+    const notes = [];
+    for (const p of ch.paras) {
+      const noted = (p.runs || []).some((r) => r.fn !== undefined);
+      const text = noted ? p.runs.map((r) => (r.fn !== undefined ? (notes.push(r.fn), `[${++fnN}]`) : r.text)).join('').trim() : p.text;
+      out += p.sceneBreak ? '\n***\n\n' : (p.poetry ? '    ' : '') + text + '\n\n';
+    }
+    if (notes.length) out += '----------\n' + notes.map((n, i) => `[${fnN - notes.length + i + 1}] ${n}`).join('\n') + '\n\n';
     out += '\n';
   }
   return out;
@@ -15411,11 +16081,16 @@ function buildMd(data) {
   let out = `# ${mdMeta(d.title)}\n\n`;
   if (d.subtitle) out += `*${mdMeta(d.subtitle)}*\n\n`;
   out += `**${t('by {author}', { author: mdMeta(d.author) })}**\n\n`;
+  let fnN = 0;
   for (const ch of d.sections) {
     if (ch.heading) out += `\n## ${mdMeta(plainHeading(ch))}\n\n`;
+    const notes = [];
     for (const p of ch.paras) {
-      out += p.sceneBreak ? '\n***\n\n' : (p.poetry ? '> ' : '') + mdRuns(p.runs) + '\n\n';
+      const runs = (p.runs || []).map((r) => (r.fn !== undefined ? (notes.push(r.fn), { text: '\uE001' + (++fnN) + '\uE002' }) : r));
+      out += p.sceneBreak ? '\n***\n\n' : (p.poetry ? '> ' : '') + mdRuns(runs).replace(/\uE001(\d+)\uE002/g, '[^$1]') + '\n\n';
     }
+    notes.forEach((n, i) => { out += `[^${fnN - notes.length + i + 1}]: ${mdMeta(n)}\n`; });
+    if (notes.length) out += '\n';
   }
   return out;
 }
@@ -15514,11 +16189,21 @@ function buildHtml(data, opts = {}) {
   // page like a part's title still shows no number
   const firstStory = d.sections.find((x) => (x.kind || 'chapter') === 'chapter');
   let counting = false;
-  const sectionHtml = (ch) => {
+  let fnN = 0;
+  const sectionHtml = (sec) => {
+    const { paras, notes } = fnParas(sec.paras, fnN, (note, n) => `<sup class="fnref"><a href="#fn${n}" id="fnr${n}">${n}</a></sup>`);
+    const html = sectionBody(notes.length ? { ...sec, paras } : sec);
+    if (!notes.length) return html;
+    const list = `<aside class="notes">${notes.map((note, i) => `<p id="fn${fnN + i + 1}"><a href="#fnr${fnN + i + 1}">${fnN + i + 1}</a>&#8194;${note}</p>`).join('')}</aside>`;
+    fnN += notes.length;
+    const at = html.lastIndexOf('</section>');
+    return at < 0 ? html + list : html.slice(0, at) + list + html.slice(at);
+  };
+  const sectionBody = (ch) => {
     const id = 's' + ch.num;
     const h = headTag(ch);
     const kind = ch.kind || 'chapter';
-    if (ch === firstStory) counting = true;
+    if (firstStory && ch.num === firstStory.num) counting = true;
     const counted = counting ? ' counted' : '';
     if (kind === 'copyright' || kind === 'dedication' || kind === 'epigraph') {
       return `
@@ -15633,6 +16318,12 @@ function buildHtml(data, opts = {}) {
   .contents li.t-part { margin-top: 1.1em; font-size: 15pt; line-height: 1.5; letter-spacing: 2px; font-variant-caps: all-small-caps; }
   .contents li:not(.t-page) + li.t-page { margin-top: 1.2em; }
   .prov { margin-top: 80px; text-align: center; color: #999; font-size: 9pt; }
+  /* footnotes: the number links down to the note, which closes its chapter */
+  .fnref { font-size: 0.68em; line-height: 0; vertical-align: super; }
+  .fnref a, .notes a { color: inherit; text-decoration: none; }
+  .notes { margin-top: 2.6em; padding-top: 0.6em; font-size: 10.5pt; line-height: 1.5; text-align: left; position: relative; break-inside: auto; }
+  .notes::before { content: ''; position: absolute; top: 0; left: 0; width: 30%; border-top: 1px solid #aaa; }
+  .chapter .notes p, .page .notes p { text-indent: 0; text-align: left; margin: 0 0 0.45em; font-style: normal; hyphens: manual; }
   /* printed pages carry their number at the foot; the cover, the title
      page and the pages that aren't chapters don't, the way books do it
      (only the PDF uses these rules) */
@@ -15666,9 +16357,27 @@ const escXml = (s) => String(s)
 // In the manuscript an italic inside an italic is emphasis in a poetry
 // paragraph (itself one italic), and it is set upright, the typesetter's
 // way (flip). Pasted HTML often doubles its italics for nothing; not there.
+// Footnotes in the exports (FOOTNOTES): numbered through the whole book, as
+// on the page. A paragraph's html carries each marker as runHtml wrote it;
+// FN_HTML finds them, its first group the note (attribute-escaped).
+const FN_HTML = /<span class="fn" data-note="([^"]*)" contenteditable="false">\u200B<\/span>/g;
+// the notes in the sections before this one: where its numbers start
+const fnBefore = (d, ch) => d.sections.slice(0, Math.max(0, d.sections.indexOf(ch)))
+  .reduce((n, sec) => n + sec.paras.reduce((m, p) => m + ((p.html || '').match(FN_HTML) || []).length, 0), 0);
+// a section's paragraphs with each marker swapped for what a format sets
+// there; mark(note, n) gets the note (attribute-escaped) and its number
+function fnParas(paras, start, mark) {
+  const notes = [];
+  const out = paras.map((p) => (p.html && p.html.includes('class="fn"')
+    ? { ...p, html: p.html.replace(FN_HTML, (m, note) => { notes.push(note); return mark(note, start + notes.length); }) }
+    : p));
+  return { paras: out, notes };
+}
+
 // a run's text in the manuscript's own inline tags
 function runHtml(r, esc = escHtml) {
   if (r.br) return '<br>';
+  if (r.fn !== undefined) return `<span class="fn" data-note="${escAttr(r.fn)}" contenteditable="false">\u200B</span>`;
   let t = esc(r.text);
   if (r.s) t = '<s>' + t + '</s>';
   if (r.u) t = '<u>' + t + '</u>';
@@ -15766,6 +16475,11 @@ function paraRuns(pHtml, flip) {
           runs.push({ mark: child.dataset.sid || '' });
           continue;
         }
+        // a footnote: its words, no text of its own on the line
+        if (child.classList && child.classList.contains('fn')) {
+          runs.push({ fn: child.dataset.note || '', text: '' });
+          continue;
+        }
         const tag = child.tagName;
         // a line break inside a paragraph (a chapter file written elsewhere)
         // stays a break, not two words run together
@@ -15796,6 +16510,8 @@ function paraRuns(pHtml, flip) {
 
 /* ---------- DOCX ---------- */
 
+// a Word export's footnotes, gathered as docxP meets them (buildDocxEntries)
+let docxNotes = null;
 function docxP(runs, opts = {}) {
   // the schema wants a paragraph's properties in this order
   const pPr = [];
@@ -15811,6 +16527,11 @@ function docxP(runs, opts = {}) {
   if (opts.align) pPr.push(`<w:jc w:val="${opts.align}"/>`);
   const rXml = runs.map((r) => {
     if (r.br) return '<w:r><w:br/></w:r>';
+    if (r.fn !== undefined) {
+      if (!docxNotes) return '';
+      docxNotes.push(r.fn);
+      return `<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="${docxNotes.length}"/></w:r>`;
+    }
     const it = opts.flip ? !r.i : r.i;
     const caps = r.caps !== undefined ? r.caps : opts.caps;
     const size = r.size || opts.size;
@@ -15830,6 +16551,16 @@ function docxP(runs, opts = {}) {
 }
 
 function buildDocxEntries(data) {
+  docxNotes = [];
+  try { return docxEntriesOf(data); } finally { docxNotes = null; }
+}
+// Word's footnotes part: the two separators Word expects, then the notes
+function docxFootnotesXml(notes) {
+  const sep = (id, type, tag) => `<w:footnote w:type="${type}" w:id="${id}"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:${tag}/></w:r></w:p></w:footnote>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${sep(-1, 'separator', 'separator')}${sep(0, 'continuationSeparator', 'continuationSeparator')}${notes.map((n, i) => `<w:footnote w:id="${i + 1}"><w:p><w:pPr><w:pStyle w:val="FootnoteText"/></w:pPr><w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> ${escXml(n)}</w:t></w:r></w:p></w:footnote>`).join('')}</w:footnotes>`;
+}
+function docxEntriesOf(data) {
   const d = data || bookExportData();
   const body = [];
   // headings carry Word's own heading styles, so the navigation pane and a
@@ -15922,14 +16653,18 @@ ${[1, 2, 3].map(headingStyle).join('\n')}
 ${chr('Emphasis', 'Emphasis', '<w:i/>')}
 ${chr('Strong', 'Strong', '<w:b/>')}
 ${chr('StrongEmphasis', 'Strong Emphasis', '<w:b/><w:i/>')}
+${para('FootnoteText', 'footnote text', '<w:spacing w:after="0" w:line="240" w:lineRule="auto"/>', 'FootnoteText', '<w:sz w:val="20"/>')}
+${chr('FootnoteReference', 'footnote reference', '<w:vertAlign w:val="superscript"/>')}
 </w:styles>`;
+  const notes = docxNotes.length ? docxNotes : null;
   return [
     { path: '[Content_Types].xml', content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>
 <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
-<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>${notes ? `
+<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/>` : ''}
 </Types>` },
     { path: '_rels/.rels', content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
@@ -15937,10 +16672,12 @@ ${chr('StrongEmphasis', 'Strong Emphasis', '<w:b/><w:i/>')}
 </Relationships>` },
     { path: 'word/_rels/document.xml.rels', content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>${notes ? `
+<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/>` : ''}
 </Relationships>` },
     { path: 'word/document.xml', content: documentXml },
-    { path: 'word/styles.xml', content: stylesXml }
+    { path: 'word/styles.xml', content: stylesXml },
+    ...(notes ? [{ path: 'word/footnotes.xml', content: docxFootnotesXml(notes) }] : [])
   ];
 }
 
@@ -15967,8 +16704,16 @@ const EPUB_TYPES = {
 
 function chapterXhtml(ch, d) {
   const kind = ch.kind || 'chapter';
+  // footnotes: the number is a link a reading app opens as a pop-up note
+  let fnN = fnBefore(d, ch);
+  const notes = [];
   const xhtmlRuns = (p) => paraRuns(p.html).map((r) => {
     if (r.br) return '<br/>';
+    if (r.fn !== undefined) {
+      notes.push(r.fn);
+      fnN += 1;
+      return `<sup class="fnref"><a epub:type="noteref" href="#fn${fnN}" id="fnr${fnN}">${fnN}</a></sup>`;
+    }
     let t = escXml(r.text);
     if (r.s) t = '<s>' + t + '</s>';
     if (r.u) t = '<u>' + t + '</u>';
@@ -16015,6 +16760,12 @@ ${ch.subtitle ? `<p class="sub">${escXml(ch.subtitle)}</p>` : ''}${ch.byline ? `
     inner = `<section epub:type="${EPUB_TYPES[kind] || ch.role || 'chapter'}">${ch.heading ? `<h1>${escXml(ch.heading)}</h1>` : ''}${ch.byline ? `<p class="byline">${escXml(ch.byline)}</p>` : ''}
 ${paras}
 </section>`;
+  }
+  if (notes.length) {
+    const first = fnN - notes.length + 1;
+    const asides = notes.map((n, i) => `<aside epub:type="footnote" id="fn${first + i}" class="footnote"><p><a href="#fnr${first + i}">${first + i}</a>&#8194;${escXml(n)}</p></aside>`).join('\n');
+    const at = inner.lastIndexOf('</section>');
+    inner = inner.slice(0, at) + `<div class="notes">\n${asides}\n</div>\n` + inner.slice(at);
   }
   // the language on the page too, so a reader hyphenates in the right one
   const lang = escXml(d.language || NeoI18n.getLocale());
@@ -16119,6 +16870,10 @@ ${navList(toc)}
 <navPoint id="titlepage" playOrder="1"><navLabel><text>${escXml(t('Title Page'))}</text></navLabel><content src="title.xhtml"/></navPoint>${ncxPoints(toc)}
 </navMap></ncx>` },
     { path: 'OEBPS/style.css', content: `body { font-family: serif; line-height: 1.5; margin: 1em; }
+sup.fnref { font-size: 0.7em; line-height: 0; vertical-align: super; }
+sup.fnref a, .footnote a { text-decoration: none; }
+.notes { margin-top: 2.5em; border-top: 1px solid #999; padding-top: 0.5em; font-size: 0.85em; }
+.notes p { text-indent: 0; text-align: left; margin: 0 0 0.4em; }
 h1 { text-align: center; font-weight: normal; letter-spacing: 0.2em; text-transform: uppercase; font-size: 1.2em; margin: 3em 0 2em; }
 p { text-indent: 1.2em; margin: 0; text-align: justify; -webkit-hyphens: auto; -epub-hyphens: auto; hyphens: auto; widows: 2; orphans: 2; }
 h1, p.brk { -webkit-hyphens: none; -epub-hyphens: none; hyphens: none; }
