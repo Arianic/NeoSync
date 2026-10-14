@@ -2266,3 +2266,20 @@ body.light #notes-outline { color: #6f6b63; }
 .fn-row { padding: 2px 0; cursor: pointer; border-radius: 3px; outline: none; }
 .fn-row:hover, .fn-row:focus-visible { background: color-mix(in srgb, var(--accent) 9%, var(--paper)); }
 .fn-row .fn-n { color: var(--accent); font: 600 0.75em -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; margin-right: 8px; }
+
+/* Korean interface. Hangul breaks between any two letters unless told to
+   keep words whole, and the wide tracking of the small-caps labels pulls a
+   word apart into single syllables. Both apply to NEO's own labels only:
+   the page, the title page and the covers keep the book's design. Hangul
+   faces have no italic, and a slanted one is only the upright letters
+   sheared, so Hangul stays upright everywhere, the page included; Latin
+   faces keep their italics. */
+html:lang(ko) body { word-break: keep-all; overflow-wrap: break-word; font-synthesis-style: none; }
+html:lang(ko) #paper, html:lang(ko) .book { word-break: normal; }
+html:lang(ko) :is(#aux-paper h2, .pen-slot, .shelf-label, .shelf-bound-mark, .pt-label, .ps-name, .ps-label,
+  .ol-part-name, #outline-views button, .ob-part, .ob-mark.ob-word, .ob-scene .ob-foot, .ob-held,
+  #nav-head, .nav-item .n-label, #nav-pane.script .sp-scenes-head, .pop-menu .pm-title,
+  #side-head, .sticky .s-ch, .stats-nums .lbl, .ms-modal legend, .snap-group, .snap-tag,
+  .side-cards-title, .side-card-head, .notes-part, .ns-label, #notes-up, #notes-outline b) {
+  letter-spacing: 0.04em;
+}

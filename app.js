@@ -4749,7 +4749,8 @@ const QUOTE_STYLES = {
   ru: { open: '«', close: '»' },
   el: { open: '«', close: '»' },
   hu: { open: '„', close: '”' },
-  sv: { open: '”', close: '”' }
+  sv: { open: '”', close: '”' },
+  ko: { open: '“', close: '”', singles: true }            // ‘…’ inside, as in English
 };
 // The single quotation marks, where ' types them: English and Dutch ‘…’;
 // German ‚…‘, or ›…‹ in a book set in »…«, or ‹…› in Swiss «…» (#286).
