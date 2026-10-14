@@ -53,6 +53,15 @@ const save = async () => { await js('flushAux()'); await tick(300); };
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
+const paneState = () => js(`['nav-pane', 'side-pane'].map((id) => { const p = document.getElementById(id); return id + ':' + (p.classList.contains('open') ? 'open' : 'shut') + '/' + (p.dataset.pinned === '1' ? 'pinned' : '-'); }).join(' ')`);
+const move = async (x, y) => { wc.sendInputEvent({ type: 'mouseMove', x: Math.round(x), y: Math.round(y) }); await tick(120); };
+const realClick = async (sel) => {
+  const r = await js(`(() => { const b = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
+  await move(r.x, r.y);
+  for (const type of ['mouseDown', 'mouseUp']) wc.sendInputEvent({ type, x: Math.round(r.x), y: Math.round(r.y), button: 'left', clickCount: 1 });
+  await tick(300);
+  return r;
+};
 
 test('Notes opens on the chapter being written', async () => {
   await caretIn(1);
@@ -170,6 +179,25 @@ test('a chapter deleted takes its notes to Darlings', async () => {
   const d = await js(`darlings.find((x) => /^notes for/.test(x.chapterLabel))`);
   assert.ok(d, 'a darling for the notes');
   assert.match(d.text, /Varga/);
+});
+
+
+// The right pane's pin once sat under the window's drag strip, where a click
+// moved the window instead (macOS): neither pane could be kept open there.
+test('both panes can be kept open in Notes, with real clicks, through a page turn', async () => {
+  await clickTab('notes');
+  const w = await js('innerWidth');
+  await move(500, 300); await move(4, 300); await move(10, 300);
+  await realClick('#nav-pin');
+  await move(w - 4, 300); await move(w - 8, 300);
+  const r = await realClick('#side-pin');
+  assert.equal(await js(`document.elementFromPoint(${Math.round(r.x)}, ${Math.round(r.y)}).id`), 'side-pin');
+  assert.ok(r.y - 9 >= 28, 'the pin clears the 28px drag strip');
+  await move(w / 2, 300); await move(w / 2 + 20, 320);
+  await realClick('#notes-nav .notes-item:last-child');
+  await move(w / 2, 300);
+  assert.equal(await paneState(), 'nav-pane:open/pinned side-pane:open/pinned');
+  await js(`pinPane('nav', false); pinPane('side', false)`);
 });
 
 /* ---------- runner ---------- */

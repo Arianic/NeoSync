@@ -1298,9 +1298,11 @@ body.focus-mode .walk-note { opacity: 0.6; }
   padding: 0 16px 14px; font-size: 12px; text-transform: uppercase;
   letter-spacing: 2px; color: var(--muted);
 }
-/* the pin sits in the pane's top corner, above the cards, where it stays as the pane scrolls */
+/* the pin sits in the pane's top corner, above the cards, where it stays as
+   the pane scrolls: below the window's drag strip (#dragstrip, 28px), which
+   would take the click and move the window instead */
 #side-pin {
-  position: fixed; top: 8px; right: 10px;
+  position: fixed; top: 32px; right: 10px; -webkit-app-region: no-drag;
   background: none; border: none; color: #555; font-size: 15px;
 }
 #side-pin.pinned { color: var(--accent); }
