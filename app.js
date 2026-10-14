@@ -2508,7 +2508,7 @@ async function openBook(bookId) {
   snapCache = null;
   sideCardsKey = '';
   currentChapterId = null; // never carry a chapter reference across books
-  undoStack = [];
+  undoStack = []; redoStack = [];
   chapterHTML = html;
   savedHTML = { ...html };
   for (const chId of Object.keys(html)) knowDisk(bookId, chId, html[chId]);
@@ -12259,7 +12259,7 @@ async function refreshFromDisk() {
         }
         if (metaSig(book) !== savedMetaSig) scheduleMetaSave();
         if (!book.chapterOrder.includes(currentChapterId)) currentChapterId = null;
-        undoStack = []; // snapshots of the old structure must not replay over the new one
+        undoStack = []; redoStack = []; // snapshots of the old structure must not replay over the new one
         restructured = true;
       }
     }
@@ -12408,7 +12408,7 @@ async function backToShelf() {
   sideCardsKey = '';
   if ($('#side-cards')) $('#side-cards').innerHTML = '';
   currentChapterId = null;
-  undoStack = [];
+  undoStack = []; redoStack = [];
   $('#editor-view').hidden = true;
   $('#bookshelf-view').hidden = false;
   applyBright();
@@ -12426,6 +12426,7 @@ $('#back-to-shelf').onclick = backToShelf;
 /* ================================================================== */
 
 let undoStack = [];
+let redoStack = []; // what structural undos took back, newest last
 
 // remember where the caret is — paragraph number plus offset within that
 // paragraph, so even a caret in an EMPTY paragraph has an exact address
@@ -12553,11 +12554,12 @@ function sealUndoOnEdit() {
   const top = undoStack[undoStack.length - 1];
   if (top && top.armed) sealUndo(top);
 }
-function snapshotStructure(label, opts) {
-  if (!book) return;
-  maybeDailySnapshot();
-  sealUndo(undoStack[undoStack.length - 1]);
-  const snap = {
+// how many actions ⌘Z can take back, one after another
+const UNDO_DEPTH = 50;
+// the book's structure as it stands: what an undo puts back (and what a redo
+// is, taken at the moment of the undo)
+function captureStructure(label, opts) {
+  return {
     armed: false, // the action's own edits, in this same moment, don't seal it
     label,
     rejoin: !!(opts && opts.rejoin),
@@ -12574,15 +12576,23 @@ function snapshotStructure(label, opts) {
     darlings: JSON.parse(JSON.stringify(darlings)),
     stickies: JSON.parse(JSON.stringify(stickies))
   };
+}
+function snapshotStructure(label, opts) {
+  if (!book) return;
+  maybeDailySnapshot();
+  sealUndo(undoStack[undoStack.length - 1]);
+  const snap = captureStructure(label, opts);
   undoStack.push(snap);
+  redoStack = []; // a new action: what was undone before it can't come back over it
   setTimeout(() => { snap.armed = true; }, 30);
-  if (undoStack.length > 10) undoStack.shift();
+  if (undoStack.length > UNDO_DEPTH) undoStack.shift();
 }
 
-async function structuralUndo() {
+async function structuralUndo(fromRedo) {
   const snap = undoStack.pop();
   if (!snap || !book) return;
   sealUndo(snap); // nothing typed since: the state now is the action's own
+  const forward = captureStructure(fromRedo ? 'undo of a redo' : 'redo'); // the state this undo leaves, for Redo
   const after = snap.after;
   // Chapter by chapter: one the action changed and nothing touched since
   // goes back; one only typed in since keeps its words; one both changed
@@ -12645,6 +12655,20 @@ async function structuralUndo() {
   // an undo that sets writing aside says where it went (#377): a chapter that
   // went back looks, to the writer, like words that vanished
   if (displaced.length) toast(t('Words you wrote since went to Darlings, so nothing is lost'), 8000);
+  // what this undo took back can be put back: ⇧⌘Z (Ctrl+Shift+Z, or Ctrl+Y)
+  sealUndo(forward);
+  (fromRedo ? undoStack : redoStack).push(forward);
+  if (undoStack.length > UNDO_DEPTH) undoStack.shift();
+  if (redoStack.length > UNDO_DEPTH) redoStack.shift();
+}
+
+// Redo of an undo made outside the engine's own history: the state the undo
+// left is put back the way an undo puts one back, so it can be undone again
+async function structuralRedo() {
+  const snap = redoStack.pop();
+  if (!snap || !book) return;
+  undoStack.push(snap);
+  await structuralUndo(true);
 }
 
 // after undoing a double-Enter break, close the split the gesture made:
@@ -12698,6 +12722,18 @@ function rejoinAtCaret() {
   syncChapter(body, chId);
 }
 
+// ⇧⌘Z (Ctrl+Shift+Z, and Ctrl+Y outside the Mac) puts back what ⌘Z took back
+// outside the engine's history. Any typing, anywhere, ends it: a redo never
+// lands over writing made after the undo.
+document.addEventListener('input', () => { redoStack = []; }, true);
+document.addEventListener('keydown', (e) => {
+  const key = e.key.toLowerCase();
+  const redo = (e.metaKey || e.ctrlKey) && ((e.shiftKey && key === 'z') || (e.ctrlKey && !e.metaKey && !e.shiftKey && key === 'y' && !IS_MAC));
+  if (!redo || $('#editor-view').hidden || !book || !redoStack.length) return;
+  e.preventDefault();
+  structuralRedo();
+}, true);
+
 document.addEventListener('keydown', (e) => {
   if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.key.toLowerCase() !== 'z') return;
   if ($('#editor-view').hidden || !book || !undoStack.length) return;
@@ -12732,13 +12768,19 @@ function readVoice() {
     by((v) => v.default) || voices[0] || null;
 }
 async function readVoicesReady() {
-  if (window.speechSynthesis.getVoices().length) return true;
+  const synth = window.speechSynthesis;
+  if (synth.getVoices().length) return true;
+  // Some systems (Linux's speech-dispatcher) bring their voices a moment after
+  // the first ask: wait for them, up to four seconds, rather than say there are none
   await new Promise((resolve) => {
-    const done = () => resolve();
-    window.speechSynthesis.addEventListener('voiceschanged', done, { once: true });
-    setTimeout(done, 1500);
+    let waited = 0;
+    const poll = setInterval(() => {
+      waited += 100;
+      if (synth.getVoices().length || waited >= 4000) { clearInterval(poll); resolve(); }
+    }, 100);
+    synth.addEventListener('voiceschanged', () => { if (synth.getVoices().length) { clearInterval(poll); resolve(); } }, { once: true });
   });
-  return window.speechSynthesis.getVoices().length > 0;
+  return synth.getVoices().length > 0;
 }
 
 // The paragraphs to read, from one, in order: the rest of its editor, then
@@ -12803,7 +12845,9 @@ async function toggleReadAloud() {
     p = body && body.querySelector('p');
   }
   if (!p) return;
-  if (!(await readVoicesReady())) { toast(t('Read aloud needs a voice on this computer')); return; }
+  // (no voice found after the wait: try the system's own default anyway, and
+  // say so only if the engine itself answers that it has none)
+  await readVoicesReady();
   const paras = readParasFrom(p);
   // start at the beginning of the sentence the caret is in
   const first = readSentences(p, 0).find(([a, b]) => from >= a && from < b);
@@ -12837,7 +12881,11 @@ async function toggleReadAloud() {
       }
     };
     u.onend = () => next();
-    u.onerror = (ev) => { if (ev.error !== 'interrupted' && ev.error !== 'canceled') stopReadAloud(false); };
+    u.onerror = (ev) => {
+      if (ev.error === 'interrupted' || ev.error === 'canceled') return;
+      if (!voice && ['synthesis-unavailable', 'synthesis-failed', 'voice-unavailable', 'language-unavailable'].includes(ev.error)) toast(t('Read aloud needs a voice on this computer'));
+      stopReadAloud(false);
+    };
     window.speechSynthesis.speak(u);
   };
   window.speechSynthesis.cancel();
@@ -13589,12 +13637,36 @@ function showSpellMenu(x, y, word, suggestions, actions) {
   const r = menu.getBoundingClientRect();
   menu.style.left = Math.min(x, window.innerWidth - r.width - 10) + 'px';
   menu.style.top = Math.min(y + 4, window.innerHeight - r.height - 10) + 'px';
+  const back = document.activeElement; // where the writer was, to go back to
   const close = (ev) => {
     if (menu.contains(ev.target)) return;
     menu.remove();
     document.removeEventListener('mousedown', close, true);
+    document.removeEventListener('keydown', arrows, true);
+  };
+  // the keys do it too, so no hand leaves the keyboard: ↓ and ↑ walk the
+  // choices, Enter takes the one on, Esc closes the menu and goes back to the text
+  let on = -1;
+  const arrows = (ev) => {
+    if (!menu.isConnected) { document.removeEventListener('keydown', arrows, true); return; }
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+      const choices = [...menu.querySelectorAll('button:not(:disabled)')];
+      if (!choices.length) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      on = ev.key === 'ArrowDown' ? (on + 1) % choices.length : (on <= 0 ? choices.length : on) - 1;
+      choices[on].focus();
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      menu.remove();
+      document.removeEventListener('mousedown', close, true);
+      document.removeEventListener('keydown', arrows, true);
+      if (back && back.focus) back.focus({ preventScroll: true });
+    }
   };
   document.addEventListener('mousedown', close, true);
+  document.addEventListener('keydown', arrows, true);
 }
 
 let typewriterEnabled = false;
@@ -16978,6 +17050,9 @@ loadLibrary().then(() => {
   applyPaged();
   vimEnabled = !!library.vimKeys;
   applyVim();
+  // the voices load on the first ask, which on Linux can take a moment: ask
+  // now, so they are there by the time Read Aloud is (#378)
+  try { if (window.speechSynthesis) window.speechSynthesis.getVoices(); } catch { /* none to ask */ }
   focusLevel = FOCUS_LEVELS.includes(library.focus) ? library.focus : 'off';
   applyFocus();
 });

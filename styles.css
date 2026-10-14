@@ -823,7 +823,7 @@ body:not(.no-dropcap) .chapter-body:not(.cap-off):not(.no-cap):not(.opens-dialog
   padding: 6px 10px; border-radius: 5px; font-size: 14px; cursor: pointer;
   font-family: Georgia, serif;
 }
-.spell-menu button:hover:not(:disabled) { background: #333; }
+.spell-menu button:hover:not(:disabled), .spell-menu button:focus-visible { background: #333; outline: none; }
 .spell-menu button:disabled { color: #777; font-style: italic; }
 .spell-menu .sm-sep { height: 1px; background: #3a3a3a; margin: 4px 0; }
 body.bright .spell-menu { border-color: #4a4a4a; }
@@ -1728,7 +1728,7 @@ body.light .up-bar { background: #e4e0d8; }
 body.light .sheet, body.light #aux-paper { box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 6px 28px rgba(0,0,0,0.1); }
 body.light .spell-menu { background: #fff; border-color: #d9d4ca; box-shadow: 0 6px 24px rgba(0,0,0,0.14); }
 body.light .spell-menu button { color: #2b2926; }
-body.light .spell-menu button:hover:not(:disabled) { background: #f0ede7; }
+body.light .spell-menu button:hover:not(:disabled), body.light .spell-menu button:focus-visible { background: #f0ede7; }
 body.light .spell-menu button:disabled { color: #857f75; }
 body.light .spell-menu .sm-sep { background: #e6e2da; }
 
