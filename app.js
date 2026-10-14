@@ -10910,7 +10910,7 @@ function sideCardsUpdate(force) {
     head.textContent = c.label;
     // a card's name takes the caret to where its part of the book starts (#367)
     head.title = t('Go to this in the manuscript');
-    head.addEventListener('click', () => goToCard(c));
+    head.addEventListener('click', () => goToSideCard(c));
     const ta = document.createElement('textarea');
     ta.spellcheck = false;
     ta.rows = 1;
@@ -10973,7 +10973,7 @@ function sectionFirstPara(body, chId, secId) {
   }
   return id === secId ? first : null;
 }
-function goToCard(c) {
+function goToSideCard(c) {
   let p = null;
   if (c.kind === 'scene') p = c.head && c.head.isConnected ? c.head : null;
   else if (c.kind === 'chapter') { focusChapterStart(c.id); return; }
