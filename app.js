@@ -10908,9 +10908,6 @@ function sideCardsUpdate(force) {
     const head = document.createElement('div');
     head.className = 'side-card-head';
     head.textContent = c.label;
-    // a card's name takes the caret to where its part of the book starts (#367)
-    head.title = t('Go to this in the manuscript');
-    head.addEventListener('click', () => goToSideCard(c));
     const ta = document.createElement('textarea');
     ta.spellcheck = false;
     ta.rows = 1;
@@ -10952,47 +10949,6 @@ function sideCardsUpdate(force) {
     box.appendChild(card);
     requestAnimationFrame(fit);
   }
-}
-// the first paragraph of a section: the one after the scene break before it,
-// found the way sectionOf finds which section a paragraph is in
-function sectionFirstPara(body, chId, secId) {
-  const notes = new Set(((book.sectionNotes || {})[chId] || []).map((x) => x.id));
-  const claimed = new Set();
-  let id = null;
-  let first = null;
-  for (const el of body.children) {
-    if (el.classList.contains('scene-break')) {
-      if (id === secId) return first;
-      if (id) claimed.add(id);
-      id = null;
-      first = null;
-      continue;
-    }
-    if (!first) first = el;
-    if (!id && el.dataset && notes.has(el.dataset.secId) && !claimed.has(el.dataset.secId)) id = el.dataset.secId;
-  }
-  return id === secId ? first : null;
-}
-function goToSideCard(c) {
-  let p = null;
-  if (c.kind === 'scene') p = c.head && c.head.isConnected ? c.head : null;
-  else if (c.kind === 'chapter') { focusChapterStart(c.id); return; }
-  else {
-    const body = document.querySelector(`.chapter[data-id="${c.chId}"] .chapter-body`);
-    p = body ? sectionFirstPara(body, c.chId, c.id) : null;
-  }
-  if (!p) return;
-  const body = p.closest('.chapter-body');
-  body.focus({ preventScroll: true });
-  const r = document.createRange();
-  r.setStart(p, 0);
-  r.collapse(true);
-  const sel = window.getSelection();
-  sel.removeAllRanges();
-  sel.addRange(r);
-  currentChapterId = body.closest('.chapter').dataset.id;
-  p.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
-  highlightNav();
 }
 document.addEventListener('selectionchange', queueSideCards);
 // the pane coming into view shows the cards as they are now (the Outline may
