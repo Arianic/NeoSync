@@ -280,11 +280,14 @@ ${headers.map((h) => `<Relationship Id="${h.id}" Type="http://schemas.openxmlfor
   const escHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   // a CSS string (a "<" escaped too, so nothing can close the style block)
   const cssString = (s) => '"' + String(s || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/</g, '\\3c ').replace(/[\n\r]+/g, ' ') + '"';
+  // footnotes, numbered through the story by NEO itself (Paged.js's own
+  // counter gave every note on a page that page's last number)
+  let fnCount = 0;
   function runsHtml(runs) {
     return (runs || []).map((r) => {
       if (r.br) return '<br>';
       // a footnote: Paged.js sets it at the foot of its page
-      if (r.fn !== undefined) return `<span class="footnote">${escHtml(r.fn)}</span>`;
+      if (r.fn !== undefined) { fnCount += 1; return `<sup class="fncall">${fnCount}</sup><span class="footnote">${fnCount}. ${escHtml(r.fn)}</span>`; }
       let t = escHtml(r.text);
       if (r.s) t = '<s>' + t + '</s>';
       if (r.u) t = '<u>' + t + '</u>';
@@ -299,6 +302,7 @@ ${headers.map((h) => `<Relationship Id="${h.id}" Type="http://schemas.openxmlfor
   // .pg1 (the story's first page; for a short story, the title page).
   // fontFaces: @font-face rules the window embeds (Courier Prime).
   function html(m, { fontFaces = '' } = {}) {
+    fnCount = 0;
     const pp = paperOf(m);
     const lines = [m.contact && m.contact.name, ...((m.contact && m.contact.lines) || [])].map((x) => String(x || '').trim()).filter(Boolean);
     const contact = `<div class="contact"><div class="row1"><span>${escHtml(lines[0] || '')}</span><span>${escHtml(m.wordsText || '')}</span></div>${lines.slice(1).map((l) => `<div>${escHtml(l)}</div>`).join('')}</div>`;
@@ -350,8 +354,10 @@ h2 { font: inherit; font-weight: normal; text-align: center; margin: calc(${pp.i
 .epigraph { padding-top: calc(${pp.in[1] / 3 - 1}in); }
 b { font-weight: bold; }
 .footnote { float: footnote; font-size: 10pt; line-height: 1.2; text-indent: 0; text-align: left; font-style: normal; font-weight: normal; }
-.footnote::footnote-marker { content: counter(footnote) ". "; }
-::footnote-call { font-size: 0.7em; vertical-align: super; line-height: 0; }
+.footnote::footnote-marker { content: none; }
+::footnote-call { content: none; }
+[data-footnote-marker] { list-style: none; }
+.fncall { font-size: 0.7em; vertical-align: super; line-height: 0; }
 @page { @footnote { border-top: 0.5pt solid #000; padding-top: 0.5em; margin-top: 1em; } }
 </style></head><body>
 <section class="titlepage${m.short ? ' pg1' : ''}">${contact}<p class="mtitle c">${escHtml(m.title || '')}</p>${m.byText ? `<p class="byline c">${escHtml(m.byText)}</p>` : ''}</section>

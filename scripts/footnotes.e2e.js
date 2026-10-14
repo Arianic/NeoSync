@@ -285,6 +285,23 @@ test('Manuscript format: Word footnotes and a PDF with notes at the foot of the 
   if (has('pdftotext')) assert.match(execFileSync('pdftotext', [to, '-']).toString(), /Dawn, by the station clock/);
 });
 
+// Paged.js's own counter gave every note on a page that page's last number
+// (4, 4, 4, 4): NEO writes the numbers, through the book, call and note alike
+test('the paperback and manuscript pages number their notes in order, through the book', async () => {
+  const seq = (html, re) => [...html.matchAll(re)].map((m) => +m[1]);
+  const pb = await js(`buildPrintHtml(bookExportData(), { trim: '5.5x8.5', paper: 'cream', links: {}, alsoByText: '', reviewText: '', reviewWords: '' })`);
+  assert.deepEqual(seq(pb, /<sup class="fncall">(\d+)<\/sup>/g), [1, 2]);
+  assert.deepEqual(seq(pb, /<span class="fnm">(\d+)<\/span>/g), [1, 2]);
+  const ms = await js(`NeoManuscript.html(manuscriptModel(manuscriptDefaults(), manuscriptSections()))`);
+  assert.deepEqual(seq(ms, /<sup class="fncall">(\d+)<\/sup>/g), [1, 2]);
+  assert.deepEqual(seq(ms, /<span class="footnote">(\d+)\. /g), [1, 2]);
+});
+
+test('on the page, the numbers run on from chapter to chapter', async () => {
+  assert.equal(await js(`getComputedStyle(document.querySelector('.chapter-body')).counterReset`), 'none');
+  assert.match(await js(`getComputedStyle(document.getElementById('chapters')).counterReset`), /neo-fn/);
+});
+
 test('Paperback: the notes at the foot of their pages', async () => {
   const to = saveTo('fn-paperback.pdf');
   await js(`(() => { window.__pb = printPaperback(); })()`);
@@ -293,6 +310,7 @@ test('Paperback: the notes at the foot of their pages', async () => {
   await until(() => fs.existsSync(to) && fs.statSync(to).size > 0, 240000);
   if (has('pdftotext')) assert.match(execFileSync('pdftotext', [to, '-']).toString(), /Weights in "stone" & pounds <1894>/);
 });
+
 
 test('screenshot', async () => {
   await js(`(() => { const b = document.querySelectorAll('.chapter-body')[0]; const ps = [...b.querySelectorAll('p')].filter((p) => p.textContent.trim()); const add = (p, i) => { const tn = [...p.childNodes].filter((n) => n.nodeType === 3).pop(); const r = document.createRange(); r.setStart(tn, i); r.insertNode(footnoteMark('x')); }; add(ps[2], 34); add(ps[3], 3);
@@ -323,7 +341,8 @@ async function main() {
       const paras = (s) => Array.from({ length: 6 }, () => ({ text: s }));
       await addImportedBooks([{ name: 'The Lantern Year', chapters: [
         { title: 'The Weigh Station', paras: paras('The scale was older than the road. The clerk wrote the crate down at four stone and nine, then wrote it again.') },
-        { title: 'Salt Road', paras: paras('The convoy left at dawn.') }
+        { title: 'Salt Road', paras: paras('The convoy left at dawn and did not stop until the river, where the ferryman was asleep.') },
+        { title: 'Varga', paras: paras('The city rose out of the salt flats like a dropped crown, all its towers leaning.') }
       ] }], library.shelves[0]);
       const ids = library.shelves[0].bookIds;
       await openBook(ids[ids.length - 1]);

@@ -2229,8 +2229,9 @@ body.light .ns-empty, body.light .ns-outline:empty::before { color: #a39d92; }
 body.light #notes-outline { color: #6f6b63; }
 
 /* ---------- footnotes (FOOTNOTES in app.js) ---------- */
-/* the number is the page's own count, one series a chapter, never saved */
-.chapter-body { counter-reset: neo-fn; }
+/* the number is the page's own count, one series through the book (as the
+   chapter lists and every export number them), never saved */
+#chapters { counter-reset: neo-fn; }
 .chapter-body .fn { counter-increment: neo-fn; cursor: pointer; }
 .chapter-body .fn::after {
   content: counter(neo-fn); color: var(--accent);

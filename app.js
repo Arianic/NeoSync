@@ -15683,14 +15683,24 @@ function buildPrintHtml(d, o) {
   const cap = (library.fonts || {}).dropcap === 'none' ? '' : exportDropCapFont();
   const year = String(new Date().getFullYear());
   // paragraphs of prose, hyphenated in main.js (class "hy")
-  // a footnote sits at the foot of its page (Paged.js's float: footnote)
-  const atFoot = (html) => html.replace(FN_HTML, (m, note) => `<span class="footnote">${note}</span>`);
+  // a footnote sits at the foot of its page (Paged.js's float: footnote).
+  // NEO writes both numbers itself, through the whole book: Paged.js's own
+  // counter gave every note on a page that page's last number.
+  const fnStart = new Map();
+  let fnRun = 0;
+  for (const sec of d.sections) {
+    for (const p of sec.paras) { fnStart.set(p, fnRun); fnRun += ((p.html || '').match(FN_HTML) || []).length; }
+  }
+  const atFoot = (html, p) => {
+    let n = fnStart.has(p) ? fnStart.get(p) : 0;
+    return html.replace(FN_HTML, (m, note) => { n += 1; return `<sup class="fncall">${n}</sup><span class="footnote"><span class="fnm">${n}</span>&#8194;${note}</span>`; });
+  };
   const prose = (paras, opening) => {
     let first = opening;
     let afterBreak = false;
     return paras.map((p) => {
       if (p.sceneBreak) { afterBreak = true; return '<p class="brk">*&#8195;*&#8195;*</p>'; }
-      const inner = atFoot(p.html.replace(/^<p[^>]*>|<\/p>$/g, ''));
+      const inner = atFoot(p.html.replace(/^<p[^>]*>|<\/p>$/g, ''), p);
       if (p.poetry) { afterBreak = false; return `<p class="poetry"${p.align ? ` style="text-align:${p.align}"` : ''}>${inner}</p>`; }
       const cls = ['hy'];
       if (first) cls.push('first');
@@ -15704,7 +15714,7 @@ function buildPrintHtml(d, o) {
   const lines = (paras) => paras.map((p) => {
     if (p.sceneBreak) return '<p class="brk">*&#8195;*&#8195;*</p>';
     const cls = [isAttribution(p) ? 'attr' : '', p.poetry ? 'poetry' : ''].filter(Boolean).join(' ');
-    return `<p${cls ? ` class="${cls}"` : ''}>${atFoot(p.html.replace(/^<p[^>]*>|<\/p>$/g, ''))}</p>`;
+    return `<p${cls ? ` class="${cls}"` : ''}>${atFoot(p.html.replace(/^<p[^>]*>|<\/p>$/g, ''), p)}</p>`;
   }).join('\n');
 
   let body = '';
@@ -15871,8 +15881,10 @@ p.poetry + p.poetry { margin-top: 0; }
 .note .reach .k { font-variant-caps: all-small-caps; letter-spacing: 0.08em; }
 .neo-pad { page: front; break-before: page; height: 1px; }
 .footnote { float: footnote; font-size: ${(sz * 0.8).toFixed(2)}pt; line-height: 1.35; text-align: left; text-indent: 0; hyphens: manual; font-style: normal; font-weight: normal; }
-.footnote::footnote-marker { content: counter(footnote) "\\2002"; }
-::footnote-call { font-size: 0.7em; vertical-align: super; line-height: 0; }
+.footnote::footnote-marker { content: none; }
+::footnote-call { content: none; }
+[data-footnote-marker] { list-style: none; }
+.fncall { font-size: 0.7em; vertical-align: super; line-height: 0; }
 @page { @footnote { border-top: 0.4pt solid #555; padding-top: 0.4em; margin-top: 0.8em; } }
 </style></head><body>
 ${body}
