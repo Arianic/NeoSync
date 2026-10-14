@@ -163,6 +163,8 @@ The window holds the open book in memory (`chapterHTML`, `book`, `stickies`, `da
 
 Structural undo (`snapshotStructure`, `structuralUndo`, banner STRUCTURAL UNDO) holds `UNDO_DEPTH` (50) actions. An undo puts back only what its action changed: writing made since stays, or, in a chapter the action also touched, goes to Darlings with a toast that says so. What an undo took back goes on `redoStack` (⇧⌘Z, Ctrl+Z's pair; Ctrl+Y off the Mac); any `input` event anywhere, or a new action, empties it. A redo is an undo of the undo, so it keeps the same protections.
 
+On a Mac, iCloud ("Optimize Mac Storage") can turn library files into placeholders: the size is there, the words aren't, and a read waits on iCloud, forever if iCloud is stuck. A synchronous read of one froze the main process at launch, with no window. So `cloudOnlyAmong` spots them (no blocks on disk, then the `dataless` flag), `requestDownload` asks `brctl` for them, and the read handlers wait for them with `afterLocal` without blocking, answering at once when nothing is in iCloud. `readJSON` throws `ECLOUD` for one rather than falling back on `.bak`, and no write goes over a placeholder. The daily backup leaves them out and names them. `scripts/icloud.test.js` plays iCloud with sparse files. Don't add a direct `readFileSync` of a library file.
+
 Do not replace this with last-write-wins. The comments in `persistChapter` and `refreshFromDisk` explain cases that look redundant and are not.
 
 ## Interface language

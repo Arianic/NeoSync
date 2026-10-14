@@ -391,6 +391,10 @@ function writeCatalog() {
       for (const id of s.bookIds) onShelf[id] = s.name;
     }
     const lines = [];
+    const metas = fs.readdirSync(LIBRARY_DIR).filter((d) => d.startsWith('book-')).map((d) => path.join(LIBRARY_DIR, d, 'book.json'));
+    // a book still in iCloud would drop out of the catalog: leave it as it is
+    const away = cloudOnlyAmong(metas);
+    if (away.size) { requestDownload(away); return; }
     for (const d of fs.readdirSync(LIBRARY_DIR)) {
       if (!d.startsWith('book-')) continue;
       try {
@@ -464,11 +468,116 @@ function writeFileDurable(file, data) {
 function parseJSONFile(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return undefined; }
 }
+
+// Files iCloud has taken off this Mac ("Optimize Mac Storage") stay in the
+// folder as placeholders: the name and size are there, the words aren't.
+// Reading one makes macOS fetch it first, and if iCloud is stuck that read
+// never ends. NEO's main process would wait with it: no window, no menus,
+// nothing. So a placeholder is never read directly. NEO asks iCloud for it,
+// waits without freezing, and if it still hasn't come, leaves it be (and
+// never writes over it) until it does.
+const SF_DATALESS = 0x40000000;
+// the placeholders among these files: no blocks on disk for a file that has
+// a size, confirmed by its "dataless" flag (one stat for the lot)
+function cloudOnlyAmong(files) {
+  const out = new Set();
+  if (process.platform !== 'darwin') return out;
+  const maybe = [];
+  for (const f of files) {
+    try { const st = fs.statSync(f); if (st.isFile() && st.size > 0 && st.blocks === 0) maybe.push(f); } catch { /* not there */ }
+  }
+  if (!maybe.length) return out;
+  let flags = null;
+  try {
+    const r = require('child_process').spawnSync('/usr/bin/stat', ['-f', '%Xf', ...maybe], { encoding: 'utf8', timeout: 3000 });
+    if (r.status === 0) flags = String(r.stdout).trim().split('\n');
+  } catch { /* no stat: the blocks decide */ }
+  maybe.forEach((f, i) => {
+    if (!flags || flags.length !== maybe.length || (parseInt(flags[i], 16) & SF_DATALESS)) out.add(f);
+  });
+  return out;
+}
+function isCloudOnly(file) { return cloudOnlyAmong([file]).has(file); }
+// A minute after launch, the whole library is looked over (without reading
+// a word, and without holding anything up) and iCloud is asked for anything
+// it has taken off this Mac, so the books are here before they're opened.
+async function fetchLibraryFromICloud() {
+  if (process.platform !== 'darwin') return;
+  const fsp = fs.promises;
+  const found = [];
+  const walk = async (dir) => {
+    let ents = [];
+    try { ents = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) { if (e.name !== 'Backups' && e.name !== 'Exports') await walk(full); continue; }
+      try { const st = await fsp.stat(full); if (st.size > 0 && st.blocks === 0) found.push(full); } catch { /* gone */ }
+    }
+  };
+  await walk(LIBRARY_DIR);
+  if (!found.length) return;
+  const away = cloudOnlyAmong(found);
+  if (!away.size) return;
+  logError('icloud', new Error(`${away.size} library files were in iCloud only; asked iCloud to bring them back to this Mac`));
+  requestDownload(away);
+}
+function cloudError(file) {
+  return Object.assign(new Error('Still in iCloud, not on this Mac yet: ' + file), { code: 'ECLOUD', path: file });
+}
+// asks iCloud to bring files down, in the background: each file once at a
+// time, a few asks at once however many there are
+const cloudAsked = new Set();
+const cloudQueue = [];
+let cloudAsking = 0;
+function requestDownload(files) {
+  for (const f of files) {
+    if (cloudAsked.has(f)) continue;
+    cloudAsked.add(f);
+    cloudQueue.push(f);
+  }
+  while (cloudAsking < 4 && cloudQueue.length) {
+    const f = cloudQueue.shift();
+    cloudAsking++;
+    const done = () => { cloudAsking--; cloudAsked.delete(f); requestDownload([]); };
+    try {
+      require('child_process').execFile('/usr/bin/brctl', ['download', f], { timeout: 60000 }, done);
+    } catch { done(); }
+  }
+}
+// null when every file is here (the caller goes on at once, as always);
+// otherwise a promise that settles once they've come down, or after `ms`
+// with whatever is still in iCloud
+let CLOUD_WAIT = 30000; // (a test shortens it)
+function whenLocal(files, ms = CLOUD_WAIT) {
+  let away = cloudOnlyAmong(files);
+  if (!away.size) return null;
+  requestDownload(away);
+  const until = Date.now() + ms;
+  return new Promise((resolve) => {
+    const look = () => {
+      away = cloudOnlyAmong([...away]);
+      if (!away.size || Date.now() >= until) return resolve(away);
+      setTimeout(look, 300);
+    };
+    setTimeout(look, 300);
+  });
+}
+// run `read` once the files are here: at once when they are, later when
+// iCloud has to bring them down (or `away` if it never does)
+function afterLocal(files, read, away) {
+  const wait = whenLocal(files);
+  if (!wait) return read();
+  return wait.then((left) => (left.size ? away(left) : read()));
+}
 function readJSON(file, fallback) {
+  // still in iCloud: not unreadable, just not here. Falling back on .bak
+  // would write an older copy over it.
+  if (isCloudOnly(file)) throw cloudError(file);
   const main = parseJSONFile(file);
   if (main !== undefined) return main;
   if (!fs.existsSync(file) && !fs.existsSync(file + '.bak') && !fs.existsSync(file + '.tmp')) return fallback;
   for (const spare of [file + '.tmp', file + '.bak']) {
+    if (isCloudOnly(spare)) continue;
     const v = parseJSONFile(spare);
     if (v === undefined) continue;
     logError('recovered', `${file} was unreadable; restored from ${path.basename(spare)}`);
@@ -479,8 +588,9 @@ function readJSON(file, fallback) {
 }
 
 function writeJSON(file, data) {
-  // the version on disk, while it reads whole, becomes the .bak
-  if (parseJSONFile(file) !== undefined) {
+  // the version on disk, while it reads whole, becomes the .bak (one still
+  // in iCloud can't be read without waiting on it, so it isn't kept)
+  if (!isCloudOnly(file) && parseJSONFile(file) !== undefined) {
     try { fs.copyFileSync(file, file + '.bak'); } catch { /* the write still goes ahead */ }
   }
   writeFileDurable(file, JSON.stringify(data, null, 2));
@@ -495,7 +605,8 @@ function rebuildBookMeta(bookId) {
   if (!fs.existsSync(chDir)) return null;
   let title = '';
   try {
-    const cat = fs.readFileSync(path.join(LIBRARY_DIR, '_catalog.txt'), 'utf8');
+    const catFile = path.join(LIBRARY_DIR, '_catalog.txt');
+    const cat = isCloudOnly(catFile) ? '' : fs.readFileSync(catFile, 'utf8');
     const line = cat.split('\n').find((l) => l.includes('  —  ' + bookId + '  —  '));
     if (line) title = line.split('  —  ')[0].trim();
   } catch { /* no catalog */ }
@@ -519,6 +630,9 @@ function rebuildBookMeta(bookId) {
 
 ipcMain.handle('library:read', () => {
   ensureLibrary();
+  return afterLocal([LIBRARY_FILE], readLibraryFile, () => { throw cloudError(LIBRARY_FILE); });
+});
+function readLibraryFile() {
   const lib = readJSON(LIBRARY_FILE, null);
   if (lib) return lib;
   // library.json lost with no copy to fall back on: every book in the
@@ -534,7 +648,7 @@ ipcMain.handle('library:read', () => {
   logError('recovered', `library.json was lost; ${ids.length} books put back on one shelf`);
   try { writeJSON(LIBRARY_FILE, seed); } catch (err) { logError('recover write', err); }
   return seed;
-});
+}
 
 ipcMain.handle('library:write', (_e, data) => {
   ensureLibrary();
@@ -591,7 +705,10 @@ ipcMain.handle('book:duplicate', (_e, bookId, title) => {
   const dest = bookDir(id);
   // a chapter iCloud hasn't brought down yet would be missing from the copy
   const waiting = (dir) => fs.readdirSync(dir, { withFileTypes: true }).some((e) => (e.isDirectory() ? waiting(path.join(dir, e.name)) : /\.icloud$/.test(e.name)));
-  if (waiting(src)) throw new Error('Some of this book is still downloading from iCloud. Try again in a moment');
+  const files = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(path.join(dir, e.name)) : [path.join(dir, e.name)]));
+  const away = cloudOnlyAmong(files(src));
+  if (away.size) requestDownload(away);
+  if (away.size || waiting(src)) throw new Error('Some of this book is still downloading from iCloud. Try again in a moment');
   const copyDir = (from, to) => {
     fs.mkdirSync(to, { recursive: true });
     for (const ent of fs.readdirSync(from, { withFileTypes: true })) {
@@ -620,20 +737,32 @@ ipcMain.handle('book:duplicate', (_e, bookId, title) => {
 
 // every book folder in the library, shelved or not — for File → Reshelve
 ipcMain.handle('library:listBooks', () => {
+  let metas = [];
+  try { metas = fs.readdirSync(LIBRARY_DIR).filter((d) => d.startsWith('book-')).map((d) => path.join(LIBRARY_DIR, d, 'book.json')); } catch { /* no library */ }
+  return afterLocal(metas, listBooks, () => listBooks());
+});
+function listBooks() {
   const out = [];
   try {
     for (const d of fs.readdirSync(LIBRARY_DIR)) {
       if (!d.startsWith('book-')) continue;
-      const m = readJSON(path.join(LIBRARY_DIR, d, 'book.json'), null);
+      let m = null;
+      try { m = readJSON(path.join(LIBRARY_DIR, d, 'book.json'), null); } catch { continue; } // still in iCloud
       // the folder is the book: a copied folder ("book-x copy") is its own
       // book, even though the book.json inside still names the original
       if (m && m.id) out.push({ id: d, title: m.title || t('Untitled'), author: m.author || '', modified: m.modified || '', kind: m.kind || '' });
     }
   } catch (err) { logError('listBooks', err); }
   return out;
-});
+}
 
 ipcMain.handle('book:readMeta', (_e, bookId) => {
+  const dir = bookDir(bookId);
+  // a book.json iCloud never brings down is a book that's there, just not
+  // here yet: null, as for the older ".icloud" stand-in below
+  return afterLocal([path.join(dir, 'book.json')], () => readBookMeta(bookId), () => null);
+});
+function readBookMeta(bookId) {
   const dir = bookDir(bookId);
   const meta = readJSON(path.join(dir, 'book.json'), null);
   if (meta) {
@@ -645,7 +774,7 @@ ipcMain.handle('book:readMeta', (_e, bookId) => {
   // it would put a bare book.json over the real one.
   if (fs.existsSync(path.join(dir, '.book.json.icloud'))) return null;
   return rebuildBookMeta(bookId);
-});
+}
 
 ipcMain.handle('book:writeMeta', (_e, bookId, meta) => {
   meta.modified = new Date().toISOString();
@@ -675,11 +804,10 @@ ipcMain.handle('chapter:stamps', (_e, bookId) => {
 
 ipcMain.handle('chapter:read', (_e, bookId, chapterId) => {
   const file = path.join(bookDir(bookId), 'chapters', libName(chapterId) + '.html');
-  try {
-    return fs.readFileSync(file, 'utf8');
-  } catch {
-    return '';
-  }
+  const read = () => { try { return fs.readFileSync(file, 'utf8'); } catch { return ''; } };
+  // (one iCloud never brings down reads as empty, like a missing file; a
+  // save over it is refused below until it's here)
+  return afterLocal([file], read, () => '');
 });
 
 // `expected` is the text the window last read or wrote for this chapter.
@@ -691,6 +819,9 @@ ipcMain.handle('chapter:write', (_e, bookId, chapterId, html, expected) => {
   const dir = path.join(bookDir(bookId), 'chapters');
   const file = path.join(dir, libName(chapterId) + '.html');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  // still in iCloud: the words there aren't known yet, so nothing goes over
+  // them. The save fails, and the next one tries again.
+  if (isCloudOnly(file)) { requestDownload([file]); throw cloudError(file); }
   if (typeof expected === 'string') {
     let cur = null;
     try { cur = fs.readFileSync(file, 'utf8'); } catch { /* not there: nothing to keep */ }
@@ -724,15 +855,14 @@ ipcMain.handle('chapter:delete', (_e, bookId, chapterId) => {
 ipcMain.handle('aux:read', (_e, bookId, name) => {
   // name: 'notes' | 'outline'
   const file = path.join(bookDir(bookId), libName(name) + '.html');
-  try {
-    return fs.readFileSync(file, 'utf8');
-  } catch {
-    return '';
-  }
+  const read = () => { try { return fs.readFileSync(file, 'utf8'); } catch { return ''; } };
+  return afterLocal([file], read, () => '');
 });
 
 ipcMain.handle('aux:write', (_e, bookId, name, html) => {
-  writeFileDurable(path.join(bookDir(bookId), libName(name) + '.html'), html);
+  const file = path.join(bookDir(bookId), libName(name) + '.html');
+  if (isCloudOnly(file)) { requestDownload([file]); throw cloudError(file); }
+  writeFileDurable(file, html);
   return true;
 });
 
@@ -761,7 +891,10 @@ ipcMain.handle('snapshot:list', (_e, bookId) => {
   return out;
 });
 ipcMain.handle('snapshot:read', (_e, bookId, name, file) => {
-  try { return fs.readFileSync(snapshotFile(bookId, name, file), 'utf8'); } catch { return ''; }
+  let fp;
+  try { fp = snapshotFile(bookId, name, file); } catch { return ''; }
+  const read = () => { try { return fs.readFileSync(fp, 'utf8'); } catch { return ''; } };
+  return afterLocal([fp], read, () => '');
 });
 ipcMain.handle('snapshot:write', (_e, bookId, name, file, text) => {
   const target = snapshotFile(bookId, name, file);
@@ -870,16 +1003,23 @@ ipcMain.handle('cover:remove', (_e, bookId) => {
 });
 
 ipcMain.handle('cover:read', (_e, bookId, fname) => {
+  let fp;
   try {
     if (!/^(cover|art)-\d+\.(png|jpg|webp)$/.test(fname)) return null;
-    const buf = fs.readFileSync(path.join(bookDir(bookId), fname));
+    fp = path.join(bookDir(bookId), fname);
+  } catch { return null; }
+  return afterLocal([fp], () => readCover(fp, fname), () => null);
+});
+function readCover(fp, fname) {
+  try {
+    const buf = fs.readFileSync(fp);
     const ext = path.extname(fname).slice(1);
     const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
     return { base64: buf.toString('base64'), mime, ext };
   } catch {
     return null;
   }
-});
+}
 
 // ---------------------------------------------------------------------------
 // Painted covers: once a story passes a thousand words, NEO reads it and
@@ -1689,6 +1829,9 @@ function readTextFile(fp) {
 }
 
 async function importFile(fp) {
+  // a manuscript kept in iCloud may not be on this Mac yet
+  const wait = whenLocal([fp]);
+  if (wait && (await wait).size) throw new Error('This file is still downloading from iCloud. Try again in a moment');
   const name = path.basename(fp).replace(/\.[^.]+$/, '');
   const ext = path.extname(fp).toLowerCase();
   let paras = [];
@@ -1964,13 +2107,24 @@ async function dailyBackup() {
         try {
           const stat = fs.statSync(full);
           if (stat.isDirectory()) walk(full, relPath);
+          // perhaps still in iCloud: looked at together once the walk is done
+          else if (process.platform === 'darwin' && stat.size > 0 && stat.blocks === 0) maybeAway.push([full, relPath]);
           else zip.file(relPath, fs.readFileSync(full));
         } catch (err) {
           missed.push(`${relPath} (${err.code || err.message})`);
         }
       }
     };
+    const maybeAway = [];
     walk(LIBRARY_DIR, '');
+    // a file still in iCloud would make the backup wait on iCloud (forever,
+    // when iCloud is stuck). It's safe up there; today's zip notes it.
+    const away = cloudOnlyAmong(maybeAway.map(([full]) => full));
+    for (const [full, relPath] of maybeAway) {
+      if (away.has(full)) { missed.push(`${relPath} (in iCloud, not on this Mac)`); continue; }
+      try { zip.file(relPath, fs.readFileSync(full)); } catch (err) { missed.push(`${relPath} (${err.code || err.message})`); }
+    }
+    if (away.size) requestDownload(away);
     if (missed.length) {
       zip.file('_left-out-of-this-backup.txt', missed.join('\n') + '\n');
       logError('backup', new Error('left out of today\'s backup: ' + missed.join(', ')));
@@ -2003,7 +2157,7 @@ function roomColor(theme) { return theme === 'light' ? '#efede8' : '#191919'; }
 function libraryPageTheme() {
   const own = readSettings().pageTheme;
   if (own) return own;
-  try { return JSON.parse(fs.readFileSync(LIBRARY_FILE, 'utf8')).pageTheme || 'night'; } catch { return 'night'; }
+  try { return isCloudOnly(LIBRARY_FILE) ? 'night' : JSON.parse(fs.readFileSync(LIBRARY_FILE, 'utf8')).pageTheme || 'night'; } catch { return 'night'; }
 }
 
 // ---------------------------------------------------------------------------
@@ -3143,6 +3297,7 @@ app.whenReady().then(() => {
     // that failed); an existing day's zip makes this a no-op
     setInterval(() => { dailyBackup().catch(() => {}); }, 60 * 60 * 1000).unref?.();
     try { checkForUpdates(); } catch (err) { logError('updater', err); }
+    setTimeout(() => { fetchLibraryFromICloud().catch((err) => logError('icloud', err)); }, 60000).unref?.();
   } catch (err) {
     // catastrophic: tell the human instead of dying in silence
     logError('startup', err);
