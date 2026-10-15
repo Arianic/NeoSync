@@ -37,6 +37,17 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before adding a feature. The product is 
 
 Menus are built in `buildMenu()` in `main.js`. A menu click sends `{ type, ... }` to the window; `app.js` handles it on `window.neo.onMenu`.
 
+## Simple NEO and Show More Features
+
+NEO opens simple. File → Show More Features (`library.moreFeatures`) brings back the rest: SIMPLE NEO near the end of `app.js`, and `moreState` / `simpleTemplate` in `main.js`.
+
+- A menu item behind the switch carries `more: true` in `buildMenu()`; `simpleTemplate` leaves it (and the separators it would strand) out. A key, right-click choice or pane behind it asks `moreOn()` in `app.js`.
+- Behind the switch now: alignment, poetry paragraphs, footnotes (⌘⇧N), Markdown Emphasis's switch, Other Font…, non-breaking marks, pages views, page width, brighter interface, interface size, focus mode, vim keys, read aloud, Look Up, the tab keys, chapter notes pages, outline cards (loose cards, cards beside the page), New Books Open To, painted covers and Cover Art…, pen names, binding shelves, duplicate, Reshelve, scripts and Fountain/Final Draft import, Import Chapters, txt/md/html exports, Chapter Titles Only, the shelf anthology, Manuscript Format, and the two language menus.
+- Simple NEO treats those settings as NEO's defaults (`applyLook`) and never erases them: the writer's choices wait in library.json for the switch.
+- Nothing a book already holds is hidden. A script, footnote, poetry paragraph, bound shelf, painted cover, loose card or chapter notes page with notes on it opens and exports as before, and other pen names stay reachable.
+- A library from before the switch is decided once (`decideMoreFeatures`): on when it uses something behind it, off otherwise (with one toast saying where things went). Pocket has no switch and shows everything.
+- A new feature goes behind the switch unless Hugh says it belongs in simple NEO. `scripts/simple-neo.test.js`, `npm run test:simple`.
+
 ## Outline cards
 
 The Outline tab shows the book as index cards (OUTLINE CARDS in `app.js`) unless `library.outlineView` is `'list'`. A script's Outline is always cards, one per scene (`scriptScenes`): heading, length in eighths, cast, and a note in `book.sceneNotes`, keyed by `data-scene-id` on the heading line. Dragging a scene card calls `spMoveScene`.
@@ -202,6 +213,7 @@ npm run lint               # oxlint, Electron's standard-style JavaScript rules
 npm run test:spellcheck    # node --test scripts/spellcheck.test.js
 npm run test:dashes        # node --test scripts/dashes.test.js
 npm run bundle             # Hugh: brings in the newest .bundle from ~/Downloads and pushes main
+npm run try                # Hugh: opens the newest .bundle's NEO on a copy of the library, pushes nothing (-- fresh: an empty library)
 npm run release            # Hugh: next version (x.y.9 → x.(y+1).0), commit, push, tag (npm run release -- 2.0.0 for another)
 npm run package:mac        # macOS build; npm run package calls this
 npm run package:linux      # AppImage via electron-builder; also package, package:mac, package:win, package:all
