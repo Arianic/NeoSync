@@ -115,7 +115,7 @@ test('the keys behind the switch do nothing: footnote, poetry, tab keys', async 
 test('the shortcuts window lists only what\'s showing', async () => {
   const rows = await js(`bookShortcutSections().flatMap((s) => s.rows.map((r) => r[1]))`);
   assert.ok(rows.includes('Insert a placeholder note'));
-  for (const gone of ['Add a footnote', 'Start or continue a poetry paragraph', 'Read aloud from the cursor', 'Cycle focus mode', 'Center paragraph', 'Go to the next tab']) {
+  for (const gone of ['Italic, bold, the Markdown way', 'Add a footnote', 'Start or continue a poetry paragraph', 'Read aloud from the cursor', 'Cycle focus mode', 'Center paragraph', 'Go to the next tab']) {
     assert.ok(!rows.includes(gone), gone + ' is not listed');
   }
 });
@@ -126,6 +126,32 @@ test('no cards beside the page', async () => {
   await js('sideCardsUpdate(true)');
   assert.equal(await js(`document.getElementById('side-cards').innerHTML`), '');
   await shot('simple-page');
+});
+
+test('Markdown asterisks stay asterisks in simple NEO', async () => {
+  assert.equal(await js('markdownOff()'), true);
+});
+
+// a book's right-click on the shelf: what it offers, then closed again
+const bookMenu = async () => {
+  await js(`document.getElementById('back-to-shelf').click()`);
+  await tick(500);
+  await js(`document.querySelector('#shelves .book').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200 }))`);
+  await tick(300);
+  await shot('book-menu-' + (await js('moreOn()') ? 'more' : 'simple'));
+  const cards = await js(`[...document.querySelectorAll('.modal-backdrop:not([hidden]):not(#firstrun) .fr-choice strong')].map((b) => b.textContent)`);
+  const small = await js(`[...document.querySelectorAll('.pop-menu [role="menuitem"], .pop-menu button, .popmenu button')].map((b) => b.textContent.trim())`);
+  await js(`(document.querySelector('.modal-backdrop:not(#firstrun) .m-cancel') || document.body).click(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  await tick(200);
+  const id = await js('library.shelves[0].bookIds[0]');
+  await js(`openBook(${JSON.stringify(id)})`);
+  await tick(400);
+  return { cards, small };
+};
+
+test('a book\'s right-click is the larger cards, with no cover menu or word goal', async () => {
+  const { cards } = await bookMenu();
+  assert.deepEqual(cards, ['Export…', 'New cover', 'Remove from bookshelf', 'Move to Trash']);
 });
 
 test('a choice made behind the switch waits: vim keys saved on, but off in simple NEO', async () => {
@@ -150,6 +176,15 @@ test('Show More Features brings it all back, and is kept', async () => {
   await shot('more-outline');
   await clickTab('notes');
   assert.equal(await js(`document.querySelectorAll('#notes-nav .notes-item').length`), 4);
+});
+
+test('with more features, a book\'s right-click is the small menu, cover menu and all, and no word goal', async () => {
+  const { cards, small } = await bookMenu();
+  assert.deepEqual(cards, []);
+  assert.ok(small.some((l) => l.startsWith('Cover')), 'the cover menu: ' + small.join(' | '));
+  assert.ok(small.includes('Duplicate'));
+  assert.ok(!small.some((l) => l.startsWith('Set word goal')));
+  await clickTab('outline');
 });
 
 test('and back to simple, where the Outline is the list again and vim keys rest', async () => {

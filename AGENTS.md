@@ -43,10 +43,13 @@ Menus are built in `buildMenu()` in `main.js`. A menu click sends `{ type, ... }
 NEO opens simple. File → Show More Features (`library.moreFeatures`) brings back the rest: SIMPLE NEO near the end of `app.js`, and `moreState` / `simpleTemplate` in `main.js`.
 
 - A menu item behind the switch carries `more: true` in `buildMenu()`; `simpleTemplate` leaves it (and the separators it would strand) out. A key, right-click choice or pane behind it asks `moreOn()` in `app.js`.
-- Behind the switch now: alignment, poetry paragraphs, footnotes (⌘⇧N), Markdown Emphasis's switch, Other Font…, non-breaking marks, pages views, page width, brighter interface, interface size, focus mode, vim keys, read aloud, Look Up, the tab keys, chapter notes pages, outline cards (loose cards, cards beside the page), New Books Open To, painted covers and Cover Art…, pen names, binding shelves, duplicate, Reshelve, scripts and Fountain/Final Draft import, Import Chapters, txt/md/html exports, Chapter Titles Only, the shelf anthology, Manuscript Format, and the two language menus.
+- Behind the switch now: alignment, poetry paragraphs, footnotes (⌘⇧N), Markdown emphasis (*italic* typed; off in simple NEO), Other Font…, non-breaking marks, pages views, page width, brighter interface, interface size, focus mode, vim keys, read aloud, Look Up, the tab keys, chapter notes pages, outline cards (loose cards, cards beside the page), New Books Open To, painted covers and Cover Art…, pen names, binding shelves, duplicate, Reshelve, scripts and Fountain/Final Draft import, Import Chapters, txt/md/html exports, Chapter Titles Only, the shelf anthology, Manuscript Format, and the two language menus.
 - Simple NEO treats those settings as NEO's defaults (`applyLook`) and never erases them: the writer's choices wait in library.json for the switch.
 - Nothing a book already holds is hidden. A script, footnote, poetry paragraph, bound shelf, painted cover, loose card or chapter notes page with notes on it opens and exports as before, and other pen names stay reachable.
-- A library from before the switch is decided once (`decideMoreFeatures`): on when it uses something behind it, off otherwise (with one toast saying where things went). Pocket has no switch and shows everything.
+- A book's right-click in simple NEO is the larger cards (`optionModal`), with no cover menu: art is dragged onto the book; New cover and Remove cover art stand with the rest. Word goals are set in Goals, inside the book, never from the shelf.
+- The shortcuts window (`bookShortcutSections`) lists a key only when its feature is showing.
+- A library from before the switch is decided once (`decideMoreFeatures`): on when it uses something behind it, off otherwise (with one toast saying where things went).
+- Pocket (Android and iOS) is always simple and has no switch; its ⋯ sheet in `pocket/www/index.html` offers only simple NEO's choices.
 - A new feature goes behind the switch unless Hugh says it belongs in simple NEO. `scripts/simple-neo.test.js`, `npm run test:simple`.
 
 ## Outline cards

@@ -139,7 +139,7 @@ function room(library, { metas = {}, key = false, pocket = false } = {}) {
     hasPainting: (m) => !!(m.coverArt && m.coverArt.status === 'done' && m.coverArt.file),
     coverProvider: () => 'openai',
     writeLibrary: async () => log.push('write ' + ctx.library.moreFeatures),
-    moreOn: () => pocket || !!(ctx.library && ctx.library.moreFeatures),
+    moreOn: () => !pocket && !!(ctx.library && ctx.library.moreFeatures),
     window: { neo: { hasSecret: async () => key, moreState: (on) => log.push('menu ' + on) } }
   });
   vm.runInContext(app.slice(from, to), ctx);
@@ -200,10 +200,10 @@ describe('a library from before Show More Features', () => {
     assert.deepEqual([...ctx.log], ['menu false']);
   });
 
-  test('Pocket decides nothing and writes nothing', async () => {
-    const ctx = room({ firstRunDone: true, shelves: [] }, { pocket: true });
+  test('Pocket is always simple: it decides nothing and writes nothing', async () => {
+    const ctx = room({ firstRunDone: true, shelves: [], vimKeys: true }, { pocket: true });
     await ctx.decideMoreFeatures();
     assert.equal(ctx.library.moreFeatures, undefined);
-    assert.deepEqual([...ctx.log], ['menu true']);
+    assert.deepEqual([...ctx.log], ['menu false']);
   });
 });
