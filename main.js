@@ -37,7 +37,9 @@ if (process.platform === 'linux') app.commandLine.appendSwitch('enable-speech-di
 // ---------------------------------------------------------------------------
 // Resolved properly at startup via app.getPath('documents') — this default
 // covers any early access and non-redirected setups.
-let LIBRARY_DIR = path.join(os.homedir(), 'Documents', 'NEO Library');
+// (Electron's Documents from the start, not the home folder's: the tests stand
+// in a throwaway folder there, and never write into a writer's real library)
+let LIBRARY_DIR = path.join((() => { try { return app.getPath('documents'); } catch { return path.join(os.homedir(), 'Documents'); } })(), 'NEO Library');
 let LIBRARY_FILE = path.join(LIBRARY_DIR, 'library.json');
 // npm run try (scripts/try.js): NEO from source with settings of its own,
 // which point it at the throwaway copy of the library that script made, so
@@ -411,6 +413,10 @@ function writeCatalog() {
       t('(regenerated automatically; edits here do nothing)') + '\n\n' +
       lines.join('\n') + '\n';
     const file = path.join(LIBRARY_DIR, '_catalog.txt');
+    // the catalog itself still in iCloud: reading it would wait on iCloud
+    // (on every save), and it's never written over. It's asked for, and
+    // brought up to date on the next save once it's here.
+    if (isCloudOnly(file)) { requestDownload(new Set([file])); return; }
     // unchanged, it's left alone: a rewrite on every save is a file for
     // iCloud and Syncthing to send back and forth (and to clash over)
     let old = null;
@@ -2080,78 +2086,55 @@ process.on('unhandledRejection', (err) => logError('main-promise', err));
 ipcMain.handle('log:error', (_e, msg) => logError('renderer', msg));
 
 // One zip of the whole library per day, keeping the last 14. Cheap insurance.
-async function dailyBackup() {
-  if (backupRunning) return; // one at a time (the hourly look can meet a slow one)
+// The day's backup is made in a process of its own (backup-worker.js). It
+// reads every file in the library, and a file iCloud (or a sync tool) won't
+// hand over used to hold NEO's main process with it: the window never came,
+// that day or any day after, since the backup ran at launch. Now a stuck
+// file holds up only the backup, which leaves it out and says so, and a
+// backup that overruns altogether is ended.
+let BACKUP_LIMIT_MS = 15 * 60 * 1000; // the whole job
+let BACKUP_FILE_LIMIT_MS = 20 * 1000; // one file
+function dailyBackup() {
+  if (backupRunning) return Promise.resolve(); // one at a time (the hourly look can meet a slow one)
+  let target;
   try {
     ensureLibrary();
     const backupsDir = path.join(LIBRARY_DIR, 'Backups');
     if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir, { recursive: true });
-    const today = new Date().toISOString().slice(0, 10);
-    const target = path.join(backupsDir, `neo-backup-${today}.zip`);
-    if (fs.existsSync(target)) return;
-    backupRunning = true;
-
-    const JSZip = require('jszip');
-    const zip = new JSZip();
-    const skip = new Set(['Backups', 'Exports']);
-    // One file the system won't hand over (in iCloud but not downloaded yet,
-    // held by a sync tool) used to throw, and cost the whole day's backup,
-    // every day. Now it's left out, named in the zip and in the error log.
-    const missed = [];
-    const walk = (dir, rel) => {
-      let names = [];
-      try { names = fs.readdirSync(dir); } catch (err) { missed.push(`${rel || '.'} (${err.code || err.message})`); return; }
-      for (const name of names) {
-        if (rel === '' && skip.has(name)) continue;
-        // only NEO's own things: a library kept in a busy folder (Dropbox,
-        // Documents) doesn't zip everything else in there every day
-        if (rel === '' && !(name.startsWith('book-') || name.startsWith('library.json') || name === '_catalog.txt')) continue;
-        // a book's snapshots stay out: the zip stays the size of the books,
-        // and the snapshots are already a history of their own
-        if (name === 'snapshots' && rel.startsWith('book-') && !rel.includes('/')) continue;
-        if (name === '.DS_Store' || /^\..+\.icloud$/.test(name)) continue; // Finder litter; iCloud's stand-in for a file not downloaded
-        const full = path.join(dir, name);
-        const relPath = rel ? rel + '/' + name : name;
-        try {
-          const stat = fs.statSync(full);
-          if (stat.isDirectory()) walk(full, relPath);
-          // perhaps still in iCloud: looked at together once the walk is done
-          else if (process.platform === 'darwin' && stat.size > 0 && stat.blocks === 0) maybeAway.push([full, relPath]);
-          else zip.file(relPath, fs.readFileSync(full));
-        } catch (err) {
-          missed.push(`${relPath} (${err.code || err.message})`);
-        }
-      }
-    };
-    const maybeAway = [];
-    walk(LIBRARY_DIR, '');
-    // a file still in iCloud would make the backup wait on iCloud (forever,
-    // when iCloud is stuck). It's safe up there; today's zip notes it.
-    const away = cloudOnlyAmong(maybeAway.map(([full]) => full));
-    for (const [full, relPath] of maybeAway) {
-      if (away.has(full)) { missed.push(`${relPath} (in iCloud, not on this Mac)`); continue; }
-      try { zip.file(relPath, fs.readFileSync(full)); } catch (err) { missed.push(`${relPath} (${err.code || err.message})`); }
-    }
-    if (away.size) requestDownload(away);
-    if (missed.length) {
-      zip.file('_left-out-of-this-backup.txt', missed.join('\n') + '\n');
-      logError('backup', new Error('left out of today\'s backup: ' + missed.join(', ')));
-    }
-    // written beside its real name and swapped in whole, so a backup cut
-    // short never stands in for the day's backup
-    const data = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
-    await JSZip.loadAsync(data); // reads back whole, or it doesn't count
-    writeFileDurable(target, data);
-
-    // prune old backups
-    const backups = fs.readdirSync(backupsDir).filter((f) => /^neo-backup-.*\.zip$/.test(f)).sort();
-    while (backups.length > 14) fs.unlinkSync(path.join(backupsDir, backups.shift()));
+    target = path.join(backupsDir, `neo-backup-${new Date().toISOString().slice(0, 10)}.zip`);
+    if (fs.existsSync(target)) return Promise.resolve();
   } catch (err) {
     logError('backup', err);
-    try { fs.unlinkSync(path.join(LIBRARY_DIR, 'Backups', `neo-backup-${new Date().toISOString().slice(0, 10)}.zip.tmp`)); } catch { /* none */ }
-  } finally {
-    backupRunning = false;
+    return Promise.resolve();
   }
+  backupRunning = true;
+  return new Promise((resolve) => {
+    let child = null;
+    let timer = null;
+    const finish = (err) => {
+      if (!backupRunning) return;
+      backupRunning = false;
+      clearTimeout(timer);
+      if (err) {
+        logError('backup', err);
+        try { fs.unlinkSync(target + '.tmp'); } catch { /* none */ }
+      }
+      try { if (child) child.kill(); } catch { /* gone */ }
+      resolve();
+    };
+    try {
+      child = utilityProcess.fork(path.join(__dirname, 'backup-worker.js'), [], { serviceName: 'NEO backup' });
+    } catch (err) { finish(err); return; }
+    timer = setTimeout(() => finish(new Error('the backup took longer than ' + BACKUP_LIMIT_MS / 60000 + ' minutes and was stopped')), BACKUP_LIMIT_MS);
+    child.on('message', (msg) => {
+      if (!msg || !msg.ok) { finish(new Error((msg && msg.error) || 'the backup failed')); return; }
+      if (msg.away && msg.away.length) requestDownload(new Set(msg.away));
+      if (msg.missed && msg.missed.length) logError('backup', new Error("left out of today's backup: " + msg.missed.join(', ')));
+      finish(null);
+    });
+    child.on('exit', (code) => finish(code ? new Error('the backup stopped (' + code + ')') : null));
+    child.postMessage({ libraryDir: LIBRARY_DIR, target, keep: 14, fileLimitMs: BACKUP_FILE_LIMIT_MS });
+  });
 }
 let backupRunning = false;
 
@@ -3360,7 +3343,9 @@ app.whenReady().then(() => {
     try { announceLibraryFallback(); } catch (err) { logError('library notice', err); }
     try { initSpell(); } catch (err) { logError('spell', err); }
     try { buildMenu(); } catch (err) { logError('menu', err); }
-    try { dailyBackup(); } catch (err) { logError('backup', err); }
+    // the day's backup waits until NEO is up and the writer is writing (it
+    // used to start at launch, beside everything the window was waiting on)
+    setTimeout(() => { dailyBackup().catch((err) => logError('backup', err)); }, 2 * 60 * 1000).unref?.();
     // NEO left open for days still makes each day's backup (and retries one
     // that failed); an existing day's zip makes this a no-op
     setInterval(() => { dailyBackup().catch(() => {}); }, 60 * 60 * 1000).unref?.();

@@ -281,12 +281,12 @@ const IS_POCKET = !!window.Capacitor;
 // and right-click choices out of sight, and their settings act as NEO's own
 // defaults while the writer's choices wait in library.json for the switch to
 // go back on. Nothing a book already holds is hidden: a script, a footnote,
-// a bound shelf, a painted cover open and export as before. Pocket has no
-// switch and shows what it always has. SIMPLE NEO near the end of this file
-// decides the switch for a library that predates it.
-const moreOn = () => IS_POCKET || !!(library && library.moreFeatures);
-// Format → Markdown Emphasis is behind the switch; simple NEO keeps it on, NEO's default
-const markdownOff = () => !!(library && library.markdownOff && moreOn());
+// a bound shelf, a painted cover open and export as before. Pocket (Android
+// and iOS) is always simple and has no switch. SIMPLE NEO near the end of
+// this file decides the switch for a library that predates it.
+const moreOn = () => !IS_POCKET && !!(library && library.moreFeatures);
+// *italic* and **bold** typed as Markdown are behind the switch too
+const markdownOff = () => !!library && (!moreOn() || !!library.markdownOff);
 
 // Touch has no right-click: a long press on a book, a shelf name or a chapter
 // heading opens the same menu. Not inside the text itself — there a long
@@ -1968,17 +1968,23 @@ function bookTile(meta, opts = {}) {
       ...(meta.coverImage ? ['-', { label: t('Remove cover art'), value: 'uncover', danger: true }] : [])
     ];
     let choice;
-    if (NO_HOVER || window.Capacitor) {
-      // a touch screen: the larger cards, each saying what it does
+    // (a book's word goal is set in Goals, inside the book)
+    if (NO_HOVER || window.Capacitor || !moreOn()) {
+      // a touch screen, and simple NEO: the larger cards, each saying what it
+      // does. Simple NEO has no cover menu: art is dragged onto the book, and
+      // New cover and Remove cover art stand with the rest.
       const options = [];
       if (startPart) options.push({ label: t('Start a part here'), desc: t('A part page goes in before “{title}”.', { title: escHtml(shownTitle(meta.title)) }), value: 'part' });
       options.push(window.Capacitor
-        ? { label: t('Export…'), desc: script ? t('PDF, Fountain or Final Draft, through the share sheet.') : t('Text, Markdown, HTML, PDF, Word or EPUB, through the share sheet.'), value: 'export' }
-        : { label: t('Export…'), value: 'export' });
+        ? { label: t('Export…'), desc: script ? t('PDF, Fountain or Final Draft, through the share sheet.') : moreOn() ? t('Text, Markdown, HTML, PDF, Word or EPUB, through the share sheet.') : t('PDF, Word or EPUB, through the share sheet.'), value: 'export' }
+        : { label: t('Export…'), desc: script || moreOn() || isPageMeta(meta) ? '' : t('PDF, Word, EPUB, or a paperback for KDP.'), value: 'export' });
       if (canCopy) options.push({ label: t('Duplicate'), desc: t('A copy of the whole book on this shelf, to keep as a backup or try another version.'), value: 'duplicate' });
-      if (coverItems.length) options.push({ label: t('Cover'), desc: t('A new cover, your own art, or a saved image.'), value: 'coverMenu' });
+      if (coverItems.length && moreOn()) options.push({ label: t('Cover'), desc: t('A new cover, your own art, or a saved image.'), value: 'coverMenu' });
+      else if (coverItems.length) {
+        options.push({ label: t('New cover'), desc: t('A fresh abstract and a different title style.'), value: 'refresh' });
+        if (meta.coverImage) options.push({ label: t('Remove cover art'), desc: t('Deletes the image from the book folder. (To just hide it, use the ↻ on the book.)'), danger: true, value: 'uncover' });
+      }
       options.push(
-        { label: t('Set word goal…'), desc: t('Adds the subtle progress bar to the cover.'), value: 'goal' },
         { label: t('Remove from bookshelf'), desc: t('Takes it off your shelves. The files stay safe in your NEO Library folder on disk.'), value: 'remove' },
         { label: trashLabel, desc: window.Capacitor ? t('Moves the book folder to Deleted Books in your NEO Library, where you can recover it.') : t('Sends the book folder to your system trash, where you can recover it.'), danger: true, value: 'trash' }
       );
@@ -1990,7 +1996,6 @@ function bookTile(meta, opts = {}) {
       if (startPart) items.push({ label: t('Start a part here'), value: 'part' }, '-');
       items.push({ label: t('Export…'), value: 'export' });
       if (canCopy) items.push({ label: t('Duplicate'), value: 'duplicate' });
-      items.push({ label: t('Set word goal…'), value: 'goal' });
       if (coverItems.length) items.push({ label: t('Cover') + '  ›', value: 'coverMenu' });
       items.push('-', { label: t('Remove from bookshelf'), value: 'remove' }, { label: trashLabel, value: 'trash', danger: true });
       const x = e.clientX;
@@ -2043,13 +2048,6 @@ function bookTile(meta, opts = {}) {
     } else if (choice === 'uncover') {
       await window.neo.removeCover(meta.id);
       meta.coverImage = null;
-      await writeBookMeta(meta.id, meta);
-      renderShelves();
-    } else if (choice === 'goal') {
-      const goal = await askInput(t('Word count goal for “{title}”', { title: escHtml(shownTitle(meta.title)) }), t('e.g. 80000 — blank removes the goal'),
-        meta.wordGoal ? String(meta.wordGoal) : '');
-      if (goal === null) return;
-      meta.wordGoal = parseInt(goal, 10) || 0;
       await writeBookMeta(meta.id, meta);
       renderShelves();
     } else if (choice === 'remove') {
@@ -15234,9 +15232,9 @@ function bookShortcutSections() {
       ...(more ? [[K('⌘⇧U', IS_LINUX ? 'Ctrl+Shift+K' : 'Ctrl+Shift+U'), tk('Read aloud from the cursor'), tk('Again, Esc or any key stops it. Uses your computer’s own voice.')]] : [])
     ] },
     { title: tk('Formatting'), rows: [
-      [['*…*', '**…**', '***…***'], tk('Italic, bold, the Markdown way'), more ? tk('Typed around a word (or pasted). Undo right after keeps the asterisks. Format → Markdown Emphasis turns it off.') : tk('Typed around a word (or pasted). Undo right after keeps the asterisks.')],
+      ...(more ? [[['*…*', '**…**', '***…***'], tk('Italic, bold, the Markdown way'), tk('Typed around a word (or pasted). Undo right after keeps the asterisks. Format → Markdown Emphasis turns it off.')]] : []),
       [K('⌘U', 'Ctrl+U'), tk('Underline')],
-      [K('⌘⇧S', 'Ctrl+Shift+S'), tk('Strikethrough'), tk('Or ~~…~~ around the words.')],
+      [K('⌘⇧S', 'Ctrl+Shift+S'), tk('Strikethrough'), more ? tk('Or ~~…~~ around the words.') : undefined],
       ...(more ? [
         [K('⌘⇧L', 'Ctrl+Shift+L'), tk('Align paragraph left')],
         [K('⌘⇧C', 'Ctrl+Shift+C'), tk('Center paragraph')],
@@ -17963,7 +17961,7 @@ function reportMore() {
 }
 
 async function setMoreFeatures(on) {
-  if (IS_POCKET || on === moreOn()) return;
+  if (IS_POCKET || on === moreOn()) return; // (Pocket is always simple)
   library.moreFeatures = on;
   await writeLibrary(library);
   reportMore();
