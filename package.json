@@ -22,6 +22,7 @@
     "lint": "oxlint",
     "release": "node scripts/release.js",
     "bundle": "node scripts/bundle.js",
+    "try": "node scripts/try.js",
     "package": "npm run package:mac",
     "package:mac": "electron-builder --mac",
     "package:win": "electron-builder --win",

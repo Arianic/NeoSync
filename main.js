@@ -39,6 +39,10 @@ if (process.platform === 'linux') app.commandLine.appendSwitch('enable-speech-di
 // covers any early access and non-redirected setups.
 let LIBRARY_DIR = path.join(os.homedir(), 'Documents', 'NEO Library');
 let LIBRARY_FILE = path.join(LIBRARY_DIR, 'library.json');
+// npm run try (scripts/try.js): NEO from source with settings of its own,
+// which point it at the throwaway copy of the library that script made, so
+// a trial never touches the real library (and runs beside the real NEO)
+const TRY_DIR = !app.isPackaged && typeof process !== 'undefined' && process.env ? process.env.NEO_TRY_DIR : '';
 
 // NEO's few app-level settings (today: a custom library folder) live in the
 // system's per-app data folder, since they must exist before the library
@@ -2201,6 +2205,8 @@ function createWindow() {
       spellcheck: true
     }
   });
+  // a trial says so in the window bar
+  if (TRY_DIR) win.on('page-title-updated', (e, title) => { e.preventDefault(); win.setTitle(title + ' (trial copy)'); });
   win.loadFile('index.html');
   // The menu bar follows the real full-screen state, whoever changed it.
   // Electron only puts the bar back after a full screen it entered itself,
@@ -3215,6 +3221,9 @@ ipcMain.handle('update:openRelease', () => {
   }
   return true;
 });
+
+// a trial (npm run try) keeps its settings apart from the real NEO's
+if (TRY_DIR) app.setPath('userData', path.join(TRY_DIR, 'settings'));
 
 // Two copies of NEO editing the same library is how words get eaten
 if (!app.requestSingleInstanceLock()) {
