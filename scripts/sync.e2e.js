@@ -269,6 +269,41 @@ app.whenReady().then(async () => {
     }
     await js('backToShelf()');
     assert.ok(app.getPath('userData').startsWith(tmp + path.sep));
+    await js(`openBook(${JSON.stringify(ids.book)})`);
+    // A snapshot includes unchanged chapters, and a queued snapshot finishes
+    // before the book can close and accept remote changes.
+    await js(`takeSnapshot('k').then(r => { window.firstSnap = r.snap.name; });`);
+    const snapshotWrite = holdWrite('snapshot:write');
+    await js(`chapterHTML[book.chapterOrder[0]] = '<p>A newer snapshot.</p>'; window.snapshotTest = takeSnapshot('k'); void 0;`);
+    await snapshotWrite.began;
+    await js('window.closeForSnapshot = backToShelf(); void 0;');
+    assert.equal(await js('!!book'), true);
+    snapshotWrite.release();
+    const taken = await js('window.snapshotTest.then(r => r.snap.name)');
+    await js('window.closeForSnapshot'); snapshotWrite.restore();
+    const snapDir = path.join(root, ids.book, 'snapshots', taken);
+    const snapMeta = JSON.parse(fs.readFileSync(path.join(snapDir, 'snapshot.json'), 'utf8'));
+    assert.equal(snapMeta.selfContained, true);
+    for (const id of snapMeta.chapterOrder) assert.ok(fs.existsSync(path.join(snapDir, id + '.html')));
+    await js(`openBook(${JSON.stringify(ids.book)})`);
+    const original = fs.readFileSync(path.join(snapDir, snapMeta.chapterOrder[0] + '.html'));
+    fs.writeFileSync(path.join(snapDir, snapMeta.chapterOrder[0] + '.html'), '<p>Incomplete transfer</p>');
+    assert.equal(await js(`snapshotBook(book.id, ${JSON.stringify(taken)}).then(() => false, () => true)`), true);
+    fs.writeFileSync(path.join(snapDir, snapMeta.chapterOrder[0] + '.html'), original);
+    await js(`switchTab('darlings'); showSnapshot(${JSON.stringify(taken)});`);
+    const restoreWrite = holdWrite('chapter:write');
+    await js('window.restoreTest = restoreSnapshot(null); void 0;');
+    await restoreWrite.began;
+    await js('backToShelf()');
+    assert.equal(await js('!!book && bookTasks.size === 1'), true);
+    restoreWrite.release(); await js('window.restoreTest'); restoreWrite.restore();
+    const importWrite = holdWrite('chapter:write');
+    await js(`window.importTest = importChaptersIntoBook([{name:'New chapter', chapters:[{title:'Added', paras:[{text:'Imported safely'}]}]}]); void 0;`);
+    await importWrite.began;
+    await js(`backToShelf(); openBook(${JSON.stringify(copiedId)});`);
+    assert.equal(await js('book.id'), ids.book);
+    importWrite.release(); assert.equal(await js('window.importTest'), 1); importWrite.restore();
+    await js('backToShelf()');
     console.log('Desktop smoke passed: identity, queued saves/retries, conflict copies, restart/sync barriers, shelf export, outline-card flush, local zoom and last-tab restore.');
     console.log('Temporary profile retained until Electron exits: ' + tmp);
     clearTimeout(timeout); app.exit(0);

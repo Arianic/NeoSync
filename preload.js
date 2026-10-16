@@ -3,7 +3,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 const saves = new Set();
 function invoke(channel, ...args) {
   const pending = ipcRenderer.invoke(channel, ...args);
-  if (/^(library|book|chapter|aux|json|cover):/.test(channel)) {
+  if (/^(library|book|chapter|aux|json|cover|snapshot):/.test(channel)) {
     saves.add(pending);
     pending.then(() => saves.delete(pending), () => saves.delete(pending));
   }
@@ -34,13 +34,18 @@ contextBridge.exposeInMainWorld('neo', {
   readAux: (bookId, name) => invoke('aux:read', bookId, name),
   writeAux: (bookId, name, html) => invoke('aux:write', bookId, name, html),
 
+  snapshotList: (bookId) => invoke('snapshot:list', bookId),
+  snapshotRead: (bookId, name, file) => invoke('snapshot:read', bookId, name, file),
+  snapshotWrite: (bookId, name, file, text) => invoke('snapshot:write', bookId, name, file, text),
+  snapshotRemove: (bookId, name) => invoke('snapshot:remove', bookId, name),
+
   readJSON: (bookId, name, fallback) => invoke('json:read', bookId, name, fallback),
   writeJSON: (bookId, name, data) => invoke('json:write', bookId, name, data),
 
   exportSave: (payload) => invoke('export:save', payload),
   emailDraft: (payload) => invoke('email:draft', payload),
   logError: (msg) => invoke('log:error', msg),
-  importPick: () => invoke('import:pick'),
+  importPick: (opts) => invoke('import:pick', opts),
   libraryPath: () => invoke('library:path'),
   pickCover: () => invoke('cover:pick'),
   setCover: (bookId, srcPath) => invoke('cover:set', bookId, srcPath),
@@ -66,10 +71,14 @@ contextBridge.exposeInMainWorld('neo', {
   flushState: (on) => ipcRenderer.send('flush:state', on),
   scriptState: (st) => ipcRenderer.send('script:state', st),
   printPaperback: (job) => ipcRenderer.invoke('print:paperback', job),
+  printManuscript: (job) => ipcRenderer.invoke('print:manuscript', job), // File → Export → Manuscript Format… as a PDF
   // sent (and waited for) as a script line is right-clicked, so the menu
   // that opens next can offer Page Break Here
   scriptContext: (st) => ipcRenderer.sendSync('script:context', st),
   typewriterState: (st) => ipcRenderer.send('typewriter:state', st),
+  nbspMarksState: (on) => ipcRenderer.send('nbspmarks:state', on),
+  pagesState: (st) => ipcRenderer.send('pages:state', st),
+  pageWidthState: (v) => ipcRenderer.send('pagewidth:state', v),
   vimState: (on) => ipcRenderer.send('vim:state', on),
   uiZoomState: (z) => ipcRenderer.send('uizoom:state', z),
   // interface language, fetched once before the page's scripts run
@@ -78,6 +87,7 @@ contextBridge.exposeInMainWorld('neo', {
   reloadForLanguage: () => invoke('i18n:reload'),
 
   writingStyleState: (st) => ipcRenderer.send('style:state', st),
+  moreState: (on) => ipcRenderer.send('more:state', on),
   viewState: (st) => ipcRenderer.send('view:state', st),
   onMenu: (cb) => ipcRenderer.on('menu', (_e, msg) => cb(msg))
 });

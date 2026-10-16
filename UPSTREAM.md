@@ -1,8 +1,8 @@
 # Upstream baseline
 
 - Project: https://github.com/hughhowey/neo
-- Version integrated: 1.4.7
-- Commit: `3d3296042d5fb4fbad2093e02b1b6b798597eca9`
+- Version integrated: 1.5.7
+- Commit: `0c407809db407e749ee5c25aa9661fb54cab9814`
 - Remote name: `upstream`
 - NeoSync releases use their own `neosync-v*` tags.
 

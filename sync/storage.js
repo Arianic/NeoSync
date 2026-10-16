@@ -47,7 +47,7 @@ class LocalStorage {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const p = prefix + entry.name;
         if (entry.isSymbolicLink()) throw new Error('Symlinks cannot be synchronized');
-        if (entry.isDirectory() && ((!prefix && entry.name.startsWith('book-')) || (prefix.startsWith('book-') && entry.name === 'chapters' && prefix.split('/').length === 2))) visit(path.join(dir, entry.name), p + '/');
+        if (entry.isDirectory() && ((!prefix && entry.name.startsWith('book-')) || (prefix.startsWith('book-') && ['chapters', 'snapshots'].includes(entry.name) && prefix.split('/').length === 2) || (/^book-[^/]+\/snapshots\/$/.test(prefix) && /^[A-Za-z0-9-]+$/.test(entry.name)))) visit(path.join(dir, entry.name), p + '/');
         else if (entry.isFile() && included(p)) files[p] = this.read(p);
       }
     };

@@ -50,6 +50,12 @@ jobs:
             npm run test:words
             npm run test:caret
             npm run test:tabs -- --password-store=gnome-libsecret
+            npm run test:notes
+            npm run test:footnotes
+            npm run test:cover-text
+            npm run test:manuscript
+            npm run test:pages
+            npm run test:simple
             npm run test:updates
           '
       - name: Package AppImage and Debian installer (no publishing)

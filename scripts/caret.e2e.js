@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+setTimeout(() => { console.error('Editor test timed out'); app.exit(1); }, 120000).unref();
 
 // Isolated profile; retained until Electron exits.
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `neo-caret-test-${process.pid}-`));
@@ -17,7 +18,7 @@ app.setPath('userData', path.join(tmp, 'app'));
 app.setPath('documents', tmp);
 fs.mkdirSync(path.join(tmp, 'NeoSync Library'));
 fs.writeFileSync(path.join(tmp, 'NeoSync Library', 'library.json'), JSON.stringify({
-  authorName: '', penNames: [], firstRunDone: true, pageTheme: 'night',
+  authorName: '', penNames: [], firstRunDone: true, moreFeatures: true, pageTheme: 'night',
   shelves: [{ id: 'shelf-1', name: 'Works in Progress', bookIds: [] }]
 }));
 // run from scripts/, NEO's window would look for scripts/index.html
@@ -199,6 +200,7 @@ async function main() {
     let win;
     while (!(win = BrowserWindow.getAllWindows()[0])) await tick(50);
     wc = win.webContents;
+    wc.setBackgroundThrottling(false);
     win.setBounds({ width: 1200, height: 800 });
     while (!(await js(`typeof library !== 'undefined' && !!library`).catch(() => false))) await tick(50);
     await tick(300);
