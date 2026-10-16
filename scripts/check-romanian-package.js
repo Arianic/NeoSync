@@ -61,3 +61,8 @@ function checkPrint(dir = 'print') {
 }
 checkPrint();
 console.log('Offline paperback runtime, hyphenation patterns and license files verified.');
+
+for (const name of ['backup-worker.js', 'manuscript.js', 'fonts/LICENSE-noto-kr.txt', ...fs.readdirSync(path.join(root, 'fonts')).filter(n => n.includes('-kr-')).map(n => 'fonts/' + n)]) {
+  assert.deepEqual(asar.extractFile(path.join(resources, 'app.asar'), path.normalize(name)), fs.readFileSync(path.join(root, name)), name);
+}
+console.log('Backup worker, manuscript export, Korean fonts and license verified.');

@@ -14,12 +14,13 @@ function included(p) {
   if (!bits.every(segment)) return false;
   if (p === 'library.json') return true;
   if (!bits[0].startsWith('book-')) return false;
+  if (bits.length === 4) return bits[1] === 'snapshots' && /^[A-Za-z0-9-]+$/.test(bits[2]) && (bits[3] === 'snapshot.json' || /^[\w-][\w.-]*\.html$/.test(bits[3]));
   if (bits.length === 3) return bits[1] === 'chapters' && /\.html$/.test(bits[2]);
   return bits.length === 2 && (/\.(html|json)$/.test(bits[1]) || /^(cover|art)-[^/]+\.(png|jpg|jpeg|webp)$/i.test(bits[1]));
 }
 function remotePath(p) { return included(p) || /^\.neosync\/deletions\/[a-f0-9]{64}\.json$/.test(p); }
 const markerPath = (p) => '.neosync/deletions/' + hash(p) + '.json';
-const rank = (p) => p === 'library.json' ? 2 : p.endsWith('/book.json') ? 1 : 0;
+const rank = (p) => p === 'library.json' ? 2 : p.endsWith('/book.json') ? 1 : p.endsWith('/snapshot.json') ? 0.5 : 0;
 
 // Three-way merge: objects by key, records by stable ID, membership as sets.
 // Order is only combined when both devices merely append. Competing moves,
@@ -65,6 +66,7 @@ function merge(p, base, local, remote) {
 function validate(p, data) {
   if (!included(p)) throw new Error('Invalid library path');
   if (data == null) return;
+  if (p.endsWith('/snapshot.json')) references(p, data);
   if (p.endsWith('.json')) {
     const value = JSON.parse(data.toString());
     if (p.endsWith('/book.json') && (!value || value.id !== p.split('/')[0] || !Array.isArray(value.chapterOrder) || !value.chapterOrder.every(segment) || new Set(value.chapterOrder).size !== value.chapterOrder.length)) throw new Error('Invalid book metadata');
@@ -73,6 +75,11 @@ function validate(p, data) {
 }
 function references(p, data) {
   if (!data) return [];
+  if (p.endsWith('/snapshot.json')) {
+    const meta = JSON.parse(data);
+    if (meta?.v !== 1 || meta.selfContained !== true || !Array.isArray(meta.chapterOrder) || !meta.chapterOrder.every(segment) || new Set(meta.chapterOrder).size !== meta.chapterOrder.length) throw new Error('Invalid snapshot metadata');
+    return meta.chapterOrder.map(id => p.slice(0, -'snapshot.json'.length) + id + '.html');
+  }
   if (p === 'library.json') return JSON.parse(data).shelves.flatMap(s => s.bookIds.map(id => id + '/book.json'));
   if (p.endsWith('/art.json')) {
     const name = JSON.parse(data).file;

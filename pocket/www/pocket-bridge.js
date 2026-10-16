@@ -360,6 +360,31 @@
       return true;
     },
 
+    /* ---------- snapshots of a book (SNAPSHOTS in app.js) ---------- */
+    // a folder per snapshot, its files written once; the window decides the rest
+    snapshotList: async (bookId) => {
+      let names = [];
+      try { names = (await listDir(p(bookId, 'snapshots'))).filter((n) => /^[A-Za-z0-9-]+$/.test(n)); } catch { return []; }
+      const out = [];
+      for (const name of names) {
+        try { out.push({ name, files: (await listDir(p(bookId, 'snapshots', name))).filter((f) => /\.(html|json)$/.test(f)) }); } catch { /* not a folder */ }
+      }
+      return out;
+    },
+    snapshotRead: async (bookId, name, file) => {
+      await fetchCloud(p(bookId, 'snapshots', name, file));
+      try { return await readText(p(bookId, 'snapshots', name, file)); } catch { return ''; }
+    },
+    snapshotWrite: async (bookId, name, file, text) => {
+      await ensureDir(p(bookId, 'snapshots', name));
+      await writeText(p(bookId, 'snapshots', name, file), text);
+      return true;
+    },
+    snapshotRemove: async (bookId, name) => {
+      try { await FS().rmdir({ ...at(p(bookId, 'snapshots', name)), recursive: true }); } catch { /* already gone */ }
+      return true;
+    },
+
     /* ---------- notes / outline / json sidecars ---------- */
     readAux: async (bookId, name) => {
       try { return await readText(p(bookId, name + '.html')); } catch { /* the spare, below */ }

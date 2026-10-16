@@ -116,6 +116,8 @@ class SyncEngine {
       plan.invalid = deps.some(p => !exists(desired, p));
       if (plan.invalid) blocked = true;
     }
+    // Publish dependencies first; delete referring metadata before its files.
+    plans.sort((a, b) => Number(a.remove) - Number(b.remove) || (a.remove ? rank(b.path) - rank(a.path) : rank(a.path) - rank(b.path)));
     for (const plan of plans) {
       this.checkActive();
       if (plan.invalid) continue;

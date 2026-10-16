@@ -119,7 +119,7 @@ class WebDAV {
       if (r.status !== 207) throw new DavError(r.status);
       for (const item of listing(r.data, url, this.root)) {
         if (item.dir) {
-          if (/^book-[^/]+(?:\/chapters)?$/.test(item.path) || /^\.neosync(?:\/deletions)?$/.test(item.path)) await visit(this.root + item.path.split('/').map(encodeURIComponent).join('/') + '/', depth + 1);
+          if (/^book-[^/]+(?:\/chapters|\/snapshots(?:\/[A-Za-z0-9-]+)?)?$/.test(item.path) || /^\.neosync(?:\/deletions)?$/.test(item.path)) await visit(this.root + item.path.split('/').map(encodeURIComponent).join('/') + '/', depth + 1);
         } else if (remotePath(item.path)) out[item.path] = item.etag;
         if (Object.keys(out).length > 20000) throw new Error('Library exceeds 20000-file limit');
       }

@@ -147,3 +147,21 @@ test('Swedish quotes pair identical marks, including speech cut off by a dash', 
 
 // objects made in the vm context compare by value outside it
 function plain(v) { return JSON.parse(JSON.stringify(v)); }
+
+test('German: a new book is set in »…«, a book already in „…“ keeps it, Swiss is «…» (#353)', () => {
+  const context = vm.createContext({ library: { spellLanguage: 'de' }, book: null });
+  vm.runInContext(app.slice(app.indexOf('const QUOTE_STYLES'), app.indexOf('// A hyphen standing on its own')), context);
+  const at = (text) => { context.body = { closest: () => ({ textContent: text }) }; };
+  at('Noch nichts gesagt.');
+  assert.deepEqual(plain(vm.runInContext('bookQuotes(body)', context)), { open: '»', close: '«' });
+  assert.deepEqual(plain(vm.runInContext('singleQuotes(body)', context)), { open: '›', close: '‹' });
+  at('„Komm her“, sagte sie. „Jetzt.“');
+  assert.deepEqual(plain(vm.runInContext('bookQuotes(body)', context)), { open: '„', close: '“' });
+  assert.deepEqual(plain(vm.runInContext('singleQuotes(body)', context)), { open: '‚', close: '‘' });
+  at('»Komm her«, sagte sie.');
+  assert.deepEqual(plain(vm.runInContext('bookQuotes(body)', context)), { open: '»', close: '«' });
+  context.library.spellLanguage = 'de-CH';
+  at('Noch nichts gesagt.');
+  assert.deepEqual(plain(vm.runInContext('bookQuotes(body)', context)), { open: '«', close: '»' });
+  assert.deepEqual(plain(vm.runInContext('singleQuotes(body)', context)), { open: '‹', close: '›' });
+});

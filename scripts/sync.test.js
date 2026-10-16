@@ -53,6 +53,60 @@ const meta = extra => JSON.stringify({ id: 'book-a', title: 'Book', chapterOrder
 const library = JSON.stringify({ shelves: [{ id: 's', name: 'Shelf', bookIds: ['book-a'] }] });
 const conflicts = d => Object.values(d.local.state.conflicts).filter(c => !c.resolved);
 
+test('offline snapshot histories remain independent and delete with recovery records', async t => {
+  const { server, device } = fixtures(t), a = device('a'), b = device('b');
+  const first = 'book-a/snapshots/20261016T100000Z-k-1-2-aaaa/';
+  const second = 'book-a/snapshots/20261016T100001Z-k-1-2-bbbb/';
+  const snapshot = JSON.stringify({ v: 1, selfContained: true, chapterOrder: ['a', 'b'] });
+  for (const [d, prefix, text] of [[a, first, 'Device A'], [b, second, 'Device B']]) {
+    d.write(prefix + 'a.html', text);
+    d.write(prefix + 'b.html', 'Unchanged chapter');
+    d.write(prefix + 'snapshot.json', snapshot);
+  }
+  await a.engine.run(); await b.engine.run(); await a.engine.run();
+  for (const d of [a, b]) {
+    assert.equal(d.text(first + 'a.html'), 'Device A');
+    assert.equal(d.text(second + 'a.html'), 'Device B');
+    assert.equal(conflicts(d).length, 0);
+  }
+  const published = server.calls.map(c => c.p);
+  assert.ok(published.indexOf(first + 'snapshot.json') > published.indexOf(first + 'b.html'));
+  const files = ['a.html', 'b.html', 'snapshot.json'].map(f => first + f);
+  a.local.prepareDeletion(files);
+  for (const p of files) fs.unlinkSync(a.local.file(p));
+  await a.engine.run(); await b.engine.run();
+  for (const p of files) assert.equal(b.text(p), null);
+  assert.equal(unpack(JSON.parse(server.text(markerPath(first + 'a.html'))).content).toString(), 'Device A');
+  assert.equal(b.text(second + 'a.html'), 'Device B');
+});
+
+test('incomplete snapshots cannot publish their manifest', async t => {
+  const { server, device } = fixtures(t), a = device('a');
+  const prefix = 'book-a/snapshots/20261016T100000Z-k-2-2-aaaa/';
+  a.write(prefix + 'a.html', 'Present');
+  a.write(prefix + 'snapshot.json', JSON.stringify({ v: 1, selfContained: true, chapterOrder: ['a', 'b'] }));
+  await a.engine.run();
+  assert.equal(server.text(prefix + 'snapshot.json'), undefined);
+  a.write(prefix + 'b.html', 'Arrived');
+  await a.engine.run();
+  assert.ok(server.text(prefix + 'snapshot.json'));
+  for (const p of ['book-a/snapshots/../a.html', 'book-a/snapshots/x/nested/a.html', 'book-a/snapshots/x/secrets.json', 'book-a/snapshots/x/a.html.tmp']) assert.equal(included(p), false, p);
+});
+
+test('chapter notes merge independently and footnote HTML survives transfer', async t => {
+  const { device } = fixtures(t), a = device('a'), b = device('b');
+  const html = '<p>Text <span class="fn" data-note="Footnote words">1</span></p>';
+  a.write('book-a/notes-a.html', '<p>Chapter notes</p>');
+  a.write(chapter, html); a.write(metadata, meta({ chapterNotes: { a: 'Original', b: 'Original' } }));
+  await a.engine.run(); await b.engine.run();
+  a.write(metadata, meta({ chapterNotes: { a: 'First device', b: 'Original' } }));
+  b.write(metadata, meta({ chapterNotes: { a: 'Original', b: 'Second device' } }));
+  await a.engine.run(); await b.engine.run(); await a.engine.run();
+  assert.deepEqual(JSON.parse(a.text(metadata)).chapterNotes, { a: 'First device', b: 'Second device' });
+  assert.equal(b.text(chapter), html);
+  assert.equal(b.text('book-a/notes-a.html'), '<p>Chapter notes</p>');
+});
+
 test('two offline autosaves conflict against persistent sync base after restart', async t => {
   const { server, device } = fixtures(t), a = device('a'), b = device('b');
   a.write(chapter, 'original'); await a.engine.run(); await b.engine.run();
@@ -97,9 +151,11 @@ test('upstream outline metadata syncs, merges independent cards, and preserves c
     looseCards: [{ id: 'loose-a', text: 'An idea', held: 'chapter', html: '<p>Writing held safely</p>', words: 3 }]
   };
   const html = '<p class="sp-heading" data-scene-id="scene-a" data-newpage="1">INT. ROOM - DAY</p><p data-sec-id="section-a">Words</p>';
+  a.write('book-a/notes-a.html', '<p>Chapter notes</p>');
   a.write(chapter, html); a.write(metadata, meta(outline));
   await a.engine.run(); await b.engine.run();
   assert.equal(b.text(chapter), html);
+  assert.equal(b.text('book-a/notes-a.html'), '<p>Chapter notes</p>');
   assert.deepEqual(JSON.parse(b.text(metadata)).sceneNotes, outline.sceneNotes);
   assert.equal(JSON.parse(b.text(metadata)).underlineHeadings, true);
   assert.equal(JSON.parse(b.text(metadata)).contd, false);
@@ -290,6 +346,21 @@ test('paths reject traversal, Windows aliases, backups and non-library files', (
 function multistatus(entries) {
   return `<d:multistatus xmlns:d="DAV:">${entries.map(e => `<d:response><d:href>${e.href}</d:href><d:propstat><d:prop><d:resourcetype>${e.dir ? '<d:collection/>' : ''}</d:resourcetype>${e.dir ? '' : '<d:getetag>&quot;etag&quot;</d:getetag>'}</d:prop><d:status>HTTP/1.1 ${e.status || 200} OK</d:status></d:propstat></d:response>`).join('')}</d:multistatus>`;
 }
+test('WebDAV discovers snapshot files through the bounded snapshot hierarchy', async () => {
+  const root = 'https://example.com/remote.php/dav/files/uid/NeoSync/';
+  const folder = 'book-a/snapshots/20261016T100000Z-k-1-1-aaaa/';
+  const children = { '': ['book-a/'], 'book-a/': ['snapshots/'], 'book-a/snapshots/': ['20261016T100000Z-k-1-1-aaaa/'], [folder]: ['a.html', 'snapshot.json'] };
+  const visited = [];
+  const remote = new WebDAV({ server: 'https://example.com', folder: 'NeoSync', loginName: 'test', appPassword: 'test' }, async (url, options) => {
+    assert.equal(options.method, 'PROPFIND');
+    const relative = url.slice(root.length); visited.push(relative);
+    const href = new URL(url).pathname;
+    return new Response(multistatus([{ href, dir: true }, ...children[relative].map(name => ({ href: href + name, dir: name.endsWith('/') }))]), { status: 207 });
+  });
+  remote.root = root;
+  assert.deepEqual(Object.keys(await remote.list()).sort(), [folder + 'a.html', folder + 'snapshot.json']);
+  assert.equal(visited.length, 4);
+});
 test('DAV XML handles namespaces and entities, rejects partial/malformed/escaped listings', () => {
   const root = 'https://example.com/cloud/remote.php/dav/files/uid/NeoSync/';
   const self = { href: new URL(root).pathname, dir: true };

@@ -36,6 +36,12 @@ jobs:
       - run: npm run test:words
       - run: npm run test:caret
       - run: npm run test:tabs
+      - run: npm run test:notes
+      - run: npm run test:footnotes
+      - run: npm run test:cover-text
+      - run: npm run test:manuscript
+      - run: npm run test:pages
+      - run: npm run test:simple
       - run: npm run test:updates
       - run: npm run package:win
       - run: node scripts/check-update-artifacts.js windows
